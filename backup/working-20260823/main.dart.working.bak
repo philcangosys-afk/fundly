@@ -1,0 +1,3492 @@
+import 'dart:typed_data';
+
+import 'package:flutter/material.dart';
+import 'package:share_plus/share_plus.dart';
+import 'package:shared_preferences/shared_preferences.dart';
+import 'package:supabase_flutter/supabase_flutter.dart';
+import 'config/supabase_config.dart';
+import 'data/home_dashboard_service.dart';
+import 'data/home_pinned_shortcuts_store.dart';
+import 'l10n/home_strings.dart';
+import 'screens/notifications_center_screen.dart';
+import 'screens/people_management_screen.dart';
+import 'screens/personal_commitments_screen.dart';
+import 'screens/profile_settings_screen.dart';
+import 'screens/projects_activities_screen.dart';
+import 'screens/raffle_screen.dart';
+import 'screens/shared_commitments_screen.dart';
+import 'screens/smart_calendar_screen.dart';
+
+Future<void> main() async {
+  WidgetsFlutterBinding.ensureInitialized();
+  await Supabase.initialize(
+    url: SupabaseConfig.url,
+    publishableKey: SupabaseConfig.publishableKey,
+  );
+  runApp(const MyApp());
+}
+
+class MyApp extends StatelessWidget {
+  const MyApp({super.key});
+
+  @override
+  Widget build(BuildContext context) {
+    return MaterialApp(
+      title: HomeStrings.appTitle,
+      theme: ThemeData(
+        colorScheme: ColorScheme.fromSeed(seedColor: Color(0xFF1E3A8A)),
+        useMaterial3: true,
+      ),
+      home: const HomePage(),
+      routes: {'/home': (context) => const HomePage()},
+      debugShowCheckedModeBanner: false,
+    );
+  }
+}
+
+class HomePage extends StatefulWidget {
+  const HomePage({super.key});
+
+  @override
+  State<HomePage> createState() => _HomePageState();
+}
+
+class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
+  static const _layoutPrefsKey = 'home_layout_grid_v1';
+  static const double _homeHorizontalInset = 16;
+
+  final TextEditingController _searchController = TextEditingController();
+
+  int _selectedIndex = 0;
+  bool _showCategoriesInTwoColumns = true;
+  bool _isLoadingMetrics = true;
+  String _selectedHomeFilter = HomeStrings.filterAll;
+  HomeDashboardMetrics _metrics = const HomeDashboardMetrics.empty();
+  List<HomePinnedShortcut> _pinnedShortcuts = const [];
+  final ScrollController _homeScrollController = ScrollController();
+  late final AnimationController _categoryFlashController;
+  late final Animation<double> _categoryFlashAnimation;
+  int? _flashingCategoryIndex;
+  final List<GlobalKey> _categoryKeys = List<GlobalKey>.generate(
+    4,
+    (_) => GlobalKey(),
+  );
+
+  @override
+  void initState() {
+    super.initState();
+    _categoryFlashController = AnimationController(
+      duration: const Duration(milliseconds: 700),
+      vsync: this,
+    );
+    _categoryFlashAnimation = Tween<double>(
+      begin: 0,
+      end: 1,
+    ).animate(_categoryFlashController);
+    _searchController.addListener(() => setState(() {}));
+    _bootstrapHomeState();
+  }
+
+  Future<void> _bootstrapHomeState() async {
+    final prefs = await SharedPreferences.getInstance();
+    final persistedLayout = prefs.getBool(_layoutPrefsKey);
+    final shortcuts = await HomePinnedShortcutsStore.load();
+    HomeDashboardMetrics metrics = const HomeDashboardMetrics.empty();
+    try {
+      final dashboardService = HomeDashboardService();
+      metrics = await dashboardService.loadMetrics();
+    } catch (_) {
+      metrics = const HomeDashboardMetrics.empty();
+    }
+    if (!mounted) return;
+    setState(() {
+      _showCategoriesInTwoColumns = persistedLayout ?? true;
+      _pinnedShortcuts = shortcuts;
+      _metrics = metrics;
+      _isLoadingMetrics = false;
+    });
+  }
+
+  Future<void> _toggleLayout() async {
+    final next = !_showCategoriesInTwoColumns;
+    setState(() => _showCategoriesInTwoColumns = next);
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setBool(_layoutPrefsKey, next);
+  }
+
+  Future<void> _addPinnedShortcut(HomePinnedShortcut shortcut) async {
+    if (_pinnedShortcuts.any((item) => item.id == shortcut.id)) return;
+    final next = [..._pinnedShortcuts, shortcut];
+    setState(() => _pinnedShortcuts = next);
+    await HomePinnedShortcutsStore.save(next);
+  }
+
+  Future<void> _removePinnedShortcut(String shortcutId) async {
+    final next = _pinnedShortcuts
+        .where((item) => item.id != shortcutId)
+        .toList(growable: false);
+    setState(() => _pinnedShortcuts = next);
+    await HomePinnedShortcutsStore.save(next);
+  }
+
+  @override
+  void dispose() {
+    _searchController.dispose();
+    _homeScrollController.dispose();
+    _categoryFlashController.dispose();
+    super.dispose();
+  }
+
+  Widget _buildSummaryAndPinnedRow() {
+    return SizedBox(
+      height: 130,
+      child: Container(
+        padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(14),
+          border: Border.all(color: const Color(0xFFDCE6EF)),
+          boxShadow: const [
+            BoxShadow(
+              color: Color(0x0F0F172A),
+              blurRadius: 14,
+              offset: Offset(0, 5),
+            ),
+          ],
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Row(
+              children: [
+                Expanded(
+                  child: Material(
+                    color: Colors.transparent,
+                    borderRadius: BorderRadius.circular(12),
+                    child: InkWell(
+                      key: const ValueKey('home-global-summary-toggle'),
+                      onTap: _openGlobalSummarySheet,
+                      borderRadius: BorderRadius.circular(12),
+                      child: Container(
+                        height: 52,
+                        padding: const EdgeInsets.symmetric(horizontal: 10),
+                        decoration: BoxDecoration(
+                          color: const Color(0xFFF8FBFF),
+                          borderRadius: BorderRadius.circular(12),
+                          border: Border.all(color: const Color(0xFFE2E8F0)),
+                        ),
+                        child: const Row(
+                          children: [
+                            Icon(
+                              Icons.summarize_outlined,
+                              color: Color(0xFF0F6AA8),
+                              size: 20,
+                            ),
+                            SizedBox(width: 8),
+                            Expanded(
+                              child: Text(
+                                HomeStrings.summaryTitle,
+                                style: TextStyle(
+                                  fontSize: 16,
+                                  fontWeight: FontWeight.w900,
+                                  color: Color(0xFF0F172A),
+                                ),
+                              ),
+                            ),
+                            Icon(
+                              Icons.arrow_forward_rounded,
+                              color: Color(0xFF0F6AA8),
+                              size: 19,
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 10),
+                Column(
+                  children: [
+                    ActionChip(
+                      label: const Text('تثبيت إضافة'),
+                      onPressed: _openPinPicker,
+                      avatar: const Icon(Icons.add_rounded, size: 16),
+                    ),
+                    const SizedBox(height: 4),
+                    const Text(
+                      HomeStrings.pinHint,
+                      textAlign: TextAlign.center,
+                      style: TextStyle(
+                        fontSize: 10,
+                        fontWeight: FontWeight.w700,
+                        color: Color(0xFF64748B),
+                      ),
+                    ),
+                  ],
+                ),
+              ],
+            ),
+            const SizedBox(height: 8),
+            Expanded(
+              child: ListView.separated(
+                scrollDirection: Axis.horizontal,
+                reverse: true,
+                itemCount: _pinnedShortcuts.length,
+                separatorBuilder: (_, __) => const SizedBox(width: 6),
+                itemBuilder: (context, index) {
+                  final shortcut = _pinnedShortcuts[index];
+                  return GestureDetector(
+                    onLongPress: () => _removePinnedShortcut(shortcut.id),
+                    child: InputChip(
+                      label: Text(shortcut.title),
+                      onPressed: () => _openShortcut(shortcut),
+                      onDeleted: () => _removePinnedShortcut(shortcut.id),
+                      deleteIcon: const Icon(Icons.close_rounded, size: 16),
+                    ),
+                  );
+                },
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Future<void> _openGlobalSummarySheet() async {
+    final m = _metrics;
+    final comprehensiveItems = [
+      (
+        'income',
+        HomeStrings.totalIncome,
+        '${_formatAmount(m.totalIncome)} درهم',
+        Icons.trending_up_rounded,
+        const Color(0xFF07835C),
+      ),
+      (
+        'expenses',
+        HomeStrings.totalExpenses,
+        '${_formatAmount(m.totalExpenses)} درهم',
+        Icons.trending_down_rounded,
+        const Color(0xFFD05A3A),
+      ),
+      (
+        'debts',
+        HomeStrings.totalDebts,
+        '${_formatAmount(m.totalDebts)} درهم',
+        Icons.credit_card_rounded,
+        const Color(0xFFC2415D),
+      ),
+      (
+        'documents',
+        HomeStrings.expiringDocs,
+        _formatCountWithUnit(m.expiringDocuments, 'مستند'),
+        Icons.description_outlined,
+        const Color(0xFFB56A09),
+      ),
+      (
+        'commitments',
+        HomeStrings.commitmentsTasks,
+        _formatCountWithUnit(m.commitmentsAndTasks, 'عنصر'),
+        Icons.fact_check_outlined,
+        const Color(0xFF5B5BD6),
+      ),
+      (
+        'assets',
+        HomeStrings.totalAssets,
+        _formatCountWithUnit(m.totalAssets, 'أصل'),
+        Icons.account_balance_wallet_outlined,
+        const Color(0xFF0F6AA8),
+      ),
+    ];
+
+    final moduleItems = [
+      (
+        'personal',
+        HomeStrings.modulePersonal,
+        'لك ${_formatAmount(m.personalDebtsForYou)} · عليك ${_formatAmount(m.personalDebtsOnYou)} · متابعة ${_formatArabicNumber(m.personalNeedsFollowup)}',
+        Icons.person_outline_rounded,
+        const Color(0xFF3B82F6),
+      ),
+      (
+        'shared',
+        HomeStrings.moduleShared,
+        'رحلات ${_formatArabicNumber(m.sharedActiveTrips)} · جمعيات ${_formatArabicNumber(m.sharedActiveCircles)} · متابعة ${_formatArabicNumber(m.sharedNeedsFollowup)}',
+        Icons.groups_2_outlined,
+        const Color(0xFF10B981),
+      ),
+      (
+        'people',
+        HomeStrings.modulePeople,
+        'أفراد ${_formatArabicNumber(m.peopleCount)} · جهات ${_formatArabicNumber(m.entitiesCount)} · متابعة ${_formatArabicNumber(m.peopleNeedsFollowup)}',
+        Icons.people_alt_outlined,
+        const Color(0xFF7956A8),
+      ),
+      (
+        'assets',
+        HomeStrings.moduleAssets,
+        'عقارات ${_formatArabicNumber(m.assetsCount)} · أنشطة ${_formatArabicNumber(m.businessCount)} · متابعة ${_formatArabicNumber(m.assetsNeedsFollowup)}',
+        Icons.apartment_rounded,
+        const Color(0xFFF59E0B),
+      ),
+    ];
+
+    final allItems = [...comprehensiveItems, ...moduleItems];
+    String? selectedSummaryId;
+
+    await showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      useSafeArea: true,
+      backgroundColor: const Color(0xFFF5F8FC),
+      barrierColor: Colors.black.withValues(alpha: 0.38),
+      builder: (sheetContext) => StatefulBuilder(
+        builder: (context, setSheetState) {
+          final selectedItem = selectedSummaryId == null
+              ? null
+              : allItems
+                    .where((item) => item.$1 == selectedSummaryId)
+                    .firstOrNull;
+          return Directionality(
+            textDirection: TextDirection.rtl,
+            child: FractionallySizedBox(
+              heightFactor: 1,
+              child: Column(
+                children: [
+                  Container(
+                    padding: const EdgeInsets.fromLTRB(16, 12, 16, 12),
+                    decoration: const BoxDecoration(
+                      color: Colors.white,
+                      border: Border(
+                        bottom: BorderSide(color: Color(0xFFE1E8F0)),
+                      ),
+                    ),
+                    child: Row(
+                      children: [
+                        IconButton(
+                          key: const ValueKey('close-global-summary'),
+                          onPressed: () => Navigator.of(sheetContext).pop(),
+                          tooltip: 'إغلاق',
+                          icon: const Icon(Icons.close_rounded),
+                        ),
+                        const Expanded(
+                          child: Text(
+                            'الملخص العام',
+                            textAlign: TextAlign.center,
+                            style: TextStyle(
+                              fontSize: 18,
+                              fontWeight: FontWeight.w900,
+                              color: Color(0xFF0F172A),
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 48),
+                      ],
+                    ),
+                  ),
+                  Expanded(
+                    child: ListView(
+                      key: const ValueKey('global-summary-sheet'),
+                      padding: const EdgeInsets.fromLTRB(16, 18, 16, 24),
+                      children: [
+                        _buildSummaryGroup(
+                          title: HomeStrings.fullSummarySection,
+                          subtitle: 'قراءة موحّدة لكل البنود الأساسية',
+                          items: comprehensiveItems,
+                          selectedId: selectedSummaryId,
+                          onSelected: (id) =>
+                              setSheetState(() => selectedSummaryId = id),
+                        ),
+                        const SizedBox(height: 16),
+                        _buildSummaryGroup(
+                          title: HomeStrings.modulesSection,
+                          subtitle: 'اختر أي وحدة لقراءة ملخصها وإرساله',
+                          items: moduleItems,
+                          selectedId: selectedSummaryId,
+                          onSelected: (id) =>
+                              setSheetState(() => selectedSummaryId = id),
+                        ),
+                        if (selectedItem != null) ...[
+                          const SizedBox(height: 12),
+                          FilledButton.icon(
+                            key: const ValueKey('send-selected-summary'),
+                            onPressed: () => _shareSummary(
+                              title: selectedItem.$2,
+                              lines: [selectedItem.$3],
+                            ),
+                            icon: const Icon(Icons.send_rounded, size: 18),
+                            label: const Text(HomeStrings.summaryShareText),
+                            style: FilledButton.styleFrom(
+                              backgroundColor: selectedItem.$5,
+                              foregroundColor: Colors.white,
+                              padding: const EdgeInsets.symmetric(vertical: 12),
+                            ),
+                          ),
+                          const SizedBox(height: 8),
+                          OutlinedButton.icon(
+                            key: const ValueKey('send-selected-summary-pdf'),
+                            onPressed: () => _shareSummary(
+                              title: selectedItem.$2,
+                              lines: [selectedItem.$3],
+                              asPdf: true,
+                            ),
+                            icon: const Icon(
+                              Icons.picture_as_pdf_outlined,
+                              size: 18,
+                            ),
+                            label: const Text(HomeStrings.summarySharePdf),
+                          ),
+                        ],
+                        const SizedBox(height: 8),
+                        OutlinedButton.icon(
+                          key: const ValueKey('send-complete-summary'),
+                          onPressed: () => _shareSummary(
+                            title: HomeStrings.summaryTitle,
+                            lines: allItems
+                                .map((item) => '${item.$2}: ${item.$3}')
+                                .toList(),
+                          ),
+                          icon: const Icon(Icons.ios_share_rounded, size: 18),
+                          label: const Text(HomeStrings.summaryShareText),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          );
+        },
+      ),
+    );
+  }
+
+  Widget _buildSummaryGroup({
+    required String title,
+    required String subtitle,
+    required List<(String, String, String, IconData, Color)> items,
+    required String? selectedId,
+    required ValueChanged<String> onSelected,
+  }) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Text(
+          title,
+          style: const TextStyle(
+            fontSize: 14,
+            fontWeight: FontWeight.w900,
+            color: Color(0xFF0F172A),
+          ),
+        ),
+        const SizedBox(height: 3),
+        Text(
+          subtitle,
+          style: const TextStyle(
+            fontSize: 10.5,
+            height: 1.35,
+            fontWeight: FontWeight.w600,
+            color: Color(0xFF64748B),
+          ),
+        ),
+        const SizedBox(height: 9),
+        ...items.map(
+          (item) => Padding(
+            padding: const EdgeInsets.only(bottom: 7),
+            child: _HomeSummaryItem(
+              key: ValueKey('summary-${item.$1}'),
+              title: item.$2,
+              detail: item.$3,
+              icon: item.$4,
+              color: item.$5,
+              selected: selectedId == item.$1,
+              onTap: () => onSelected(item.$1),
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Future<void> _shareSummary({
+    required String title,
+    required List<String> lines,
+    bool asPdf = false,
+  }) async {
+    final box = context.findRenderObject() as RenderBox?;
+    final text = '$title\n\n${lines.join('\n')}';
+    if (asPdf) {
+      final file = XFile.fromData(
+        Uint8List.fromList(text.codeUnits),
+        mimeType: 'application/pdf',
+        name: 'fondly-summary.pdf',
+      );
+      await SharePlus.instance.share(
+        ShareParams(
+          subject: title,
+          text: title,
+          files: [file],
+          sharePositionOrigin: box == null
+              ? null
+              : box.localToGlobal(Offset.zero) & box.size,
+        ),
+      );
+      return;
+    }
+    await SharePlus.instance.share(
+      ShareParams(
+        subject: title,
+        text: text,
+        sharePositionOrigin: box == null
+            ? null
+            : box.localToGlobal(Offset.zero) & box.size,
+      ),
+    );
+  }
+
+  String _formatArabicNumber(int value) {
+    const western = ['0', '1', '2', '3', '4', '5', '6', '7', '8', '9'];
+    const arabic = ['٠', '١', '٢', '٣', '٤', '٥', '٦', '٧', '٨', '٩'];
+    var output = value.toString();
+    for (var i = 0; i < western.length; i++) {
+      output = output.replaceAll(western[i], arabic[i]);
+    }
+    return output;
+  }
+
+  String _formatAmount(int value) => _formatArabicNumber(value);
+
+  String _formatCountWithUnit(int value, String unit) {
+    return '${_formatArabicNumber(value)} $unit';
+  }
+
+  Future<void> _openHomeFilterSheet() async {
+    final options = [
+      HomeStrings.filterAll,
+      HomeStrings.filterPersonal,
+      HomeStrings.filterShared,
+      HomeStrings.filterPeople,
+      HomeStrings.filterAssets,
+    ];
+    await showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: Colors.white,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (context) {
+        return SafeArea(
+          top: false,
+          child: Directionality(
+            textDirection: TextDirection.rtl,
+            child: ListView(
+              shrinkWrap: true,
+              padding: const EdgeInsets.fromLTRB(16, 12, 16, 18),
+              children: options
+                  .map(
+                    (option) => RadioListTile<String>(
+                      value: option,
+                      groupValue: _selectedHomeFilter,
+                      title: Text(option),
+                      onChanged: (value) {
+                        if (value == null) return;
+                        setState(() => _selectedHomeFilter = value);
+                        Navigator.of(context).pop();
+                      },
+                    ),
+                  )
+                  .toList(growable: false),
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  Future<void> _openPinPicker() async {
+    const options = [
+      HomePinnedShortcut(id: 'personal', title: HomeStrings.modulePersonal),
+      HomePinnedShortcut(id: 'shared', title: HomeStrings.moduleShared),
+      HomePinnedShortcut(id: 'people', title: HomeStrings.modulePeople),
+      HomePinnedShortcut(id: 'assets', title: HomeStrings.moduleAssets),
+    ];
+    await showModalBottomSheet<void>(
+      context: context,
+      backgroundColor: Colors.white,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      ),
+      builder: (context) {
+        return SafeArea(
+          top: false,
+          child: Directionality(
+            textDirection: TextDirection.rtl,
+            child: ListView(
+              shrinkWrap: true,
+              padding: const EdgeInsets.fromLTRB(16, 12, 16, 18),
+              children: options
+                  .map(
+                    (option) => ListTile(
+                      title: Text(option.title),
+                      trailing: const Icon(Icons.add_circle_outline_rounded),
+                      onTap: () async {
+                        await _addPinnedShortcut(option);
+                        if (!context.mounted) return;
+                        Navigator.of(context).pop();
+                      },
+                    ),
+                  )
+                  .toList(growable: false),
+            ),
+          ),
+        );
+      },
+    );
+  }
+
+  void _openShortcut(HomePinnedShortcut shortcut) {
+    if (shortcut.id == 'personal') {
+      _openPriorityScreen(HomeStrings.modulePersonal);
+      return;
+    }
+    if (shortcut.id == 'shared') {
+      _openPriorityScreen(HomeStrings.moduleShared);
+      return;
+    }
+    if (shortcut.id == 'people') {
+      _openPriorityScreen('إدارة الأشخاص والجهات');
+      return;
+    }
+    _openPriorityScreen('العقارات/الأنشطة التجارية/المعدات وأخرى');
+  }
+
+  void _openAccountPage() {
+    Navigator.of(
+      context,
+    ).push(MaterialPageRoute(builder: (_) => const ProfileSettingsScreen()));
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: const Color(0xFFF5F8FC),
+      body: _selectedIndex == 0
+          ? CustomScrollView(
+              controller: _homeScrollController,
+              slivers: [
+                SliverAppBar(
+                  expandedHeight: 88,
+                  toolbarHeight: 88,
+                  floating: false,
+                  pinned: true,
+                  backgroundColor: const Color(0xFFE0F2FE),
+                  elevation: 0,
+                  flexibleSpace: FlexibleSpaceBar(
+                    background: Container(
+                      decoration: const BoxDecoration(
+                        gradient: LinearGradient(
+                          colors: [Color(0xFFEAF7FF), Color(0xFFCDEBFB)],
+                          begin: Alignment.topRight,
+                          end: Alignment.bottomLeft,
+                        ),
+                      ),
+                      child: SafeArea(
+                        bottom: false,
+                        child: Padding(
+                          padding: const EdgeInsets.fromLTRB(16, 6, 16, 7),
+                          child: Directionality(
+                            textDirection: TextDirection.rtl,
+                            child: Column(
+                              mainAxisAlignment: MainAxisAlignment.center,
+                              children: [
+                                Row(
+                                  children: [
+                                    Material(
+                                      color: Colors.transparent,
+                                      shape: const CircleBorder(),
+                                      child: InkWell(
+                                        key: const ValueKey(
+                                          'home-account-avatar-entry',
+                                        ),
+                                        onTap: _openAccountPage,
+                                        customBorder: const CircleBorder(),
+                                        child: Container(
+                                          width: 34,
+                                          height: 34,
+                                          decoration: BoxDecoration(
+                                            color: Colors.white,
+                                            shape: BoxShape.circle,
+                                            border: Border.all(
+                                              color: const Color(0xFF8CC8E8),
+                                            ),
+                                            boxShadow: const [
+                                              BoxShadow(
+                                                color: Color(0x1A1E40AF),
+                                                blurRadius: 8,
+                                                offset: Offset(0, 3),
+                                              ),
+                                            ],
+                                          ),
+                                          child: const Icon(
+                                            Icons.person_rounded,
+                                            color: Color(0xFF0F6AA8),
+                                          ),
+                                        ),
+                                      ),
+                                    ),
+                                    const SizedBox(width: 10),
+                                    Expanded(
+                                      child: Align(
+                                        alignment: Alignment.centerRight,
+                                        child: Material(
+                                          color: Colors.transparent,
+                                          child: InkWell(
+                                            key: const ValueKey(
+                                              'home-account-entry',
+                                            ),
+                                            onTap: _openAccountPage,
+                                            borderRadius: BorderRadius.circular(
+                                              8,
+                                            ),
+                                            child: const Padding(
+                                              padding: EdgeInsets.symmetric(
+                                                horizontal: 6,
+                                                vertical: 4,
+                                              ),
+                                              child: Text(
+                                                HomeStrings.userName,
+                                                style: TextStyle(
+                                                  fontSize: 13,
+                                                  fontWeight: FontWeight.w800,
+                                                  color: Color(0xFF0B4A73),
+                                                ),
+                                              ),
+                                            ),
+                                          ),
+                                        ),
+                                      ),
+                                    ),
+                                    _HomeHeaderAction(
+                                      tooltip: 'التقويم الذكي',
+                                      icon: Icons.calendar_month_rounded,
+                                      backgroundColor: const Color(0xFFDCFCE7),
+                                      borderColor: const Color(0xFF86EFAC),
+                                      iconColor: const Color(0xFF047857),
+                                      onTap: () => Navigator.of(context).push(
+                                        MaterialPageRoute(
+                                          builder: (_) =>
+                                              const SmartCalendarScreen(),
+                                        ),
+                                      ),
+                                    ),
+                                    const SizedBox(width: 8),
+                                    _HomeHeaderAction(
+                                      tooltip: 'الإشعارات',
+                                      icon: Icons.notifications_none_rounded,
+                                      backgroundColor: const Color(0xFFFFEDD5),
+                                      borderColor: const Color(0xFFFDBA74),
+                                      iconColor: const Color(0xFFB45309),
+                                      showBadge: true,
+                                      onTap: () => Navigator.of(context).push(
+                                        MaterialPageRoute(
+                                          builder: (_) =>
+                                              const NotificationsCenterScreen(),
+                                        ),
+                                      ),
+                                    ),
+                                    const SizedBox(width: 8),
+                                    _HomeHeaderAction(
+                                      tooltip: HomeStrings.raffle,
+                                      icon: Icons.casino_outlined,
+                                      backgroundColor: const Color(0xFFEDE9FE),
+                                      borderColor: const Color(0xFFC4B5FD),
+                                      iconColor: const Color(0xFF6D28D9),
+                                      onTap: () => Navigator.of(context).push(
+                                        MaterialPageRoute(
+                                          builder: (_) => const RaffleScreen(),
+                                        ),
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                                const SizedBox(height: 5),
+                                const Text(
+                                  key: ValueKey('home-header-tagline'),
+                                  HomeStrings.homeTagline,
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  textAlign: TextAlign.center,
+                                  style: TextStyle(
+                                    fontSize: 12.5,
+                                    fontWeight: FontWeight.w900,
+                                    color: Color(0xFF0B3555),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
+                SliverToBoxAdapter(
+                  child: Directionality(
+                    textDirection: TextDirection.rtl,
+                    child: Column(
+                      children: [
+                        const SizedBox(height: 10),
+                        Padding(
+                          padding: const EdgeInsetsDirectional.fromSTEB(
+                            _homeHorizontalInset,
+                            0,
+                            _homeHorizontalInset,
+                            10,
+                          ),
+                          child: Row(
+                            children: [
+                              Expanded(
+                                child: Container(
+                                  decoration: BoxDecoration(
+                                    color: Colors.white,
+                                    borderRadius: BorderRadius.circular(16),
+                                    border: Border.all(
+                                      color: const Color(0xFFE1E8F0),
+                                    ),
+                                    boxShadow: const [
+                                      BoxShadow(
+                                        color: Color(0x0F0F172A),
+                                        blurRadius: 14,
+                                        offset: Offset(0, 5),
+                                      ),
+                                    ],
+                                  ),
+                                  child: TextField(
+                                    controller: _searchController,
+                                    textDirection: TextDirection.rtl,
+                                    decoration: const InputDecoration(
+                                      hintText: HomeStrings.searchHint,
+                                      hintStyle: TextStyle(
+                                        color: Color(0xFF94A3B8),
+                                        fontSize: 13,
+                                        fontWeight: FontWeight.w600,
+                                      ),
+                                      prefixIcon: Icon(
+                                        Icons.search_rounded,
+                                        color: Color(0xFF0F6AA8),
+                                        size: 22,
+                                      ),
+                                      border: InputBorder.none,
+                                      contentPadding: EdgeInsets.symmetric(
+                                        vertical: 15,
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                              ),
+                              const SizedBox(width: 8),
+                              Material(
+                                color: const Color(0xFF0F6AA8),
+                                borderRadius: BorderRadius.circular(12),
+                                child: InkWell(
+                                  onTap: _openHomeFilterSheet,
+                                  borderRadius: BorderRadius.circular(12),
+                                  child: const SizedBox(
+                                    width: 56,
+                                    height: 52,
+                                    child: Center(
+                                      child: Text(
+                                        HomeStrings.filterLabel,
+                                        style: TextStyle(
+                                          color: Colors.white,
+                                          fontSize: 12,
+                                          fontWeight: FontWeight.w800,
+                                        ),
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                        Padding(
+                          padding: const EdgeInsetsDirectional.fromSTEB(
+                            _homeHorizontalInset,
+                            0,
+                            _homeHorizontalInset,
+                            10,
+                          ),
+                          child: _buildSummaryAndPinnedRow(),
+                        ),
+                        Padding(
+                          padding: const EdgeInsets.fromLTRB(16, 16, 16, 12),
+                          child: Row(
+                            textDirection: TextDirection.rtl,
+                            children: [
+                              Tooltip(
+                                message: _showCategoriesInTwoColumns
+                                    ? 'عرض بطاقة واحدة في كل صف'
+                                    : 'عرض بطاقتين في كل صف',
+                                child: Material(
+                                  color: const Color(
+                                    0xFF0F6AA8,
+                                  ).withValues(alpha: 0.1),
+                                  borderRadius: BorderRadius.circular(10),
+                                  child: InkWell(
+                                    key: const ValueKey(
+                                      'home-categories-layout-toggle',
+                                    ),
+                                    onTap: _toggleLayout,
+                                    borderRadius: BorderRadius.circular(10),
+                                    child: Padding(
+                                      padding: const EdgeInsets.all(9),
+                                      child: Icon(
+                                        _showCategoriesInTwoColumns
+                                            ? Icons.grid_view_rounded
+                                            : Icons.view_agenda_rounded,
+                                        color: const Color(0xFF0F6AA8),
+                                        size: 22,
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                              ),
+                              const SizedBox(width: 10),
+                              const Expanded(
+                                child: Text(
+                                  'أدر أموالك وأملاكك باحترافية',
+                                  style: TextStyle(
+                                    fontSize: 17,
+                                    fontWeight: FontWeight.w900,
+                                    color: Color(0xFF0F172A),
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                        if (_isLoadingMetrics)
+                          const Padding(
+                            padding: EdgeInsets.symmetric(vertical: 24),
+                            child: Center(child: CircularProgressIndicator()),
+                          )
+                        else
+                          _buildTopCategories(),
+                        const SizedBox(height: 20),
+                      ],
+                    ),
+                  ),
+                ),
+              ],
+            )
+          : _buildSecondaryTabView(),
+      bottomNavigationBar: _buildBottomNavigation(),
+    );
+  }
+
+  Widget _buildSecondaryTabView() {
+    if (_selectedIndex == 1) {
+      return const _ReportsArchiveHubPage();
+    }
+    if (_selectedIndex == 2) {
+      return const _DelegationsHubPage();
+    }
+    if (_selectedIndex == 3) {
+      return const _WalletsHubPage();
+    }
+    return const ProfileSettingsScreen();
+  }
+
+  Widget _buildTopCategories() {
+    final categories = [
+      (
+        HomeStrings.modulePersonal,
+        Icons.person_outline_rounded,
+        const Color(0xFF3B82F6),
+        [
+          (
+            'ديون لك: ${_formatArabicNumber(_metrics.personalDebtsForYou)}',
+            Icons.south_west_rounded,
+            const Color(0xFF07835C),
+          ),
+          (
+            'ديون عليك: ${_formatArabicNumber(_metrics.personalDebtsOnYou)}',
+            Icons.north_east_rounded,
+            const Color(0xFFC73E4D),
+          ),
+          (
+            'تحتاج متابعة: ${_formatArabicNumber(_metrics.personalNeedsFollowup)}',
+            Icons.task_alt_rounded,
+            const Color(0xFF2563B8),
+          ),
+        ],
+      ),
+      (
+        HomeStrings.moduleShared,
+        Icons.groups_2_outlined,
+        const Color(0xFF10B981),
+        [
+          (
+            'رحلات نشطة: ${_formatArabicNumber(_metrics.sharedActiveTrips)}',
+            Icons.flight_takeoff_rounded,
+            const Color(0xFF087F6A),
+          ),
+          (
+            'جمعيات نشطة: ${_formatArabicNumber(_metrics.sharedActiveCircles)}',
+            Icons.groups_rounded,
+            const Color(0xFF0F766E),
+          ),
+          (
+            'تحتاج متابعة: ${_formatArabicNumber(_metrics.sharedNeedsFollowup)}',
+            Icons.warning_amber_rounded,
+            const Color(0xFFB56A09),
+          ),
+        ],
+      ),
+      (
+        'إدارة الأشخاص والجهات',
+        Icons.people_alt_outlined,
+        const Color(0xFF7956A8),
+        [
+          (
+            'عدد الأفراد: ${_formatArabicNumber(_metrics.peopleCount)}',
+            Icons.person_outline_rounded,
+            const Color(0xFF6D28D9),
+          ),
+          (
+            'عدد الجهات: ${_formatArabicNumber(_metrics.entitiesCount)}',
+            Icons.apartment_outlined,
+            const Color(0xFF7C3AED),
+          ),
+          (
+            'تحتاج متابعة: ${_formatArabicNumber(_metrics.peopleNeedsFollowup)}',
+            Icons.warning_amber_rounded,
+            const Color(0xFFC05A15),
+          ),
+        ],
+      ),
+      (
+        'العقارات/الأنشطة التجارية/المعدات وأخرى',
+        Icons.apartment_rounded,
+        const Color(0xFFF59E0B),
+        [
+          (
+            'عدد العقارات: ${_formatArabicNumber(_metrics.assetsCount)}',
+            Icons.home_work_outlined,
+            const Color(0xFFB45309),
+          ),
+          (
+            'عدد الأنشطة التجارية: ${_formatArabicNumber(_metrics.businessCount)}',
+            Icons.storefront_outlined,
+            const Color(0xFFB45309),
+          ),
+          (
+            'تحتاج متابعة: ${_formatArabicNumber(_metrics.assetsNeedsFollowup)}',
+            Icons.event_busy_outlined,
+            const Color(0xFFC2415D),
+          ),
+        ],
+      ),
+    ];
+
+    final query = _searchController.text.trim();
+    final filteredCategories = categories
+        .where((category) {
+          final matchesFilter =
+              _selectedHomeFilter == HomeStrings.filterAll ||
+              (_selectedHomeFilter == HomeStrings.filterPersonal &&
+                  category.$1 == HomeStrings.modulePersonal) ||
+              (_selectedHomeFilter == HomeStrings.filterShared &&
+                  category.$1 == HomeStrings.moduleShared) ||
+              (_selectedHomeFilter == HomeStrings.filterPeople &&
+                  category.$1 == 'إدارة الأشخاص والجهات') ||
+              (_selectedHomeFilter == HomeStrings.filterAssets &&
+                  category.$1 == 'العقارات/الأنشطة التجارية/المعدات وأخرى');
+
+          final matchesQuery =
+              query.isEmpty ||
+              category.$1.contains(query) ||
+              category.$4.any((metric) => metric.$1.contains(query));
+          return matchesFilter && matchesQuery;
+        })
+        .toList(growable: false);
+
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 16),
+      child: GridView.builder(
+        key: const ValueKey('home-categories-grid'),
+        itemCount: filteredCategories.length,
+        shrinkWrap: true,
+        physics: const NeverScrollableScrollPhysics(),
+        gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
+          crossAxisCount: _showCategoriesInTwoColumns ? 2 : 1,
+          crossAxisSpacing: 12,
+          mainAxisSpacing: 12,
+          mainAxisExtent: _showCategoriesInTwoColumns ? 124 : 108,
+        ),
+        itemBuilder: (context, index) {
+          final category = filteredCategories[index];
+          return KeyedSubtree(
+            key: _categoryKeys[index],
+            child: _buildCategoryTileCompact(
+              category.$1,
+              category.$2,
+              category.$3,
+              category.$4,
+              index,
+              compact: _showCategoriesInTwoColumns,
+            ),
+          );
+        },
+      ),
+    );
+  }
+
+  Widget _buildCategoryTileCompact(
+    String title,
+    IconData icon,
+    Color color,
+    List<(String, IconData, Color)> items,
+    int categoryIndex, {
+    required bool compact,
+  }) {
+    return AnimatedBuilder(
+      animation: _categoryFlashAnimation,
+      builder: (context, child) {
+        final flash = _flashingCategoryIndex == categoryIndex
+            ? _categoryFlashAnimation.value
+            : 0.0;
+        return Container(
+          decoration: BoxDecoration(
+            color: Color.lerp(
+              Colors.white,
+              color.withValues(alpha: 0.18),
+              flash,
+            ),
+            borderRadius: BorderRadius.circular(14),
+            boxShadow: [
+              BoxShadow(
+                color: color.withValues(alpha: 0.1 + (flash * 0.25)),
+                blurRadius: 10 + (flash * 10),
+                offset: Offset(0, 4),
+              ),
+            ],
+            border: Border.all(
+              color: Color.lerp(color.withValues(alpha: 0.14), color, flash)!,
+              width: 1.2 + (flash * 1.8),
+            ),
+          ),
+          child: Material(
+            color: Colors.transparent,
+            borderRadius: BorderRadius.circular(14),
+            clipBehavior: Clip.antiAlias,
+            child: InkWell(
+              key: ValueKey('home-category-$categoryIndex'),
+              onTap: () => _openPriorityScreen(title),
+              onLongPress: () {
+                final shortcut = switch (title) {
+                  HomeStrings.modulePersonal => const HomePinnedShortcut(
+                    id: 'personal',
+                    title: HomeStrings.modulePersonal,
+                  ),
+                  HomeStrings.moduleShared => const HomePinnedShortcut(
+                    id: 'shared',
+                    title: HomeStrings.moduleShared,
+                  ),
+                  'إدارة الأشخاص والجهات' => const HomePinnedShortcut(
+                    id: 'people',
+                    title: HomeStrings.modulePeople,
+                  ),
+                  _ => const HomePinnedShortcut(
+                    id: 'assets',
+                    title: HomeStrings.moduleAssets,
+                  ),
+                };
+                _addPinnedShortcut(shortcut);
+              },
+              borderRadius: BorderRadius.circular(14),
+              child: Padding(
+                padding: EdgeInsets.symmetric(
+                  horizontal: compact ? 10 : 12,
+                  vertical: 10,
+                ),
+                child: child,
+              ),
+            ),
+          ),
+        );
+      },
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.end,
+        children: [
+          Row(
+            textDirection: TextDirection.rtl,
+            children: [
+              _HomeCategoryIcon(icon: icon, color: color),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Text(
+                  key: ValueKey('home-category-title-$categoryIndex'),
+                  title,
+                  maxLines: compact ? 2 : 1,
+                  overflow: TextOverflow.ellipsis,
+                  textAlign: TextAlign.right,
+                  style: TextStyle(
+                    fontSize: compact ? 11.5 : 13.5,
+                    height: 1.2,
+                    fontWeight: FontWeight.w900,
+                    color: const Color(0xFF1F2937),
+                  ),
+                ),
+              ),
+              const SizedBox(width: 6),
+              _HomeCategoryArrow(color: color),
+            ],
+          ),
+          const SizedBox(height: 8),
+          Expanded(
+            child: compact
+                ? ListView.separated(
+                    scrollDirection: Axis.horizontal,
+                    reverse: true,
+                    itemCount: items.length,
+                    separatorBuilder: (_, __) => const SizedBox(width: 6),
+                    itemBuilder: (context, index) {
+                      final item = items[index];
+                      return SizedBox(
+                        width: 116,
+                        child: _HomeCategoryMetric(
+                          label: item.$1,
+                          icon: item.$2,
+                          color: item.$3,
+                          compact: true,
+                        ),
+                      );
+                    },
+                  )
+                : Row(
+                    textDirection: TextDirection.rtl,
+                    children: [
+                      for (var index = 0; index < items.length; index++) ...[
+                        if (index > 0) const SizedBox(width: 7),
+                        Expanded(
+                          child: _HomeCategoryMetric(
+                            label: items[index].$1,
+                            icon: items[index].$2,
+                            color: items[index].$3,
+                            compact: false,
+                          ),
+                        ),
+                      ],
+                    ],
+                  ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  void _openPriorityScreen(String title) {
+    if (title == 'الالتزامات الشخصية') {
+      Navigator.of(context).push(
+        MaterialPageRoute(builder: (_) => const PersonalCommitmentsScreen()),
+      );
+      return;
+    }
+
+    if (title == 'الالتزامات المشتركة') {
+      Navigator.of(context).push(
+        MaterialPageRoute(builder: (_) => const SharedCommitmentsScreen()),
+      );
+      return;
+    }
+
+    if (title == 'إدارة الأشخاص' || title == 'إدارة الأشخاص والجهات') {
+      Navigator.of(
+        context,
+      ).push(MaterialPageRoute(builder: (_) => const PeopleManagementScreen()));
+      return;
+    }
+
+    if (title == 'المشاريع' ||
+        title == 'العقارات والمشاريع والأنشطة والمعدات' ||
+        title == 'العقارات/الأنشطة التجارية/المعدات وأخرى') {
+      Navigator.of(context).push(
+        MaterialPageRoute(builder: (_) => const ProjectsActivitiesScreen()),
+      );
+      return;
+    }
+
+    return;
+  }
+
+  Widget _buildCategoryTile(
+    String title,
+    IconData icon,
+    Color color,
+    List<String> items,
+    int categoryIndex,
+  ) {
+    final bool isPersonalCommitments = title == 'الالتزامات الشخصية';
+
+    return AnimatedBuilder(
+      animation: _categoryFlashAnimation,
+      builder: (context, child) {
+        final flash = _flashingCategoryIndex == categoryIndex
+            ? _categoryFlashAnimation.value
+            : 0.0;
+        return Container(
+          padding: EdgeInsets.all(20),
+          decoration: BoxDecoration(
+            color: Color.lerp(
+              Colors.white,
+              color.withValues(alpha: 0.18),
+              flash,
+            ),
+            borderRadius: BorderRadius.circular(20),
+            boxShadow: [
+              BoxShadow(
+                color: color.withValues(alpha: 0.12 + (flash * 0.25)),
+                blurRadius: 16 + (flash * 10),
+                offset: Offset(0, 8),
+              ),
+            ],
+            border: Border.all(
+              color: Color.lerp(color.withValues(alpha: 0.15), color, flash)!,
+              width: 1.5 + (flash * 1.8),
+            ),
+          ),
+          child: child,
+        );
+      },
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.end,
+        children: [
+          Row(
+            textDirection: TextDirection.rtl,
+            mainAxisAlignment: MainAxisAlignment.spaceBetween,
+            children: [
+              Container(
+                padding: EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  gradient: LinearGradient(
+                    colors: [color.withOpacity(0.2), color.withOpacity(0.08)],
+                  ),
+                  borderRadius: BorderRadius.circular(14),
+                  border: Border.all(color: color.withOpacity(0.2), width: 1),
+                ),
+                child: Icon(icon, color: color, size: 26),
+              ),
+              Expanded(
+                child: Text(
+                  title,
+                  style: TextStyle(
+                    fontSize: 16,
+                    fontWeight: FontWeight.w800,
+                    color: Colors.black87,
+                    letterSpacing: 0.3,
+                  ),
+                  textAlign: TextAlign.right,
+                ),
+              ),
+            ],
+          ),
+          SizedBox(height: 16),
+          ...items.map(
+            (item) => Padding(
+              padding: EdgeInsets.only(bottom: 10),
+              child: Row(
+                textDirection: TextDirection.rtl,
+                children: [
+                  Container(
+                    width: 6,
+                    height: 6,
+                    decoration: BoxDecoration(
+                      gradient: LinearGradient(
+                        colors: [color, color.withOpacity(0.6)],
+                      ),
+                      shape: BoxShape.circle,
+                      boxShadow: [
+                        BoxShadow(color: color.withOpacity(0.4), blurRadius: 4),
+                      ],
+                    ),
+                  ),
+                  SizedBox(width: 10),
+                  Expanded(
+                    child: Text(
+                      item,
+                      style: TextStyle(
+                        fontSize: 13,
+                        fontWeight: FontWeight.w500,
+                        color: Colors.grey[700],
+                        height: 1.4,
+                      ),
+                      textDirection: TextDirection.rtl,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ),
+          if (isPersonalCommitments) ...[
+            SizedBox(height: 6),
+            _buildPersonalCommitmentCards(color),
+          ],
+          SizedBox(height: 12),
+          Align(
+            alignment: Alignment.centerRight,
+            child: GestureDetector(
+              onTap: () => _openPriorityScreen(title),
+              child: Container(
+                padding: EdgeInsets.symmetric(horizontal: 12, vertical: 6),
+                decoration: BoxDecoration(
+                  color: color.withOpacity(0.1),
+                  borderRadius: BorderRadius.circular(10),
+                  border: Border.all(color: color.withOpacity(0.2), width: 1),
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  textDirection: TextDirection.rtl,
+                  children: [
+                    Icon(Icons.arrow_forward, color: color, size: 16),
+                    SizedBox(width: 6),
+                    Text(
+                      'عرض المزيد',
+                      style: TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.w700,
+                        color: color,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildPersonalCommitmentCards(Color color) {
+    return Row(
+      textDirection: TextDirection.rtl,
+      children: [
+        Expanded(
+          child: Container(
+            padding: EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+            decoration: BoxDecoration(
+              gradient: LinearGradient(
+                colors: [Color(0xFFFEE2E2), Color(0xFFFFF1F2)],
+                begin: Alignment.topRight,
+                end: Alignment.bottomLeft,
+              ),
+              borderRadius: BorderRadius.circular(14),
+              border: Border.all(
+                color: Color(0xFFFB7185).withOpacity(0.3),
+                width: 1,
+              ),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.end,
+              children: [
+                Row(
+                  textDirection: TextDirection.rtl,
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    Icon(Icons.south_east, color: Color(0xFFFB7185), size: 16),
+                    Text(
+                      'عليك',
+                      style: TextStyle(
+                        fontSize: 11,
+                        fontWeight: FontWeight.w700,
+                        color: Color(0xFF9F1239),
+                      ),
+                    ),
+                  ],
+                ),
+                SizedBox(height: 8),
+                _buildCurrencyAmount('2,000', Color(0xFFBE123C)),
+              ],
+            ),
+          ),
+        ),
+        SizedBox(width: 10),
+        Expanded(
+          child: Container(
+            padding: EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+            decoration: BoxDecoration(
+              gradient: LinearGradient(
+                colors: [Color(0xFFDCFCE7), Color(0xFFF0FDF4)],
+                begin: Alignment.topRight,
+                end: Alignment.bottomLeft,
+              ),
+              borderRadius: BorderRadius.circular(14),
+              border: Border.all(
+                color: Color(0xFF10B981).withOpacity(0.35),
+                width: 1,
+              ),
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.end,
+              children: [
+                Row(
+                  textDirection: TextDirection.rtl,
+                  mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                  children: [
+                    Icon(Icons.north_west, color: Color(0xFF10B981), size: 16),
+                    Text(
+                      'لك',
+                      style: TextStyle(
+                        fontSize: 11,
+                        fontWeight: FontWeight.w700,
+                        color: Color(0xFF047857),
+                      ),
+                    ),
+                  ],
+                ),
+                SizedBox(height: 8),
+                _buildCurrencyAmount('2,500', Color(0xFF047857)),
+              ],
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _buildCurrencyAmount(String amount, Color amountColor) {
+    return RichText(
+      textDirection: TextDirection.rtl,
+      text: TextSpan(
+        children: [
+          TextSpan(
+            text: amount,
+            style: TextStyle(
+              fontSize: 16,
+              fontWeight: FontWeight.w800,
+              color: amountColor,
+            ),
+          ),
+          WidgetSpan(child: SizedBox(width: 4)),
+          TextSpan(
+            text: 'درهم',
+            style: TextStyle(
+              fontSize: 10,
+              fontWeight: FontWeight.w600,
+              color: amountColor.withOpacity(0.9),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _buildBottomNavigation() {
+    return SafeArea(
+      top: false,
+      child: Padding(
+        padding: const EdgeInsets.fromLTRB(12, 0, 12, 8),
+        child: Directionality(
+          textDirection: TextDirection.rtl,
+          child: Row(
+            children: [
+              Expanded(
+                child: _buildGlassNavItem(
+                  index: 0,
+                  label: 'الرئيسية',
+                  icon: Icons.home_outlined,
+                  selectedIcon: Icons.home_rounded,
+                ),
+              ),
+              Expanded(
+                child: _buildGlassNavItem(
+                  index: 1,
+                  label: 'التقارير/الأرشيف',
+                  icon: Icons.analytics_outlined,
+                  selectedIcon: Icons.analytics_rounded,
+                ),
+              ),
+              Expanded(
+                child: _buildGlassNavItem(
+                  index: 2,
+                  label: 'التفويضات',
+                  icon: Icons.manage_accounts_outlined,
+                  selectedIcon: Icons.manage_accounts_rounded,
+                ),
+              ),
+              Expanded(
+                child: _buildGlassNavItem(
+                  index: 3,
+                  label: 'المحافظ',
+                  icon: Icons.account_balance_wallet_outlined,
+                  selectedIcon: Icons.account_balance_wallet_rounded,
+                ),
+              ),
+              Expanded(
+                child: _buildGlassNavItem(
+                  index: 4,
+                  label: 'المزيد',
+                  icon: Icons.more_horiz_rounded,
+                  selectedIcon: Icons.more_horiz_rounded,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _buildGlassNavItem({
+    required int index,
+    required String label,
+    required IconData icon,
+    required IconData selectedIcon,
+  }) {
+    final isSelected = _selectedIndex == index;
+    return InkWell(
+      onTap: () => setState(() => _selectedIndex = index),
+      borderRadius: BorderRadius.circular(18),
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 2),
+        child: Column(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            _buildGlassNavIcon(isSelected ? selectedIcon : icon, isSelected),
+            const SizedBox(height: 8),
+            SizedBox(
+              height: 16,
+              child: FittedBox(
+                fit: BoxFit.scaleDown,
+                child: Text(
+                  label,
+                  maxLines: 1,
+                  style: TextStyle(
+                    fontSize: 12,
+                    fontWeight: isSelected ? FontWeight.w800 : FontWeight.w600,
+                    color: isSelected
+                        ? const Color(0xFF0F4D86)
+                        : const Color(0xFF64748B),
+                  ),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildGlassNavIcon(IconData icon, bool selected) {
+    return AnimatedContainer(
+      duration: const Duration(milliseconds: 220),
+      curve: Curves.easeOutCubic,
+      width: 44,
+      height: 44,
+      decoration: BoxDecoration(
+        borderRadius: BorderRadius.circular(15),
+        gradient: LinearGradient(
+          colors: selected
+              ? const [Color(0xFF2E4F7D), Color(0xFF192F4B)]
+              : const [Color(0xFF2A3E58), Color(0xFF182536)],
+          begin: Alignment.topLeft,
+          end: Alignment.bottomRight,
+        ),
+        border: Border.all(
+          color: selected ? const Color(0xFF9BE8FF) : const Color(0xFF6B87A7),
+          width: selected ? 1.4 : 1,
+        ),
+        boxShadow: [
+          BoxShadow(
+            color: selected ? const Color(0x6600E5FF) : const Color(0x332F9BFF),
+            blurRadius: selected ? 14 : 8,
+            offset: const Offset(0, 3),
+          ),
+          const BoxShadow(
+            color: Color(0x1AFFFFFF),
+            blurRadius: 1,
+            offset: Offset(0, -1),
+          ),
+        ],
+      ),
+      child: Icon(
+        icon,
+        size: 24,
+        color: selected ? const Color(0xFFA7F3FF) : const Color(0xFF93C5FD),
+      ),
+    );
+  }
+}
+
+class _HomeHeaderAction extends StatelessWidget {
+  const _HomeHeaderAction({
+    required this.tooltip,
+    required this.icon,
+    required this.onTap,
+    this.backgroundColor = const Color(0xD1FFFFFF),
+    this.iconColor = const Color(0xFF0F6AA8),
+    this.borderColor = const Color(0xFFCCE5F4),
+    this.showBadge = false,
+  });
+
+  final String tooltip;
+  final IconData icon;
+  final VoidCallback onTap;
+  final Color backgroundColor;
+  final Color iconColor;
+  final Color borderColor;
+  final bool showBadge;
+
+  @override
+  Widget build(BuildContext context) {
+    return Stack(
+      clipBehavior: Clip.none,
+      children: [
+        Tooltip(
+          message: tooltip,
+          child: Material(
+            color: backgroundColor,
+            borderRadius: BorderRadius.circular(11),
+            child: InkWell(
+              onTap: onTap,
+              borderRadius: BorderRadius.circular(11),
+              child: SizedBox(
+                width: 40,
+                height: 40,
+                child: DecoratedBox(
+                  decoration: BoxDecoration(
+                    border: Border.all(color: borderColor),
+                    borderRadius: BorderRadius.circular(11),
+                  ),
+                  child: Icon(icon, color: iconColor, size: 21),
+                ),
+              ),
+            ),
+          ),
+        ),
+        if (showBadge)
+          Positioned(
+            top: 7,
+            right: 8,
+            child: Container(
+              width: 7,
+              height: 7,
+              decoration: const BoxDecoration(
+                color: Color(0xFFE5484D),
+                shape: BoxShape.circle,
+              ),
+            ),
+          ),
+      ],
+    );
+  }
+}
+
+class _HomeSummaryItem extends StatelessWidget {
+  const _HomeSummaryItem({
+    super.key,
+    required this.title,
+    required this.detail,
+    required this.icon,
+    required this.color,
+    required this.selected,
+    required this.onTap,
+  });
+
+  final String title;
+  final String detail;
+  final IconData icon;
+  final Color color;
+  final bool selected;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: selected ? color.withValues(alpha: 0.11) : const Color(0xFFF8FAFC),
+      borderRadius: BorderRadius.circular(10),
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(10),
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 180),
+          padding: const EdgeInsets.all(10),
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(10),
+            border: Border.all(
+              color: selected
+                  ? color.withValues(alpha: 0.55)
+                  : const Color(0xFFE4EAF0),
+              width: selected ? 1.4 : 1,
+            ),
+          ),
+          child: Row(
+            textDirection: TextDirection.rtl,
+            children: [
+              Container(
+                width: 38,
+                height: 38,
+                decoration: BoxDecoration(
+                  color: color.withValues(alpha: 0.11),
+                  borderRadius: BorderRadius.circular(9),
+                ),
+                child: Icon(icon, color: color, size: 20),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      title,
+                      style: const TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.w900,
+                        color: Color(0xFF1F2937),
+                      ),
+                    ),
+                    const SizedBox(height: 3),
+                    Text(
+                      detail,
+                      maxLines: 2,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        fontSize: 10.5,
+                        height: 1.3,
+                        fontWeight: FontWeight.w600,
+                        color: Color(0xFF64748B),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(width: 7),
+              Icon(
+                selected
+                    ? Icons.check_circle_rounded
+                    : Icons.radio_button_unchecked_rounded,
+                color: selected ? color : const Color(0xFFB6C1CD),
+                size: 20,
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _HomeCategoryIcon extends StatelessWidget {
+  const _HomeCategoryIcon({required this.icon, required this.color});
+
+  final IconData icon;
+  final Color color;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.all(8),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.12),
+        borderRadius: BorderRadius.circular(10),
+      ),
+      child: Icon(icon, color: color, size: 18),
+    );
+  }
+}
+
+class _HomeCategoryArrow extends StatelessWidget {
+  const _HomeCategoryArrow({required this.color});
+
+  final Color color;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      width: 27,
+      height: 27,
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.09),
+        shape: BoxShape.circle,
+      ),
+      child: Icon(Icons.arrow_forward_ios_rounded, color: color, size: 12),
+    );
+  }
+}
+
+class _HomeCategoryMetric extends StatelessWidget {
+  const _HomeCategoryMetric({
+    required this.label,
+    required this.icon,
+    required this.color,
+    required this.compact,
+  });
+
+  final String label;
+  final IconData icon;
+  final Color color;
+  final bool compact;
+
+  @override
+  Widget build(BuildContext context) {
+    final metricTextStyle = TextStyle(
+      fontSize: compact ? 11.2 : 12.2,
+      fontWeight: FontWeight.w800,
+      height: 1.1,
+      color: color,
+      fontFamilyFallback: const ['Cairo', 'Noto Kufi Arabic', 'Tahoma'],
+    );
+
+    return SizedBox(
+      width: double.infinity,
+      height: compact ? 31 : 30,
+      child: Row(
+        textDirection: TextDirection.rtl,
+        children: [
+          Icon(icon, color: color, size: compact ? 14 : 16),
+          SizedBox(width: compact ? 5 : 7),
+          Expanded(
+            child: Align(
+              alignment: Alignment.centerRight,
+              child: FittedBox(
+                fit: BoxFit.scaleDown,
+                alignment: Alignment.centerRight,
+                child: Text(label, maxLines: 1, style: metricTextStyle),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _ReportsArchiveHubPage extends StatelessWidget {
+  const _ReportsArchiveHubPage();
+
+  @override
+  Widget build(BuildContext context) {
+    const reportTemplates = [
+      (
+        'تقرير التزام',
+        'ملخص حالة التزام واحد مع الدفعات والملاحظات',
+        Icons.task_alt_rounded,
+        Color(0xFF2563EB),
+      ),
+      (
+        'تقرير اشتراك',
+        'متابعة التجديدات والمبالغ والحالة الشهرية',
+        Icons.event_repeat_rounded,
+        Color(0xFF0EA5A8),
+      ),
+      (
+        'تقرير ديون',
+        'صافي الديون لك وعليك مع أولويات التحصيل',
+        Icons.balance_rounded,
+        Color(0xFFB45309),
+      ),
+      (
+        'تقرير عقار/نشاط',
+        'ملخص الأداء والعقود والمصاريف المرتبطة',
+        Icons.apartment_rounded,
+        Color(0xFF7C3AED),
+      ),
+    ];
+
+    const archiveSections = [
+      (
+        'الالتزامات المؤرشفة',
+        '14 عنصر',
+        Icons.inventory_2_outlined,
+        Color(0xFF6366F1),
+      ),
+      (
+        'الاشتراكات المنتهية',
+        '6 عناصر',
+        Icons.event_busy_outlined,
+        Color(0xFFEA580C),
+      ),
+      (
+        'المستندات القديمة',
+        '21 ملف',
+        Icons.folder_open_outlined,
+        Color(0xFF0EA5A8),
+      ),
+      ('دفعات مكتملة', '33 عملية', Icons.paid_outlined, Color(0xFF16A34A)),
+    ];
+
+    return DefaultTabController(
+      length: 2,
+      child: Scaffold(
+        backgroundColor: const Color(0xFFF5F8FC),
+        appBar: AppBar(
+          title: const Text('التقارير / الأرشيف'),
+          centerTitle: true,
+          bottom: const TabBar(
+            tabs: [
+              Tab(text: 'التقارير'),
+              Tab(text: 'الأرشيف'),
+            ],
+          ),
+        ),
+        body: Directionality(
+          textDirection: TextDirection.rtl,
+          child: TabBarView(
+            children: [
+              ListView(
+                padding: const EdgeInsets.fromLTRB(16, 16, 16, 20),
+                children: [
+                  const Text(
+                    'أنشئ تقريراً عاماً أو تقريراً متخصصاً بسرعة ووضوح',
+                    style: TextStyle(
+                      fontSize: 13,
+                      fontWeight: FontWeight.w600,
+                      color: Color(0xFF64748B),
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  Container(
+                    padding: const EdgeInsets.all(14),
+                    decoration: BoxDecoration(
+                      color: Colors.white,
+                      borderRadius: BorderRadius.circular(14),
+                      border: Border.all(color: const Color(0xFFE2E8F0)),
+                    ),
+                    child: Column(
+                      children: [
+                        const Row(
+                          children: [
+                            Icon(
+                              Icons.summarize_outlined,
+                              color: Color(0xFF0F6AA8),
+                            ),
+                            SizedBox(width: 8),
+                            Expanded(
+                              child: Text(
+                                'إنشاء تقرير عام',
+                                style: TextStyle(
+                                  fontSize: 15,
+                                  fontWeight: FontWeight.w900,
+                                  color: Color(0xFF0F172A),
+                                ),
+                              ),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 10),
+                        TextFormField(
+                          initialValue: 'تقرير متابعة شهر أغسطس',
+                          decoration: InputDecoration(
+                            labelText: 'عنوان التقرير',
+                            border: OutlineInputBorder(
+                              borderRadius: BorderRadius.circular(12),
+                            ),
+                          ),
+                        ),
+                        const SizedBox(height: 10),
+                        FilledButton.icon(
+                          onPressed: () =>
+                              ScaffoldMessenger.of(context).showSnackBar(
+                                const SnackBar(
+                                  content: Text(
+                                    'تم تجهيز التقرير العام بنجاح',
+                                    textDirection: TextDirection.rtl,
+                                  ),
+                                ),
+                              ),
+                          icon: const Icon(Icons.file_download_done_rounded),
+                          label: const Text('إنشئ الآن'),
+                        ),
+                      ],
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  ...reportTemplates.map(
+                    (item) => Container(
+                      margin: const EdgeInsets.only(bottom: 10),
+                      padding: const EdgeInsets.all(12),
+                      decoration: BoxDecoration(
+                        color: Colors.white,
+                        borderRadius: BorderRadius.circular(14),
+                        border: Border.all(color: const Color(0xFFE2E8F0)),
+                      ),
+                      child: Row(
+                        children: [
+                          Container(
+                            width: 36,
+                            height: 36,
+                            decoration: BoxDecoration(
+                              color: item.$4.withValues(alpha: 0.12),
+                              borderRadius: BorderRadius.circular(10),
+                            ),
+                            child: Icon(item.$3, color: item.$4, size: 20),
+                          ),
+                          const SizedBox(width: 10),
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  item.$1,
+                                  style: const TextStyle(
+                                    fontSize: 14,
+                                    fontWeight: FontWeight.w900,
+                                    color: Color(0xFF0F172A),
+                                  ),
+                                ),
+                                const SizedBox(height: 3),
+                                Text(
+                                  item.$2,
+                                  style: const TextStyle(
+                                    fontSize: 11,
+                                    fontWeight: FontWeight.w600,
+                                    color: Color(0xFF64748B),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+              ListView(
+                padding: const EdgeInsets.fromLTRB(16, 16, 16, 20),
+                children: [
+                  const Text(
+                    'استرجاع ومراجعة العناصر السابقة بسرعة',
+                    style: TextStyle(
+                      fontSize: 13,
+                      fontWeight: FontWeight.w600,
+                      color: Color(0xFF64748B),
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  ...archiveSections.map(
+                    (item) => Container(
+                      margin: const EdgeInsets.only(bottom: 10),
+                      padding: const EdgeInsets.all(12),
+                      decoration: BoxDecoration(
+                        color: Colors.white,
+                        borderRadius: BorderRadius.circular(14),
+                        border: Border.all(color: const Color(0xFFE2E8F0)),
+                      ),
+                      child: Row(
+                        children: [
+                          Icon(item.$3, color: item.$4, size: 22),
+                          const SizedBox(width: 10),
+                          Expanded(
+                            child: Text(
+                              item.$1,
+                              style: const TextStyle(
+                                fontSize: 14,
+                                fontWeight: FontWeight.w900,
+                                color: Color(0xFF0F172A),
+                              ),
+                            ),
+                          ),
+                          Text(
+                            item.$2,
+                            style: TextStyle(
+                              fontSize: 12,
+                              fontWeight: FontWeight.w800,
+                              color: item.$4,
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _DelegationsHubPage extends StatefulWidget {
+  const _DelegationsHubPage();
+
+  @override
+  State<_DelegationsHubPage> createState() => _DelegationsHubPageState();
+}
+
+class _DelegationsHubPageState extends State<_DelegationsHubPage> {
+  String _selectedFilter = 'all';
+  late final List<_DelegationRecord> _delegations = [
+    _DelegationRecord(
+      delegateName: 'أحمد محمد',
+      delegationType: 'إدارة مالية',
+      permissions: const ['عرض البيانات', 'إضافة بيانات', 'تعديل البيانات'],
+      startDate: DateTime(2024, 9, 1),
+      endDate: DateTime(2025, 9, 1),
+      active: true,
+    ),
+    _DelegationRecord(
+      delegateName: 'شركة الأمان',
+      delegationType: 'إدارة عقارات ومشاريع',
+      permissions: const ['عرض البيانات'],
+      startDate: DateTime(2024, 1, 1),
+      endDate: DateTime(2024, 8, 1),
+      active: false,
+    ),
+  ];
+
+  String _formatDate(DateTime date) {
+    final d = date.day.toString().padLeft(2, '0');
+    final m = date.month.toString().padLeft(2, '0');
+    final y = date.year.toString();
+    return '$d/$m/$y';
+  }
+
+  bool _isExpiringSoon(_DelegationRecord d) {
+    if (!d.active) return false;
+    final now = DateTime.now();
+    final remaining = d.endDate.difference(now).inDays;
+    return remaining >= 0 && remaining <= 30;
+  }
+
+  bool _isEnded(_DelegationRecord d) {
+    final now = DateTime.now();
+    return !d.active || d.endDate.isBefore(now);
+  }
+
+  List<_DelegationRecord> _filteredDelegations() {
+    if (_selectedFilter == 'active') {
+      return _delegations
+          .where((d) => d.active && !_isExpiringSoon(d))
+          .toList(growable: false);
+    }
+    if (_selectedFilter == 'expiring') {
+      return _delegations.where(_isExpiringSoon).toList(growable: false);
+    }
+    if (_selectedFilter == 'ended') {
+      return _delegations.where(_isEnded).toList(growable: false);
+    }
+    return List<_DelegationRecord>.from(_delegations);
+  }
+
+  void _openCreateSheet({_DelegationRecord? existing, int? index}) {
+    final delegateController = TextEditingController(
+      text: existing?.delegateName ?? '',
+    );
+    final types = const [
+      'إدارة مالية',
+      'إدارة عقارات',
+      'إدارة عقارات ومشاريع',
+      'إدارة كاملة',
+    ];
+    String selectedType = existing?.delegationType ?? types.first;
+    final allPermissions = const [
+      'عرض البيانات',
+      'إضافة بيانات',
+      'تعديل البيانات',
+      'إدارة كاملة',
+    ];
+    final selectedPermissions = <String>{
+      ...?existing?.permissions,
+      if (existing == null) 'عرض البيانات',
+    };
+    DateTime startDate = existing?.startDate ?? DateTime.now();
+    DateTime endDate =
+        existing?.endDate ?? DateTime.now().add(const Duration(days: 365));
+
+    showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (context) {
+        return StatefulBuilder(
+          builder: (context, setModalState) {
+            return SafeArea(
+              top: false,
+              child: Container(
+                padding: EdgeInsets.fromLTRB(
+                  16,
+                  12,
+                  16,
+                  MediaQuery.of(context).viewInsets.bottom + 16,
+                ),
+                decoration: const BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+                ),
+                child: SingleChildScrollView(
+                  child: Directionality(
+                    textDirection: TextDirection.rtl,
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        Row(
+                          children: [
+                            IconButton(
+                              onPressed: () => Navigator.pop(context),
+                              icon: const Icon(Icons.close_rounded),
+                            ),
+                            const Expanded(
+                              child: Text(
+                                'تفويض جديد',
+                                textAlign: TextAlign.center,
+                                style: TextStyle(
+                                  fontSize: 20,
+                                  fontWeight: FontWeight.w900,
+                                  color: Color(0xFF0F172A),
+                                ),
+                              ),
+                            ),
+                            const SizedBox(width: 44),
+                          ],
+                        ),
+                        const SizedBox(height: 8),
+                        const Text(
+                          'اسم المفوض',
+                          style: TextStyle(
+                            fontWeight: FontWeight.w700,
+                            color: Color(0xFF334155),
+                          ),
+                        ),
+                        const SizedBox(height: 6),
+                        TextField(
+                          controller: delegateController,
+                          textDirection: TextDirection.rtl,
+                          decoration: InputDecoration(
+                            hintText: 'ادخل اسم الشخص او الجهة المفوضة',
+                            border: OutlineInputBorder(
+                              borderRadius: BorderRadius.circular(12),
+                            ),
+                            suffixIcon: const Icon(
+                              Icons.person_outline_rounded,
+                            ),
+                          ),
+                        ),
+                        const SizedBox(height: 10),
+                        const Text(
+                          'نوع التفويض',
+                          style: TextStyle(
+                            fontWeight: FontWeight.w700,
+                            color: Color(0xFF334155),
+                          ),
+                        ),
+                        const SizedBox(height: 6),
+                        DropdownButtonFormField<String>(
+                          initialValue: selectedType,
+                          decoration: InputDecoration(
+                            border: OutlineInputBorder(
+                              borderRadius: BorderRadius.circular(12),
+                            ),
+                            isDense: true,
+                          ),
+                          items: types
+                              .map(
+                                (e) => DropdownMenuItem<String>(
+                                  value: e,
+                                  child: Text(e),
+                                ),
+                              )
+                              .toList(growable: false),
+                          onChanged: (v) {
+                            if (v == null) return;
+                            setModalState(() => selectedType = v);
+                          },
+                        ),
+                        const SizedBox(height: 10),
+                        const Text(
+                          'الصلاحيات',
+                          style: TextStyle(
+                            fontWeight: FontWeight.w700,
+                            color: Color(0xFF334155),
+                          ),
+                        ),
+                        const SizedBox(height: 4),
+                        ...allPermissions.map(
+                          (permission) => CheckboxListTile(
+                            dense: true,
+                            contentPadding: EdgeInsets.zero,
+                            value: selectedPermissions.contains(permission),
+                            title: Text(permission),
+                            controlAffinity: ListTileControlAffinity.leading,
+                            onChanged: (selected) {
+                              setModalState(() {
+                                if (selected == true) {
+                                  selectedPermissions.add(permission);
+                                } else {
+                                  selectedPermissions.remove(permission);
+                                }
+                              });
+                            },
+                          ),
+                        ),
+                        const SizedBox(height: 6),
+                        Row(
+                          children: [
+                            Expanded(
+                              child: _DateFieldTile(
+                                label: 'تاريخ البداية',
+                                value: _formatDate(startDate),
+                                onTap: () async {
+                                  final picked = await showDatePicker(
+                                    context: context,
+                                    initialDate: startDate,
+                                    firstDate: DateTime(2020),
+                                    lastDate: DateTime(2035),
+                                  );
+                                  if (picked == null) return;
+                                  setModalState(() => startDate = picked);
+                                },
+                              ),
+                            ),
+                            const SizedBox(width: 10),
+                            Expanded(
+                              child: _DateFieldTile(
+                                label: 'تاريخ النهاية',
+                                value: _formatDate(endDate),
+                                onTap: () async {
+                                  final picked = await showDatePicker(
+                                    context: context,
+                                    initialDate: endDate,
+                                    firstDate: DateTime(2020),
+                                    lastDate: DateTime(2035),
+                                  );
+                                  if (picked == null) return;
+                                  setModalState(() => endDate = picked);
+                                },
+                              ),
+                            ),
+                          ],
+                        ),
+                        const SizedBox(height: 14),
+                        FilledButton.icon(
+                          onPressed: () {
+                            final name = delegateController.text.trim();
+                            if (name.isEmpty || selectedPermissions.isEmpty) {
+                              return;
+                            }
+                            final record = _DelegationRecord(
+                              delegateName: name,
+                              delegationType: selectedType,
+                              permissions: selectedPermissions.toList(
+                                growable: false,
+                              ),
+                              startDate: startDate,
+                              endDate: endDate,
+                              active: true,
+                            );
+                            setState(() {
+                              if (index != null && existing != null) {
+                                _delegations[index] = record;
+                              } else {
+                                _delegations.insert(0, record);
+                              }
+                              _selectedFilter = 'all';
+                            });
+                            Navigator.pop(context);
+                          },
+                          style: FilledButton.styleFrom(
+                            backgroundColor: const Color(0xFF4F46E5),
+                            foregroundColor: Colors.white,
+                            padding: const EdgeInsets.symmetric(vertical: 14),
+                            shape: RoundedRectangleBorder(
+                              borderRadius: BorderRadius.circular(12),
+                            ),
+                          ),
+                          icon: const Icon(Icons.check_rounded),
+                          label: Text(
+                            index == null ? 'حفظ التفويض' : 'حفظ التعديل',
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+            );
+          },
+        );
+      },
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    final activeCount = _delegations
+        .where((d) => d.active && !_isExpiringSoon(d))
+        .length;
+    final expiringCount = _delegations.where(_isExpiringSoon).length;
+    final filtered = _filteredDelegations();
+
+    return Scaffold(
+      backgroundColor: const Color(0xFFF5F8FC),
+      appBar: AppBar(title: const Text('التفويضات'), centerTitle: true),
+      body: Directionality(
+        textDirection: TextDirection.rtl,
+        child: ListView(
+          padding: const EdgeInsets.fromLTRB(16, 16, 16, 22),
+          children: [
+            Container(
+              padding: const EdgeInsets.all(14),
+              decoration: BoxDecoration(
+                gradient: const LinearGradient(
+                  colors: [Color(0xFFDDE6FF), Color(0xFFF2F5FF)],
+                  begin: Alignment.topRight,
+                  end: Alignment.bottomLeft,
+                ),
+                borderRadius: BorderRadius.circular(14),
+              ),
+              child: const Row(
+                children: [
+                  Icon(Icons.manage_accounts_rounded, color: Color(0xFF3349CC)),
+                  SizedBox(width: 10),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.end,
+                      children: [
+                        Text(
+                          'إدارة التفويضات بسهولة',
+                          style: TextStyle(
+                            fontSize: 21,
+                            fontWeight: FontWeight.w900,
+                            color: Color(0xFF1F3BC5),
+                          ),
+                        ),
+                        SizedBox(height: 3),
+                        Text(
+                          'أضف مفوضين لإدارة أعمالك نيابة عنك',
+                          style: TextStyle(
+                            fontSize: 13,
+                            fontWeight: FontWeight.w700,
+                            color: Color(0xFF334155),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 12),
+            Row(
+              children: [
+                Expanded(
+                  child: _DelegationStatCard(
+                    value: '$activeCount',
+                    label: 'مفوض نشط',
+                    color: const Color(0xFF10B981),
+                    icon: Icons.check_circle_rounded,
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: _DelegationStatCard(
+                    value: '$expiringCount',
+                    label: 'ينتهي قريباً',
+                    color: const Color(0xFFF59E0B),
+                    icon: Icons.schedule_rounded,
+                  ),
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: _DelegationStatCard(
+                    value: '${_delegations.length}',
+                    label: 'إجمالي التفويضات',
+                    color: const Color(0xFF6366F1),
+                    icon: Icons.group_outlined,
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 12),
+            FilledButton.icon(
+              onPressed: _openCreateSheet,
+              style: FilledButton.styleFrom(
+                backgroundColor: const Color(0xFF4F46E5),
+                foregroundColor: Colors.white,
+                padding: const EdgeInsets.symmetric(vertical: 14),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(14),
+                ),
+              ),
+              icon: const Icon(Icons.add_rounded),
+              label: const Text(
+                'إنشاء تفويض جديد',
+                style: TextStyle(fontWeight: FontWeight.w900),
+              ),
+            ),
+            const SizedBox(height: 12),
+            SizedBox(
+              height: 36,
+              child: ListView(
+                scrollDirection: Axis.horizontal,
+                reverse: true,
+                children: [
+                  _DelegationFilterChip(
+                    label: 'الكل',
+                    count: _delegations.length,
+                    selected: _selectedFilter == 'all',
+                    onTap: () => setState(() => _selectedFilter = 'all'),
+                  ),
+                  _DelegationFilterChip(
+                    label: 'النشطة',
+                    count: activeCount,
+                    selected: _selectedFilter == 'active',
+                    onTap: () => setState(() => _selectedFilter = 'active'),
+                  ),
+                  _DelegationFilterChip(
+                    label: 'المنتهية',
+                    count: _delegations.where(_isEnded).length,
+                    selected: _selectedFilter == 'ended',
+                    onTap: () => setState(() => _selectedFilter = 'ended'),
+                  ),
+                  _DelegationFilterChip(
+                    label: 'ينتهي قريباً',
+                    count: expiringCount,
+                    selected: _selectedFilter == 'expiring',
+                    onTap: () => setState(() => _selectedFilter = 'expiring'),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 10),
+            ...filtered.asMap().entries.map((entry) {
+              final i = entry.key;
+              final item = entry.value;
+              final statusLabel = _isEnded(item)
+                  ? 'منتهية'
+                  : (_isExpiringSoon(item) ? 'متبقية' : 'نشط');
+              final statusColor = _isEnded(item)
+                  ? const Color(0xFF94A3B8)
+                  : (_isExpiringSoon(item)
+                        ? const Color(0xFFF59E0B)
+                        : const Color(0xFF10B981));
+              return Container(
+                margin: const EdgeInsets.only(bottom: 10),
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(14),
+                  border: Border.all(color: const Color(0xFFE2E8F0)),
+                ),
+                child: ListTile(
+                  contentPadding: const EdgeInsetsDirectional.fromSTEB(
+                    12,
+                    8,
+                    12,
+                    8,
+                  ),
+                  onTap: () => Navigator.of(context).push(
+                    MaterialPageRoute(
+                      builder: (_) => _DelegationDetailsPage(record: item),
+                    ),
+                  ),
+                  title: Row(
+                    children: [
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 8,
+                          vertical: 3,
+                        ),
+                        decoration: BoxDecoration(
+                          color: statusColor.withValues(alpha: 0.14),
+                          borderRadius: BorderRadius.circular(99),
+                        ),
+                        child: Text(
+                          statusLabel,
+                          style: TextStyle(
+                            fontSize: 10,
+                            fontWeight: FontWeight.w800,
+                            color: statusColor,
+                          ),
+                        ),
+                      ),
+                      const Spacer(),
+                      Text(
+                        item.delegateName,
+                        style: const TextStyle(
+                          fontSize: 23,
+                          fontWeight: FontWeight.w900,
+                          color: Color(0xFF0F172A),
+                        ),
+                      ),
+                    ],
+                  ),
+                  subtitle: Padding(
+                    padding: const EdgeInsets.only(top: 6),
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.end,
+                      children: [
+                        Text(
+                          'مفوض لـ${item.delegationType}',
+                          style: const TextStyle(
+                            fontSize: 15,
+                            color: Color(0xFF475569),
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                        const SizedBox(height: 3),
+                        Text(
+                          '${_formatDate(item.startDate)} - ${_formatDate(item.endDate)}',
+                          style: const TextStyle(
+                            fontSize: 13,
+                            color: Color(0xFF64748B),
+                            fontWeight: FontWeight.w700,
+                          ),
+                        ),
+                        const SizedBox(height: 3),
+                        Text(
+                          'يمكنه ${item.permissions.join('، ')}',
+                          style: const TextStyle(
+                            fontSize: 12,
+                            color: Color(0xFF64748B),
+                            fontWeight: FontWeight.w600,
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                  leading: PopupMenuButton<String>(
+                    onSelected: (action) {
+                      if (action == 'view') {
+                        Navigator.of(context).push(
+                          MaterialPageRoute(
+                            builder: (_) =>
+                                _DelegationDetailsPage(record: item),
+                          ),
+                        );
+                        return;
+                      }
+                      if (action == 'edit') {
+                        _openCreateSheet(existing: item, index: i);
+                        return;
+                      }
+                      if (action == 'toggle') {
+                        setState(() {
+                          _delegations[i] = item.copyWith(active: !item.active);
+                        });
+                        return;
+                      }
+                      if (action == 'delete') {
+                        setState(() => _delegations.removeAt(i));
+                      }
+                    },
+                    itemBuilder: (context) => const [
+                      PopupMenuItem(
+                        value: 'view',
+                        child: Text('تفاصيل التفويض'),
+                      ),
+                      PopupMenuItem(
+                        value: 'edit',
+                        child: Text('تعديل التفويض'),
+                      ),
+                      PopupMenuItem(
+                        value: 'toggle',
+                        child: Text('تفعيل / إيقاف'),
+                      ),
+                      PopupMenuItem(value: 'delete', child: Text('حذف')),
+                    ],
+                    icon: const Icon(Icons.more_vert_rounded),
+                  ),
+                ),
+              );
+            }),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _DelegationRecord {
+  const _DelegationRecord({
+    required this.delegateName,
+    required this.delegationType,
+    required this.permissions,
+    required this.startDate,
+    required this.endDate,
+    required this.active,
+  });
+
+  final String delegateName;
+  final String delegationType;
+  final List<String> permissions;
+  final DateTime startDate;
+  final DateTime endDate;
+  final bool active;
+
+  _DelegationRecord copyWith({
+    String? delegateName,
+    String? delegationType,
+    List<String>? permissions,
+    DateTime? startDate,
+    DateTime? endDate,
+    bool? active,
+  }) {
+    return _DelegationRecord(
+      delegateName: delegateName ?? this.delegateName,
+      delegationType: delegationType ?? this.delegationType,
+      permissions: permissions ?? this.permissions,
+      startDate: startDate ?? this.startDate,
+      endDate: endDate ?? this.endDate,
+      active: active ?? this.active,
+    );
+  }
+}
+
+class _DelegationStatCard extends StatelessWidget {
+  const _DelegationStatCard({
+    required this.value,
+    required this.label,
+    required this.color,
+    required this.icon,
+  });
+
+  final String value;
+  final String label;
+  final Color color;
+  final IconData icon;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 10),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: const Color(0xFFE2E8F0)),
+      ),
+      child: Column(
+        children: [
+          Icon(icon, color: color, size: 16),
+          const SizedBox(height: 3),
+          Text(
+            value,
+            style: TextStyle(
+              fontSize: 22,
+              color: color,
+              fontWeight: FontWeight.w900,
+            ),
+          ),
+          Text(
+            label,
+            textAlign: TextAlign.center,
+            style: const TextStyle(
+              fontSize: 15,
+              color: Color(0xFF475569),
+              fontWeight: FontWeight.w700,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _DelegationFilterChip extends StatelessWidget {
+  const _DelegationFilterChip({
+    required this.label,
+    required this.count,
+    required this.selected,
+    required this.onTap,
+  });
+
+  final String label;
+  final int count;
+  final bool selected;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsetsDirectional.only(start: 8),
+      child: InkWell(
+        onTap: onTap,
+        borderRadius: BorderRadius.circular(99),
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
+          decoration: BoxDecoration(
+            color: selected ? const Color(0xFFE6E9FF) : Colors.white,
+            borderRadius: BorderRadius.circular(99),
+            border: Border.all(
+              color: selected
+                  ? const Color(0xFF4F46E5)
+                  : const Color(0xFFE2E8F0),
+            ),
+          ),
+          child: Text(
+            '$label  $count',
+            style: TextStyle(
+              fontSize: 12,
+              fontWeight: FontWeight.w800,
+              color: selected
+                  ? const Color(0xFF4338CA)
+                  : const Color(0xFF475569),
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+}
+
+class _DateFieldTile extends StatelessWidget {
+  const _DateFieldTile({
+    required this.label,
+    required this.value,
+    required this.onTap,
+  });
+
+  final String label;
+  final String value;
+  final VoidCallback onTap;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.end,
+      children: [
+        Text(
+          label,
+          style: const TextStyle(
+            fontWeight: FontWeight.w700,
+            color: Color(0xFF334155),
+          ),
+        ),
+        const SizedBox(height: 6),
+        InkWell(
+          onTap: onTap,
+          borderRadius: BorderRadius.circular(12),
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 12),
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(color: const Color(0xFFE2E8F0)),
+            ),
+            child: Row(
+              children: [
+                const Icon(Icons.calendar_month_outlined, size: 18),
+                const SizedBox(width: 6),
+                Expanded(
+                  child: Text(
+                    value,
+                    textAlign: TextAlign.right,
+                    style: const TextStyle(fontWeight: FontWeight.w700),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+class _DelegationDetailsPage extends StatelessWidget {
+  const _DelegationDetailsPage({required this.record});
+
+  final _DelegationRecord record;
+
+  String _formatDate(DateTime date) {
+    final d = date.day.toString().padLeft(2, '0');
+    final m = date.month.toString().padLeft(2, '0');
+    final y = date.year.toString();
+    return '$d/$m/$y';
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: const Color(0xFFF5F8FC),
+      appBar: AppBar(title: const Text('تفاصيل التفويض'), centerTitle: true),
+      body: Directionality(
+        textDirection: TextDirection.rtl,
+        child: ListView(
+          padding: const EdgeInsets.fromLTRB(16, 16, 16, 22),
+          children: [
+            Container(
+              padding: const EdgeInsets.all(14),
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(14),
+                border: Border.all(color: const Color(0xFFE2E8F0)),
+              ),
+              child: Row(
+                children: [
+                  Container(
+                    width: 44,
+                    height: 44,
+                    decoration: BoxDecoration(
+                      color: const Color(0xFFE8EBFF),
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    child: const Icon(
+                      Icons.person_outline_rounded,
+                      color: Color(0xFF4F46E5),
+                    ),
+                  ),
+                  const SizedBox(width: 10),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.end,
+                      children: [
+                        Text(
+                          record.delegateName,
+                          style: const TextStyle(
+                            fontSize: 18,
+                            fontWeight: FontWeight.w900,
+                            color: Color(0xFF0F172A),
+                          ),
+                        ),
+                        const SizedBox(height: 3),
+                        Text(
+                          'مفوض لـ${record.delegationType}',
+                          style: const TextStyle(
+                            fontSize: 13,
+                            fontWeight: FontWeight.w700,
+                            color: Color(0xFF64748B),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 12),
+            Container(
+              padding: const EdgeInsets.all(14),
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(14),
+                border: Border.all(color: const Color(0xFFE2E8F0)),
+              ),
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.end,
+                children: [
+                  const Text(
+                    'فترة التفويض',
+                    style: TextStyle(
+                      fontSize: 14,
+                      fontWeight: FontWeight.w900,
+                      color: Color(0xFF0F172A),
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  Text(
+                    '${_formatDate(record.startDate)} - ${_formatDate(record.endDate)}',
+                    style: const TextStyle(
+                      fontSize: 13,
+                      fontWeight: FontWeight.w700,
+                      color: Color(0xFF334155),
+                    ),
+                  ),
+                  const SizedBox(height: 12),
+                  const Text(
+                    'الصلاحيات',
+                    style: TextStyle(
+                      fontSize: 14,
+                      fontWeight: FontWeight.w900,
+                      color: Color(0xFF0F172A),
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  ...record.permissions.map(
+                    (permission) => Padding(
+                      padding: const EdgeInsets.only(bottom: 6),
+                      child: Row(
+                        children: [
+                          const Icon(
+                            Icons.check_circle_rounded,
+                            size: 17,
+                            color: Color(0xFF10B981),
+                          ),
+                          const SizedBox(width: 7),
+                          Expanded(
+                            child: Text(
+                              permission,
+                              textAlign: TextAlign.right,
+                              style: const TextStyle(
+                                fontSize: 13,
+                                fontWeight: FontWeight.w700,
+                                color: Color(0xFF334155),
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _ArchiveHubPage extends StatelessWidget {
+  const _ArchiveHubPage();
+
+  @override
+  Widget build(BuildContext context) {
+    const archiveSections = [
+      (
+        'الالتزامات المؤرشفة',
+        '14 عنصر',
+        Icons.inventory_2_outlined,
+        Color(0xFF6366F1),
+      ),
+      (
+        'الاشتراكات المنتهية',
+        '6 عناصر',
+        Icons.event_busy_outlined,
+        Color(0xFFEA580C),
+      ),
+      (
+        'المستندات القديمة',
+        '21 ملف',
+        Icons.folder_open_outlined,
+        Color(0xFF0EA5A8),
+      ),
+      ('دفعات مكتملة', '33 عملية', Icons.paid_outlined, Color(0xFF16A34A)),
+    ];
+
+    return Scaffold(
+      backgroundColor: const Color(0xFFF5F8FC),
+      appBar: AppBar(title: const Text('الأرشيف'), centerTitle: true),
+      body: Directionality(
+        textDirection: TextDirection.rtl,
+        child: ListView(
+          padding: const EdgeInsets.fromLTRB(16, 16, 16, 20),
+          children: [
+            const Text(
+              'استرجاع ومراجعة العناصر السابقة بسرعة',
+              style: TextStyle(
+                fontSize: 13,
+                fontWeight: FontWeight.w600,
+                color: Color(0xFF64748B),
+              ),
+            ),
+            const SizedBox(height: 12),
+            ...archiveSections.map(
+              (item) => Container(
+                margin: const EdgeInsets.only(bottom: 10),
+                padding: const EdgeInsets.all(12),
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(14),
+                  border: Border.all(color: const Color(0xFFE2E8F0)),
+                ),
+                child: Row(
+                  children: [
+                    Icon(item.$3, color: item.$4, size: 22),
+                    const SizedBox(width: 10),
+                    Expanded(
+                      child: Text(
+                        item.$1,
+                        style: const TextStyle(
+                          fontSize: 14,
+                          fontWeight: FontWeight.w900,
+                          color: Color(0xFF0F172A),
+                        ),
+                      ),
+                    ),
+                    Text(
+                      item.$2,
+                      style: TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.w800,
+                        color: item.$4,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _WalletsHubPage extends StatelessWidget {
+  const _WalletsHubPage();
+
+  @override
+  Widget build(BuildContext context) {
+    return Scaffold(
+      backgroundColor: const Color(0xFFF5F8FC),
+      appBar: AppBar(title: const Text('المحافظ'), centerTitle: true),
+      body: Directionality(
+        textDirection: TextDirection.rtl,
+        child: ListView(
+          padding: const EdgeInsets.fromLTRB(16, 16, 16, 20),
+          children: [
+            const Text(
+              'لوحة احترافية للأموال والبطاقات والدفعات والخطط والاشتراكات',
+              style: TextStyle(
+                fontSize: 13,
+                fontWeight: FontWeight.w600,
+                color: Color(0xFF64748B),
+              ),
+            ),
+            const SizedBox(height: 12),
+            Container(
+              padding: const EdgeInsets.all(14),
+              decoration: BoxDecoration(
+                gradient: const LinearGradient(
+                  colors: [Color(0xFF0F172A), Color(0xFF1E293B)],
+                  begin: Alignment.topRight,
+                  end: Alignment.bottomLeft,
+                ),
+                borderRadius: BorderRadius.circular(18),
+              ),
+              child: const Column(
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    'الرصيد الكلي',
+                    style: TextStyle(
+                      fontSize: 12,
+                      fontWeight: FontWeight.w700,
+                      color: Color(0xFFCBD5E1),
+                    ),
+                  ),
+                  SizedBox(height: 6),
+                  Text(
+                    '128,400 درهم',
+                    style: TextStyle(
+                      fontSize: 26,
+                      fontWeight: FontWeight.w900,
+                      color: Colors.white,
+                    ),
+                  ),
+                  SizedBox(height: 12),
+                  Row(
+                    children: [
+                      Icon(Icons.credit_card_rounded, color: Color(0xFF93C5FD)),
+                      SizedBox(width: 6),
+                      Text(
+                        '4 بطاقات نشطة',
+                        style: TextStyle(
+                          color: Color(0xFFDBEAFE),
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                    ],
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 12),
+            const _WalletStatTile(
+              title: 'دفعات هذا الأسبوع',
+              value: '12 دفعة',
+              subtitle: '4 دفعات قادمة خلال يومين',
+              icon: Icons.payments_rounded,
+              color: Color(0xFF0EA5E9),
+            ),
+            const _WalletStatTile(
+              title: 'الخطة المالية',
+              value: '83% التزام',
+              subtitle: 'ضمن الميزانية الشهرية المحددة',
+              icon: Icons.track_changes_outlined,
+              color: Color(0xFF16A34A),
+            ),
+            const _WalletStatTile(
+              title: 'الاشتراكات',
+              value: '9 اشتراكات',
+              subtitle: 'اشتراكان قريبان للتجديد',
+              icon: Icons.subscriptions_outlined,
+              color: Color(0xFF7C3AED),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class _WalletStatTile extends StatelessWidget {
+  const _WalletStatTile({
+    required this.title,
+    required this.value,
+    required this.subtitle,
+    required this.icon,
+    required this.color,
+  });
+
+  final String title;
+  final String value;
+  final String subtitle;
+  final IconData icon;
+  final Color color;
+
+  @override
+  Widget build(BuildContext context) {
+    return Container(
+      margin: const EdgeInsets.only(bottom: 10),
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(14),
+        border: Border.all(color: const Color(0xFFE2E8F0)),
+      ),
+      child: Row(
+        children: [
+          Container(
+            width: 38,
+            height: 38,
+            decoration: BoxDecoration(
+              color: color.withValues(alpha: 0.12),
+              borderRadius: BorderRadius.circular(10),
+            ),
+            child: Icon(icon, color: color, size: 21),
+          ),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  title,
+                  style: const TextStyle(
+                    fontSize: 14,
+                    fontWeight: FontWeight.w900,
+                    color: Color(0xFF0F172A),
+                  ),
+                ),
+                const SizedBox(height: 3),
+                Text(
+                  subtitle,
+                  style: const TextStyle(
+                    fontSize: 11,
+                    fontWeight: FontWeight.w600,
+                    color: Color(0xFF64748B),
+                  ),
+                ),
+              ],
+            ),
+          ),
+          Text(
+            value,
+            style: TextStyle(
+              fontSize: 12.5,
+              fontWeight: FontWeight.w900,
+              color: color,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+class _AccountPage extends StatelessWidget {
+  const _AccountPage();
+
+  @override
+  Widget build(BuildContext context) {
+    const accountItems = [
+      ('الملف الشخصي', Icons.person_outline_rounded),
+      ('الأمان وتغيير كلمة المرور', Icons.lock_outline_rounded),
+      ('طرق الدفع والمحافظ', Icons.account_balance_wallet_outlined),
+      ('إدارة الاشتراكات', Icons.subscriptions_outlined),
+      ('اللغة والمظهر', Icons.palette_outlined),
+      ('الخصوصية والصلاحيات', Icons.verified_user_outlined),
+      ('المساعدة والدعم', Icons.support_agent_outlined),
+      ('تسجيل الخروج', Icons.logout_rounded),
+    ];
+
+    return Scaffold(
+      backgroundColor: const Color(0xFFF5F8FC),
+      appBar: AppBar(title: const Text('الحساب'), centerTitle: true),
+      body: Directionality(
+        textDirection: TextDirection.rtl,
+        child: ListView(
+          padding: const EdgeInsets.fromLTRB(16, 18, 16, 22),
+          children: [
+            Container(
+              padding: const EdgeInsets.all(14),
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(14),
+                border: Border.all(color: const Color(0xFFE2E8F0)),
+              ),
+              child: const Row(
+                children: [
+                  CircleAvatar(
+                    radius: 24,
+                    backgroundColor: Color(0xFFDBEAFE),
+                    child: Icon(Icons.person_rounded, color: Color(0xFF1D4ED8)),
+                  ),
+                  SizedBox(width: 10),
+                  Expanded(
+                    child: Column(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        Text(
+                          'عبدالعزيز',
+                          style: TextStyle(
+                            fontSize: 16,
+                            fontWeight: FontWeight.w900,
+                            color: Color(0xFF0F172A),
+                          ),
+                        ),
+                        SizedBox(height: 3),
+                        Text(
+                          'حسابك جاهز لإدارة كل التزاماتك',
+                          style: TextStyle(
+                            fontSize: 11,
+                            fontWeight: FontWeight.w600,
+                            color: Color(0xFF64748B),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(height: 12),
+            ...accountItems.map(
+              (item) => Container(
+                margin: const EdgeInsets.only(bottom: 8),
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(color: const Color(0xFFE2E8F0)),
+                ),
+                child: ListTile(
+                  leading: Icon(item.$2, color: const Color(0xFF334155)),
+                  trailing: const Icon(
+                    Icons.arrow_forward_ios_rounded,
+                    size: 16,
+                    color: Color(0xFF64748B),
+                  ),
+                  title: Text(
+                    item.$1,
+                    style: const TextStyle(
+                      fontSize: 13,
+                      fontWeight: FontWeight.w800,
+                      color: Color(0xFF0F172A),
+                    ),
+                  ),
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}

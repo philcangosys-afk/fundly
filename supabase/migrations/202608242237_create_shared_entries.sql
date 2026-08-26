@@ -1,0 +1,90 @@
+-- ============================================================================
+-- Migration: Create shared_entries table (الالتزامات المشتركة)
+-- Purpose: نفس بنية personal_entries تمامًا (جدول مسطّح + details jsonb مرن)
+--          حتى تعمل مع نفس أسلوب النماذج الديناميكية المستخدم في الشخصية،
+--          مع فرق واحد جوهري: details يحمل أيضًا بيانات الأعضاء/المسؤول/
+--          التقسيم المالي/سجل المصروفات والموافقات — كل ذلك كنص JSON داخل
+--          details['الأعضاء']، details['سجل المصروفات']... إلخ، بنفس نمط
+--          "سجل صرفيات العهدة" في الشخصية، بدل جداول علائقية جديدة.
+-- ============================================================================
+
+create table if not exists public.shared_entries (
+  id uuid primary key default gen_random_uuid(),
+  user_id uuid not null references auth.users(id) on delete cascade,
+  category text not null default 'shared',
+  entry_type text not null check (entry_type in (
+    'مشاركات مشتركة', 'الرحلة / السفر', 'جمعية مالية', 'اللقاءات'
+  )),
+  title text not null,
+  amount numeric(14, 2) not null default 0 check (amount >= 0),
+  due_date date,
+  status text not null default 'نشطة',
+  details jsonb not null default '{}'::jsonb,
+  attachment_url text,
+  created_at timestamptz not null default now(),
+  updated_at timestamptz not null default now()
+);
+
+create index if not exists shared_entries_user_created_idx
+  on public.shared_entries (user_id, created_at desc);
+
+create index if not exists shared_entries_type_idx
+  on public.shared_entries (entry_type);
+
+alter table public.shared_entries enable row level security;
+
+drop policy if exists "Users read own shared entries" on public.shared_entries;
+create policy "Users read own shared entries"
+  on public.shared_entries for select
+  to authenticated
+  using ((select auth.uid()) = user_id);
+
+drop policy if exists "Users insert own shared entries" on public.shared_entries;
+create policy "Users insert own shared entries"
+  on public.shared_entries for insert
+  to authenticated
+  with check ((select auth.uid()) = user_id);
+
+drop policy if exists "Users update own shared entries" on public.shared_entries;
+create policy "Users update own shared entries"
+  on public.shared_entries for update
+  to authenticated
+  using ((select auth.uid()) = user_id)
+  with check ((select auth.uid()) = user_id);
+
+drop policy if exists "Users delete own shared entries" on public.shared_entries;
+create policy "Users delete own shared entries"
+  on public.shared_entries for delete
+  to authenticated
+  using ((select auth.uid()) = user_id);
+
+insert into storage.buckets (id, name, public)
+values ('shared-entry-attachments', 'shared-entry-attachments', false)
+on conflict (id) do update set public = excluded.public;
+
+drop policy if exists "Users upload own shared entry attachments" on storage.objects;
+create policy "Users upload own shared entry attachments"
+  on storage.objects for insert
+  to authenticated
+  with check (
+    bucket_id = 'shared-entry-attachments'
+    and (storage.foldername(name))[1] = (select auth.uid())::text
+  );
+
+drop policy if exists "Users read own shared entry attachments" on storage.objects;
+create policy "Users read own shared entry attachments"
+  on storage.objects for select
+  to authenticated
+  using (
+    bucket_id = 'shared-entry-attachments'
+    and (storage.foldername(name))[1] = (select auth.uid())::text
+  );
+
+drop policy if exists "Users delete own shared entry attachments" on storage.objects;
+create policy "Users delete own shared entry attachments"
+  on storage.objects for delete
+  to authenticated
+  using (
+    bucket_id = 'shared-entry-attachments'
+    and (storage.foldername(name))[1] = (select auth.uid())::text
+  );
