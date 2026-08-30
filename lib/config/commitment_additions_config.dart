@@ -6,12 +6,12 @@
 
 /// Category for each addition type
 enum AdditionCategory {
-  payment,      // دفعة
-  attachment,   // فاتورة، مستند، إيصال، عقد، صورة
-  appointment,  // موعد، تذكير، موعد دفع، موعد تجديد، موعد متابعة
-  note,         // ملاحظة، تسوية، تجديد، بيانات إدارية
-  person,       // شخص
-  location,     // موقع
+  payment, // دفعة
+  attachment, // فاتورة، مستند، إيصال، عقد، صورة
+  appointment, // موعد، تذكير، موعد دفع، موعد تجديد، موعد متابعة
+  note, // ملاحظة، تسوية، تجديد، بيانات إدارية
+  person, // شخص
+  location, // موقع
 }
 
 /// Individual addition type
@@ -105,15 +105,15 @@ class AllAdditions {
 
   /// Get all additions as a list
   static List<AdditionType> get all => [
-        payment,
-        administrative,
-        document,
-        person,
-        unit,
-        asset,
-        link,
-        other,
-      ];
+    payment,
+    administrative,
+    document,
+    person,
+    unit,
+    asset,
+    link,
+    other,
+  ];
 }
 
 /// Configuration for logical additions per entry type

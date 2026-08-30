@@ -1028,9 +1028,9 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
               return;
           }
 
-          Navigator.of(context)
-              .push(MaterialPageRoute(builder: (_) => page))
-              .then((_) {
+          Navigator.of(
+            context,
+          ).push(MaterialPageRoute(builder: (_) => page)).then((_) {
             if (mounted) setState(() => _selectedIndex = 3);
           });
         },
@@ -1062,10 +1062,7 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
             icon: Icon(Icons.bar_chart),
             label: 'التقارير / الأرشيف',
           ),
-          BottomNavigationBarItem(
-            icon: Icon(Icons.home),
-            label: 'الرئيسية',
-          ),
+          BottomNavigationBarItem(icon: Icon(Icons.home), label: 'الرئيسية'),
         ],
       ),
     );

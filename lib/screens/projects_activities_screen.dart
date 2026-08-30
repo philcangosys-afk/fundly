@@ -4,13 +4,18 @@ import 'package:flutter/material.dart';
 import 'package:share_plus/share_plus.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:url_launcher/url_launcher.dart';
+import '../data/app_settings.dart';
 import '../data/app_reminders_store.dart';
 import '../data/project_assets_repository.dart';
 import 'document_templates_screen.dart';
 import 'smart_calendar_screen.dart';
 import '../widgets/detail_page_chrome.dart';
 import '../widgets/management_dashboard_chrome.dart';
+import '../widgets/shared/app_design.dart';
+import '../widgets/shared/app_filter_sheet.dart';
+import '../widgets/shared/followup_center_sheet.dart';
 import '../widgets/shared/module_shared_widgets.dart';
+import '../widgets/shared/measured_pinned_header.dart';
 
 const _propertyAnnexLabels = [
   'ممرات',
@@ -42,7 +47,6 @@ class _ProjectsActivitiesScreenState extends State<ProjectsActivitiesScreen> {
     _TopFilter('real_estate', 'العقارات', Color(0xFF0F6AA8)),
     _TopFilter('activity', 'الأنشطة التجارية', Color(0xFF10B981)),
     _TopFilter('equipment', 'المعدات', Color(0xFFF59E0B)),
-    _TopFilter('maintenance', 'صيانة', Color(0xFFEA580C)),
   ];
 
   late final List<_AssetItem> _items = [
@@ -218,7 +222,7 @@ class _ProjectsActivitiesScreenState extends State<ProjectsActivitiesScreen> {
       category: mappedCategory,
       locationOrType: record.locationOrType ?? 'غير محدد',
       status: status,
-      amountLabel: record.amountLabel ?? '0 درهم',
+      amountLabel: record.amountLabel ?? '0 ${AppSettings.currencySuffix}',
       followupNote: record.followupNote ?? 'لا توجد ملاحظات متابعة',
       owner: record.owner ?? 'غير محدد',
       tenant: record.tenant ?? 'غير محدد',
@@ -363,13 +367,124 @@ class _ProjectsActivitiesScreenState extends State<ProjectsActivitiesScreen> {
     return _items.where((item) => _matchesFilter(item, key)).length;
   }
 
+  /// السطر الثاني في بطاقة القائمة: نوع الأصل، ويُضاف للعقار عدد وحداته
+  /// وموقعه — فلا تضيع بيانات العقار حين توحّدت البطاقة مع بقية الفئات.
+  String _assetSubtitle(_AssetItem item) {
+    final parts = <String>[
+      if (item.subType.trim().isNotEmpty) item.subType.trim(),
+      if (item.category == 'real_estate' && item.units.isNotEmpty)
+        item.units.length == 1
+            ? 'وحدة واحدة'
+            : item.units.length == 2
+            ? 'وحدتان'
+            : '${item.units.length} وحدات',
+      if (item.locationOrType.trim().isNotEmpty) item.locationOrType.trim(),
+    ];
+    return parts.join(' · ');
+  }
+
   bool _matchesFilter(_AssetItem item, String filter) {
     if (filter == 'all') return true;
-    if (filter == 'maintenance') {
-      return item.needsAttention || item.status.contains('صيانة');
-    }
     return item.category == filter;
   }
+
+  /// قيم الفلتر الرئيسي — نفس البنية في الشاشات الأربع.
+  final AppFilterValues _filter = AppFilterValues();
+
+  bool _matchesAdvancedAssetFilters(_AssetItem item) {
+    // مقارنة بعد trim: قائمة الأنواع تُبنى من قيم منظّفة، فأي فراغ زائد
+    // في البيانات كان يمنع العنصر من مطابقة نوعه نفسه.
+    if (_filter.subCategory != null &&
+        item.subType.trim() != _filter.subCategory) {
+      return false;
+    }
+    switch (_filter.status) {
+      case 'نشط':
+        if (item.isFrozen || item.needsAttention) return false;
+      case 'المستحق بعد 7 أيام':
+        final due = _parseAssetDate(item.endDate);
+        if (due == null) return false;
+        final days = due.difference(DateUtils.dateOnly(DateTime.now())).inDays;
+        if (days < 0 || days > 7) return false;
+      case 'متأخر':
+        if (!item.needsAttention) return false;
+      case 'مكتمل':
+        if (item.needsAttention || item.isFrozen) return false;
+      case 'ملغاة':
+        if (!item.status.contains('ملغا')) return false;
+      case 'مؤرشف':
+        if (!item.isFrozen) return false;
+    }
+    if (!_filter.matchesDate(_parseAssetDate(item.endDate))) return false;
+    final amount = num.tryParse(
+      item.rentValue.replaceAll(RegExp(r'[^0-9.]'), ''),
+    );
+    if ((_filter.amountFrom != null || _filter.amountTo != null) &&
+        (amount == null || !_filter.matchesAmount(amount))) {
+      return false;
+    }
+    if (_filter.documentName.isNotEmpty &&
+        !AppFilterValues.textMatches(_filter.documentName, [
+          ...item.documents,
+          ...item.contracts,
+        ])) {
+      return false;
+    }
+    if (_filter.personName.isNotEmpty &&
+        !AppFilterValues.textMatches(_filter.personName, [
+          item.owner,
+          item.tenant,
+        ])) {
+      return false;
+    }
+    if (_filter.delegateName.isNotEmpty &&
+        !AppFilterValues.textMatches(_filter.delegateName, [
+          item.owner,
+          for (final employee in item.employees) employee['الاسم'] ?? '',
+        ])) {
+      return false;
+    }
+    if (_filter.placeName.isNotEmpty &&
+        !AppFilterValues.textMatches(_filter.placeName, [
+          item.locationOrType,
+          item.mapLink,
+        ])) {
+      return false;
+    }
+    return true;
+  }
+
+  /// تحويل تاريخ نصّي (d/M/yyyy أو yyyy/M/d) إلى DateTime، أو null.
+  DateTime? _parseAssetDate(String raw) {
+    final parts = raw.split(RegExp(r'[/-]'));
+    if (parts.length != 3) return null;
+    final first = int.tryParse(parts[0]);
+    final second = int.tryParse(parts[1]);
+    final third = int.tryParse(parts[2]);
+    if (first == null || second == null || third == null) return null;
+    return first > 31
+        ? DateTime(first, second, third)
+        : DateTime(third, second, first);
+  }
+
+  /// الأنواع الفرعية الموجودة فعلًا ضمن الفئة المختارة.
+  List<String> _subTypesFor(String category) {
+    final values = <String>{
+      for (final item in _items)
+        if (category == 'all' || item.category == category)
+          if (item.subType.trim().isNotEmpty) item.subType.trim(),
+    }.toList()..sort();
+    return values;
+  }
+
+  /// خيارات الفلتر الصغير حسب الفئة المختارة.
+  List<String> _quickSortOptions() => [
+    'الأحدث أولاً',
+    'نشط',
+    if (_selectedFilter != 'activity') 'شاغر',
+    'مستندات قريبة الإنتهاء',
+    'مستندات منتهية',
+  ];
 
   List<_AssetItem> _filteredItems() {
     final query = _searchController.text.trim();
@@ -399,19 +514,54 @@ class _ProjectsActivitiesScreenState extends State<ProjectsActivitiesScreen> {
           ...item.logs,
         ],
       );
-      return typeMatches && queryMatches;
+      return typeMatches &&
+          queryMatches &&
+          _matchesAdvancedAssetFilters(item);
     }).toList();
 
-    if (_selectedSort == 'تحتاج متابعة') {
-      filtered.sort(
-        (a, b) =>
-            (b.needsAttention ? 1 : 0).compareTo(a.needsAttention ? 1 : 0),
-      );
-    } else if (_selectedSort == 'حسب الاسم') {
-      filtered.sort((a, b) => a.title.compareTo(b.title));
-    } else {
-      filtered.sort((a, b) => b.endDate.compareTo(a.endDate));
+    // الفلتر الصغير يُقدّم المطابق ولا يُخفي غيره.
+    final today = DateUtils.dateOnly(DateTime.now());
+    int rank(_AssetItem item) {
+      switch (_selectedSort) {
+        case 'نشط':
+          return item.isFrozen || item.needsAttention ? 1 : 0;
+        case 'شاغر':
+          return item.vacantUnitsCount > 0 ? 0 : 1;
+        case 'مستندات قريبة الإنتهاء':
+          {
+            final due = _parseAssetDate(item.endDate);
+            if (due == null) return 1;
+            final days = due.difference(today).inDays;
+            return days >= 0 && days <= 30 ? 0 : 1;
+          }
+        case 'مستندات منتهية':
+          {
+            final due = _parseAssetDate(item.endDate);
+            return due != null && due.isBefore(today) ? 0 : 1;
+          }
+        default:
+          return 0;
+      }
     }
+
+    num assetAmount(_AssetItem item) =>
+        num.tryParse(item.rentValue.replaceAll(RegExp(r'[^0-9.]'), '')) ?? 0;
+
+    filtered.sort((a, b) {
+      // "أعلى/أقل مبلغ" من الفلتر الكبير يتقدّم على ترتيب الفلتر الصغير.
+      if (_filter.amountShortcut == 'أعلى مبلغ') {
+        final byAmount = assetAmount(b).compareTo(assetAmount(a));
+        if (byAmount != 0) return byAmount;
+      } else if (_filter.amountShortcut == 'أقل مبلغ') {
+        final byAmount = assetAmount(a).compareTo(assetAmount(b));
+        if (byAmount != 0) return byAmount;
+      }
+      final byRank = rank(a).compareTo(rank(b));
+      if (byRank != 0) return byRank;
+      return (_parseAssetDate(b.endDate) ?? DateTime(2000)).compareTo(
+        _parseAssetDate(a.endDate) ?? DateTime(2000),
+      );
+    });
     return filtered;
   }
 
@@ -419,8 +569,126 @@ class _ProjectsActivitiesScreenState extends State<ProjectsActivitiesScreen> {
     if (key == 'real_estate') return Icons.apartment_rounded;
     if (key == 'activity') return Icons.storefront_rounded;
     if (key == 'equipment') return Icons.precision_manufacturing_outlined;
-    if (key == 'maintenance') return Icons.build_circle_outlined;
     return Icons.grid_view_rounded;
+  }
+
+  /// مركز المتابعة بالقالب الموحَّد نفسه المستعمل في بقية الوحدات.
+  ///
+  /// كان زر "المزيد" هنا يفتح نافذة **فلترة** لا علاقة لها بالمتابعة.
+  void _openFollowUpSheet(List<_AssetItem> assets) {
+    FollowUpEntry entryFor(_AssetItem item, String trailing) => FollowUpEntry(
+      title: item.title,
+      subtitle: item.subType.isEmpty ? item.status : item.subType,
+      icon: _filterIcon(item.category),
+      color: item.iconColor ?? const Color(0xFF0F6AA8),
+      trailingText: trailing,
+      onTap: () => _openDetails(item),
+    );
+
+    String percent(double value) => '${(value * 100).round()}%';
+
+    showFollowUpCenterSheet(
+      context: context,
+      accent: const Color(0xFF047857),
+      groups: [
+        FollowUpGroup(
+          title: 'الدفعات',
+          icon: Icons.payments_outlined,
+          color: const Color(0xFFB56A09),
+          metrics: [
+            FollowUpMetric(
+              label: 'دفعات للمتابعة',
+              icon: Icons.pending_actions_outlined,
+              entries: [
+                for (final item in assets.where((a) => a.paymentProgress < 0.7))
+                  entryFor(item, percent(item.paymentProgress)),
+              ],
+            ),
+          ],
+        ),
+        FollowUpGroup(
+          title: 'المستندات',
+          icon: Icons.folder_outlined,
+          color: const Color(0xFF0F6AA8),
+          metrics: [
+            FollowUpMetric(
+              label: 'مستندات ناقصة',
+              icon: Icons.badge_outlined,
+              entries: [
+                for (final item in assets.where(
+                  (a) => a.documentsProgress < 0.8,
+                ))
+                  entryFor(item, percent(item.documentsProgress)),
+              ],
+            ),
+            FollowUpMetric(
+              label: 'بلا مستندات',
+              icon: Icons.folder_off_outlined,
+              entries: [
+                for (final item in assets.where((a) => a.documents.isEmpty))
+                  entryFor(item, '0'),
+              ],
+            ),
+          ],
+        ),
+        FollowUpGroup(
+          title: 'العقود',
+          icon: Icons.description_outlined,
+          color: const Color(0xFFC73E4D),
+          metrics: [
+            FollowUpMetric(
+              label: 'عقود للمتابعة',
+              icon: Icons.assignment_late_outlined,
+              entries: [
+                for (final item in assets.where(
+                  (a) => a.contracts.isNotEmpty && a.needsAttention,
+                ))
+                  entryFor(item, percent(item.contractProgress)),
+              ],
+            ),
+            FollowUpMetric(
+              label: 'بلا عقد',
+              icon: Icons.assignment_outlined,
+              entries: [
+                for (final item in assets.where((a) => a.contracts.isEmpty))
+                  entryFor(item, 'لا يوجد'),
+              ],
+            ),
+          ],
+        ),
+        FollowUpGroup(
+          title: 'الحالة',
+          icon: Icons.flag_outlined,
+          color: const Color(0xFF7956A8),
+          metrics: [
+            FollowUpMetric(
+              label: 'تحتاج متابعة',
+              icon: Icons.warning_amber_rounded,
+              entries: [
+                for (final item in assets.where((a) => a.needsAttention))
+                  entryFor(item, item.status),
+              ],
+            ),
+            FollowUpMetric(
+              label: 'وحدات شاغرة',
+              icon: Icons.meeting_room_outlined,
+              entries: [
+                for (final item in assets.where((a) => a.vacantUnitsCount > 0))
+                  entryFor(item, '${item.vacantUnitsCount}'),
+              ],
+            ),
+            FollowUpMetric(
+              label: 'مجمّدة',
+              icon: Icons.ac_unit_rounded,
+              entries: [
+                for (final item in assets.where((a) => a.isFrozen))
+                  entryFor(item, 'مجمّد'),
+              ],
+            ),
+          ],
+        ),
+      ],
+    );
   }
 
   void _openDetails(_AssetItem item) {
@@ -459,95 +727,65 @@ class _ProjectsActivitiesScreenState extends State<ProjectsActivitiesScreen> {
         a.createdAt == b.createdAt;
   }
 
+  // الفلتر الرئيسي: نفس قالب الشاشات الأربع، والأقسام وترتيبها مطابقة
+  // لملف "فلاتر فوندلي" لصفحة العقارات والأنشطة والمعدات.
   void _openFilterSheet() {
-    showModalBottomSheet<void>(
+    const labels = {
+      'all': 'الكل',
+      'real_estate': 'العقارات',
+      'activity': 'الأنشطة التجارية',
+      'equipment': 'المعدات',
+    };
+    showAppFilterSheet(
       context: context,
-      backgroundColor: Colors.white,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      title: 'العقارات والأنشطة والمعدات',
+      accent: const Color(0xFF047857),
+      values: _filter..mainCategory = labels[_selectedFilter] ?? 'الكل',
+      mainCategories: labels.values.toList(growable: false),
+      subCategoriesFor: (main) => _subTypesFor(
+        labels.entries
+            .firstWhere(
+              (entry) => entry.value == main,
+              orElse: () => const MapEntry('all', 'الكل'),
+            )
+            .key,
       ),
-      builder: (context) {
-        return SafeArea(
-          top: false,
-          child: Padding(
-            padding: const EdgeInsets.fromLTRB(16, 12, 16, 18),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.end,
-              children: [
-                const Text(
-                  'تصفية',
-                  style: TextStyle(
-                    fontSize: 16,
-                    fontWeight: FontWeight.w800,
-                    color: Color(0xFF0F172A),
-                  ),
-                ),
-                const SizedBox(height: 12),
-                Container(
-                  width: double.infinity,
-                  padding: const EdgeInsets.fromLTRB(8, 8, 8, 8),
-                  decoration: BoxDecoration(
-                    color: const Color(0xFFF8FAFC),
-                    borderRadius: BorderRadius.circular(12),
-                    border: Border.all(color: const Color(0xFFDCE5EF)),
-                  ),
-                  child: Wrap(
-                    spacing: 8,
-                    runSpacing: 8,
-                    textDirection: TextDirection.rtl,
-                    children: _filters
-                        .map((filter) {
-                          final selected = _selectedFilter == filter.key;
-                          return _ProjectsFilterChip(
-                            title: filter.label,
-                            count: _countByCategory(filter.key),
-                            selected: selected,
-                            onTap: () {
-                              setState(() => _selectedFilter = filter.key);
-                              Navigator.of(context).pop();
-                            },
-                          );
-                        })
-                        .toList(growable: false),
-                  ),
-                ),
-                const SizedBox(height: 12),
-                const Text(
-                  'الترتيب',
-                  style: TextStyle(
-                    fontSize: 12,
-                    fontWeight: FontWeight.w800,
-                    color: Color(0xFF475569),
-                  ),
-                ),
-                const SizedBox(height: 8),
-                Wrap(
-                  spacing: 8,
-                  runSpacing: 8,
-                  textDirection: TextDirection.rtl,
-                  children: ['الأحدث أولاً', 'تحتاج متابعة', 'حسب الاسم']
-                      .map((sort) {
-                        final selected = _selectedSort == sort;
-                        return ChoiceChip(
-                          label: Text(sort),
-                          selected: selected,
-                          selectedColor: const Color(
-                            0xFF047857,
-                          ).withOpacity(0.2),
-                          onSelected: (_) {
-                            setState(() => _selectedSort = sort);
-                            Navigator.of(context).pop();
-                          },
-                        );
-                      })
-                      .toList(growable: false),
-                ),
-              ],
-            ),
-          ),
-        );
-      },
+      amountShortcuts: const ['أعلى مبلغ', 'أقل مبلغ'],
+      documentStates: const [],
+      sections: const [
+        AppFilterSection.mainCategory,
+        AppFilterSection.subCategory,
+        AppFilterSection.status,
+        AppFilterSection.amount,
+        AppFilterSection.document,
+        AppFilterSection.date,
+        AppFilterSection.people,
+        AppFilterSection.delegates,
+        AppFilterSection.place,
+      ],
+      onApply: (values) => setState(() {
+        _selectedFilter = labels.entries
+            .firstWhere(
+              (entry) => entry.value == values.mainCategory,
+              orElse: () => const MapEntry('all', 'الكل'),
+            )
+            .key;
+        _filter
+          ..mainCategory = values.mainCategory
+          ..subCategory = values.subCategory
+          ..dateFrom = values.dateFrom
+          ..dateTo = values.dateTo
+          ..status = values.status
+          ..amountFrom = values.amountFrom
+          ..amountTo = values.amountTo
+          ..amountShortcut = values.amountShortcut
+          ..documentName = values.documentName
+          ..documentState = values.documentState
+          ..personName = values.personName
+          ..personCategory = values.personCategory
+          ..delegateName = values.delegateName
+          ..placeName = values.placeName;
+      }),
     );
   }
 
@@ -778,8 +1016,8 @@ class _ProjectsActivitiesScreenState extends State<ProjectsActivitiesScreen> {
                               status: 'نشط',
                               amountLabel:
                                   annualRentController.text.trim().isEmpty
-                                  ? '0 درهم'
-                                  : '${annualRentController.text.trim()} درهم',
+                                  ? '0 ${AppSettings.currencySuffix}'
+                                  : '${annualRentController.text.trim()} ${AppSettings.currencySuffix}',
                               followupNote:
                                   'تم الإنشاء وبانتظار استكمال البيانات',
                               description: descController.text.trim(),
@@ -1019,7 +1257,7 @@ class _ProjectsActivitiesScreenState extends State<ProjectsActivitiesScreen> {
       isSublease: isSublease,
       locationOrType: result.address.isEmpty ? 'غير محدد' : result.address,
       status: 'نشط',
-      amountLabel: '0 درهم',
+      amountLabel: '0 ${AppSettings.currencySuffix}',
       followupNote: 'تم الإنشاء وبانتظار استكمال البيانات',
       description: result.description,
       owner: 'غير محدد',
@@ -1076,7 +1314,7 @@ class _ProjectsActivitiesScreenState extends State<ProjectsActivitiesScreen> {
       category: 'activity',
       locationOrType: result.address.isEmpty ? 'غير محدد' : result.address,
       status: 'نشط',
-      amountLabel: result.capital.isEmpty ? '0 درهم' : '${result.capital} درهم',
+      amountLabel: result.capital.isEmpty ? '0 ${AppSettings.currencySuffix}' : '${result.capital} ${AppSettings.currencySuffix}',
       followupNote: activityFollowupParts.isEmpty
           ? 'تم الإنشاء وبانتظار استكمال البيانات'
           : activityFollowupParts.join(' • '),
@@ -1135,7 +1373,7 @@ class _ProjectsActivitiesScreenState extends State<ProjectsActivitiesScreen> {
           ? 'غير محدد'
           : result.assignedLocation,
       status: result.condition.isEmpty ? 'تعمل' : result.condition,
-      amountLabel: result.value.isEmpty ? '0 درهم' : '${result.value} درهم',
+      amountLabel: result.value.isEmpty ? '0 ${AppSettings.currencySuffix}' : '${result.value} ${AppSettings.currencySuffix}',
       followupNote: equipmentFollowupParts.isEmpty
           ? 'تم الإنشاء وبانتظار استكمال البيانات'
           : equipmentFollowupParts.join(' • '),
@@ -1187,7 +1425,7 @@ class _ProjectsActivitiesScreenState extends State<ProjectsActivitiesScreen> {
         .where((item) => _matchesFilter(item, _selectedFilter))
         .toList();
     return Scaffold(
-      backgroundColor: const Color(0xFFF5F8FC),
+      backgroundColor: AppTheme.page,
       floatingActionButton: AddFab(
         screenId: 'projects_activities',
         onPressed: _openAddEntrySheet,
@@ -1222,20 +1460,22 @@ class _ProjectsActivitiesScreenState extends State<ProjectsActivitiesScreen> {
                 ),
               ),
             ),
-            ManagementPinnedControls(
-              height: 242,
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  ManagementFollowUpCenter(
+            // مركز المتابعة يتحرّك مع الصفحة ويختفي عند النزول لأسفل،
+            // بدل تثبيت الكتلة كاملة بارتفاع مفترض (242).
+            SliverToBoxAdapter(
+              child: ColoredBox(
+                color: AppTheme.page,
+                child: Padding(
+                  padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
+                  child: ManagementFollowUpCenter(
                     subtitle: _selectedFilter == 'all'
                         ? 'الأهم والأقرب من جميع الأصول والأنشطة'
                         : 'متابعة ${_filters.firstWhere((item) => item.key == _selectedFilter).label}',
                     accentColor: const Color(0xFF047857),
-                    onMore: _openFilterSheet,
+                    onMore: () => _openFollowUpSheet(selectedAssets),
                     metrics: [
                       ManagementMetricData(
-                        label: 'دفعات تحتاج متابعة',
+                        label: 'دفعات للمتابعة',
                         count: selectedAssets
                             .where((item) => item.paymentProgress < 0.7)
                             .length,
@@ -1243,7 +1483,7 @@ class _ProjectsActivitiesScreenState extends State<ProjectsActivitiesScreen> {
                         color: const Color(0xFFB56A09),
                       ),
                       ManagementMetricData(
-                        label: 'مستندات تحتاج متابعة',
+                        label: 'مستندات للمتابعة',
                         count: selectedAssets
                             .where((item) => item.documentsProgress < 0.8)
                             .length,
@@ -1251,7 +1491,7 @@ class _ProjectsActivitiesScreenState extends State<ProjectsActivitiesScreen> {
                         color: const Color(0xFF0F6AA8),
                       ),
                       ManagementMetricData(
-                        label: 'عقود تحتاج متابعة',
+                        label: 'عقود للمتابعة',
                         count: selectedAssets
                             .where(
                               (item) =>
@@ -1264,17 +1504,17 @@ class _ProjectsActivitiesScreenState extends State<ProjectsActivitiesScreen> {
                       ),
                     ],
                   ),
-                  const SizedBox(height: 14),
-                  const Text(
-                    'الفئات',
-                    textAlign: TextAlign.right,
-                    style: TextStyle(
-                      fontSize: 13,
-                      fontWeight: FontWeight.w900,
-                      color: Color(0xFF334155),
-                    ),
-                  ),
-                  const SizedBox(height: 8),
+                ),
+              ),
+            ),
+            // صف "الفئات" يبقى مثبَّتًا في الأعلى عند التمرير.
+            MeasuredPinnedHeader(
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(16, 14, 16, 8),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                  // بلا عنوان "الفئات" — كبقية الشاشات.
                   SizedBox(
                     height: 46,
                     child: ListView.separated(
@@ -1292,13 +1532,41 @@ class _ProjectsActivitiesScreenState extends State<ProjectsActivitiesScreen> {
                           icon: _filterIcon(filter.key),
                           color: filter.color,
                           selected: selected,
-                          onTap: () =>
-                              setState(() => _selectedFilter = filter.key),
+                          // تغيير الفئة يمسح النوع الفرعي: نوع فرعي من
+                          // فئة أخرى يُفرغ القائمة بلا تفسير.
+                          onTap: () => setState(() {
+                            _selectedFilter = filter.key;
+                            _filter.subCategory = null;
+                            // "شاغر" غير متاح للأنشطة التجارية، فلا يبقى
+                            // مختارًا وهو خارج القائمة.
+                            if (!_quickSortOptions().contains(_selectedSort)) {
+                              _selectedSort = 'الأحدث أولاً';
+                            }
+                          }),
                         );
                       },
                     ),
                   ),
-                ],
+                  const SizedBox(height: 10),
+                  // عنوان القائمة وزر الترتيب مثبَّتان مع الفئات، كبقية
+                  // الشاشات: كانا ينزلقان تحت الرأس المثبَّت عند التمرير.
+                  ManagementSortHeader(
+                    value: _selectedSort,
+                    // الفلتر الصغير — كما في ملف "فلاتر فوندلي": "شاغر"
+                    // للعقارات والمعدات فقط، لأن الأنشطة التجارية بلا وحدات.
+                    options: _quickSortOptions(),
+                    onSelected: (value) =>
+                        setState(() => _selectedSort = value),
+                    title: _selectedFilter == 'all'
+                        ? 'جميع الأصول والأنشطة'
+                        : _filters
+                              .firstWhere((item) => item.key == _selectedFilter)
+                              .label,
+                    count: filtered.length,
+                    accentColor: const Color(0xFF047857),
+                  ),
+                  ],
+                ),
               ),
             ),
             SliverPadding(
@@ -1310,35 +1578,15 @@ class _ProjectsActivitiesScreenState extends State<ProjectsActivitiesScreen> {
                       padding: EdgeInsets.only(bottom: 10),
                       child: LinearProgressIndicator(minHeight: 2),
                     ),
-                  ManagementSortHeader(
-                    value: _selectedSort,
-                    options: const [
-                      'الأحدث أولاً',
-                      'تحتاج متابعة',
-                      'حسب الاسم',
-                    ],
-                    onSelected: (value) =>
-                        setState(() => _selectedSort = value),
-                    title: _selectedFilter == 'all'
-                        ? 'جميع الأصول والأنشطة'
-                        : _filters
-                              .firstWhere((item) => item.key == _selectedFilter)
-                              .label,
-                    count: filtered.length,
-                    accentColor: const Color(0xFF047857),
-                  ),
-                  const SizedBox(height: 10),
                   ...filtered.map(
                     (item) => Padding(
                       padding: const EdgeInsets.only(bottom: 10),
-                      child: item.category == 'real_estate'
-                          ? _RealEstateListCard(
-                              item: item,
-                              onTap: () => _openDetails(item),
-                            )
-                          : ManagementCompactCard(
+                      // بطاقة واحدة لكل الفئات: كان العقار ببطاقة خاصة
+                      // أطول وأغزر بيانات، فيبدو صف القائمة متفاوت
+                      // الارتفاع بين عقار ومعدة ونشاط تجاري.
+                      child: ManagementCompactCard(
                               title: item.title,
-                              category: item.subType,
+                              category: _assetSubtitle(item),
                               date: item.endDate,
                               value: item.amountLabel,
                               status: item.isFrozen
@@ -2869,7 +3117,7 @@ class _ProjectAssetDetailsScreenState extends State<ProjectAssetDetailsScreen> {
     final item = _item;
     if (_selectedTab >= _realEstateTabs.length) _selectedTab = 0;
     return Scaffold(
-      backgroundColor: const Color(0xFFF5F7FA),
+      backgroundColor: AppTheme.page,
       floatingActionButton: AddFab(
         key: const ValueKey('add-property-detail-entry'),
         screenId: 'asset_details_real_estate',
@@ -2916,15 +3164,19 @@ class _ProjectAssetDetailsScreenState extends State<ProjectAssetDetailsScreen> {
       ),
       body: Directionality(
         textDirection: TextDirection.rtl,
-        child: ListView(
-          padding: const EdgeInsets.fromLTRB(14, 14, 14, 92),
-          children: [
-            Container(
+        // تحوّلت من ListView إلى CustomScrollView ليمكن تثبيت شريط
+        // التبويبات: البطاقة العلوية تتحرّك وتختفي عند النزول، ويبقى
+        // شريط التبويبات (الوحدات/العقود/...) ثابتًا في الأعلى.
+        child: CustomScrollView(
+          slivers: [
+            SliverToBoxAdapter(
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(14, 14, 14, 0),
+                child: Container(
               decoration: BoxDecoration(
-                color: Colors.white,
-                borderRadius: BorderRadius.circular(15),
-                border: Border.all(color: const Color(0xFFE6ECF3)),
-              ),
+            color: AppTheme.surface,
+            borderRadius: BorderRadius.circular(AppTheme.rField),
+          ),
               child: Column(
                 children: [
                   _AssetDetailHeaderCard(
@@ -3000,19 +3252,30 @@ class _ProjectAssetDetailsScreenState extends State<ProjectAssetDetailsScreen> {
                 ],
               ),
             ),
-            const SizedBox(height: 12),
-            DetailPageTabs(
-              sections: _realEstateTabs,
-              selectedIndex: _selectedTab,
-              color: _kPropertyColor,
-              onSelected: (i) => setState(() => _selectedTab = i),
+              ),
             ),
-            const SizedBox(height: 12),
-            AnimatedSwitcher(
-              duration: const Duration(milliseconds: 220),
-              child: KeyedSubtree(
-                key: ValueKey('real-estate-tab-$_selectedTab'),
-                child: _buildRealEstateTabContent(item),
+            MeasuredPinnedHeader(
+              background: AppTheme.page,
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(14, 12, 14, 12),
+                child: DetailPageTabs(
+                  sections: _realEstateTabs,
+                  selectedIndex: _selectedTab,
+                  color: _kPropertyColor,
+                  onSelected: (i) => setState(() => _selectedTab = i),
+                ),
+              ),
+            ),
+            SliverPadding(
+              padding: const EdgeInsets.fromLTRB(14, 0, 14, 92),
+              sliver: SliverToBoxAdapter(
+                child: AnimatedSwitcher(
+                  duration: const Duration(milliseconds: 220),
+                  child: KeyedSubtree(
+                    key: ValueKey('real-estate-tab-$_selectedTab'),
+                    child: _buildRealEstateTabContent(item),
+                  ),
+                ),
               ),
             ),
           ],
@@ -3294,7 +3557,7 @@ class _ProjectAssetDetailsScreenState extends State<ProjectAssetDetailsScreen> {
     final item = _item;
     if (_selectedTab >= _activityTabs.length) _selectedTab = 0;
     return Scaffold(
-      backgroundColor: const Color(0xFFF5F7FA),
+      backgroundColor: AppTheme.page,
       floatingActionButton: AddFab(
         key: const ValueKey('add-activity-detail-entry'),
         screenId: 'asset_details_activity',
@@ -3341,15 +3604,17 @@ class _ProjectAssetDetailsScreenState extends State<ProjectAssetDetailsScreen> {
       ),
       body: Directionality(
         textDirection: TextDirection.rtl,
-        child: ListView(
-          padding: const EdgeInsets.fromLTRB(14, 14, 14, 92),
-          children: [
-            Container(
+        // CustomScrollView ليمكن تثبيت شريط التبويبات أعلى الشاشة.
+        child: CustomScrollView(
+          slivers: [
+            SliverToBoxAdapter(
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(14, 14, 14, 0),
+                child: Container(
               decoration: BoxDecoration(
-                color: Colors.white,
-                borderRadius: BorderRadius.circular(15),
-                border: Border.all(color: const Color(0xFFE6ECF3)),
-              ),
+            color: AppTheme.surface,
+            borderRadius: BorderRadius.circular(AppTheme.rField),
+          ),
               child: Column(
                 children: [
                   _AssetDetailHeaderCard(
@@ -3382,19 +3647,30 @@ class _ProjectAssetDetailsScreenState extends State<ProjectAssetDetailsScreen> {
                 ],
               ),
             ),
-            const SizedBox(height: 12),
-            DetailPageTabs(
-              sections: _activityTabs,
-              selectedIndex: _selectedTab,
-              color: _kActivityColor,
-              onSelected: (i) => setState(() => _selectedTab = i),
+              ),
             ),
-            const SizedBox(height: 12),
-            AnimatedSwitcher(
-              duration: const Duration(milliseconds: 220),
-              child: KeyedSubtree(
-                key: ValueKey('activity-tab-$_selectedTab'),
-                child: _buildActivityTabContent(item),
+            MeasuredPinnedHeader(
+              background: AppTheme.page,
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(14, 12, 14, 12),
+                child: DetailPageTabs(
+                  sections: _activityTabs,
+                  selectedIndex: _selectedTab,
+                  color: _kActivityColor,
+                  onSelected: (i) => setState(() => _selectedTab = i),
+                ),
+              ),
+            ),
+            SliverPadding(
+              padding: const EdgeInsets.fromLTRB(14, 0, 14, 92),
+              sliver: SliverToBoxAdapter(
+                child: AnimatedSwitcher(
+                  duration: const Duration(milliseconds: 220),
+                  child: KeyedSubtree(
+                    key: ValueKey('activity-tab-$_selectedTab'),
+                    child: _buildActivityTabContent(item),
+                  ),
+                ),
               ),
             ),
           ],
@@ -3558,7 +3834,7 @@ class _ProjectAssetDetailsScreenState extends State<ProjectAssetDetailsScreen> {
     final item = _item;
     if (_selectedTab >= _equipmentTabs.length) _selectedTab = 0;
     return Scaffold(
-      backgroundColor: const Color(0xFFF5F7FA),
+      backgroundColor: AppTheme.page,
       floatingActionButton: AddFab(
         key: const ValueKey('add-equipment-detail-entry'),
         screenId: 'asset_details_equipment',
@@ -3603,15 +3879,17 @@ class _ProjectAssetDetailsScreenState extends State<ProjectAssetDetailsScreen> {
       ),
       body: Directionality(
         textDirection: TextDirection.rtl,
-        child: ListView(
-          padding: const EdgeInsets.fromLTRB(14, 14, 14, 92),
-          children: [
-            Container(
+        // CustomScrollView ليمكن تثبيت شريط التبويبات أعلى الشاشة.
+        child: CustomScrollView(
+          slivers: [
+            SliverToBoxAdapter(
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(14, 14, 14, 0),
+                child: Container(
               decoration: BoxDecoration(
-                color: Colors.white,
-                borderRadius: BorderRadius.circular(15),
-                border: Border.all(color: const Color(0xFFE6ECF3)),
-              ),
+            color: AppTheme.surface,
+            borderRadius: BorderRadius.circular(AppTheme.rField),
+          ),
               child: Column(
                 children: [
                   _AssetDetailHeaderCard(
@@ -3644,19 +3922,30 @@ class _ProjectAssetDetailsScreenState extends State<ProjectAssetDetailsScreen> {
                 ],
               ),
             ),
-            const SizedBox(height: 12),
-            DetailPageTabs(
-              sections: _equipmentTabs,
-              selectedIndex: _selectedTab,
-              color: _kEquipmentColor,
-              onSelected: (i) => setState(() => _selectedTab = i),
+              ),
             ),
-            const SizedBox(height: 12),
-            AnimatedSwitcher(
-              duration: const Duration(milliseconds: 220),
-              child: KeyedSubtree(
-                key: ValueKey('equipment-tab-$_selectedTab'),
-                child: _buildEquipmentTabContent(item),
+            MeasuredPinnedHeader(
+              background: AppTheme.page,
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(14, 12, 14, 12),
+                child: DetailPageTabs(
+                  sections: _equipmentTabs,
+                  selectedIndex: _selectedTab,
+                  color: _kEquipmentColor,
+                  onSelected: (i) => setState(() => _selectedTab = i),
+                ),
+              ),
+            ),
+            SliverPadding(
+              padding: const EdgeInsets.fromLTRB(14, 0, 14, 92),
+              sliver: SliverToBoxAdapter(
+                child: AnimatedSwitcher(
+                  duration: const Duration(milliseconds: 220),
+                  child: KeyedSubtree(
+                    key: ValueKey('equipment-tab-$_selectedTab'),
+                    child: _buildEquipmentTabContent(item),
+                  ),
+                ),
               ),
             ),
           ],
@@ -3823,7 +4112,7 @@ class _ProjectAssetDetailsScreenState extends State<ProjectAssetDetailsScreen> {
     }
 
     return Scaffold(
-      backgroundColor: const Color(0xFFF5F7FA),
+      backgroundColor: AppTheme.page,
       floatingActionButton: AddFab(
         key: const ValueKey('add-asset-detail-entry'),
         screenId: 'asset_details',
@@ -4311,10 +4600,9 @@ class _SearchInput extends StatelessWidget {
     return Container(
       width: double.infinity,
       decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: const Color(0xFFE2E8F0)),
-      ),
+            color: AppTheme.field,
+            borderRadius: BorderRadius.circular(AppTheme.rField),
+          ),
       child: TextField(
         controller: controller,
         textDirection: TextDirection.rtl,
@@ -4366,17 +4654,9 @@ class _AssetCard extends StatelessWidget {
       child: Container(
         padding: const EdgeInsets.all(12),
         decoration: BoxDecoration(
-          color: Colors.white,
-          borderRadius: BorderRadius.circular(14),
-          border: Border.all(color: const Color(0xFFE2E8F0)),
-          boxShadow: const [
-            BoxShadow(
-              color: Color(0x0F0F172A),
-              blurRadius: 8,
-              offset: Offset(0, 3),
-            ),
-          ],
-        ),
+            color: AppTheme.surface,
+            borderRadius: BorderRadius.circular(AppTheme.rField),
+          ),
         child: Column(
           children: [
             Row(
@@ -4474,10 +4754,9 @@ class _ProgressOverviewCard extends StatelessWidget {
       width: double.infinity,
       padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: const Color(0xFFDCE5EF)),
-      ),
+            color: AppTheme.surface,
+            borderRadius: BorderRadius.circular(AppTheme.rField),
+          ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.end,
         children: [
@@ -4604,10 +4883,9 @@ class _SummaryCard extends StatelessWidget {
       width: double.infinity,
       padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: const Color(0xFFDCE5EF)),
-      ),
+            color: AppTheme.surface,
+            borderRadius: BorderRadius.circular(AppTheme.rField),
+          ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.end,
         children: [
@@ -4830,10 +5108,9 @@ class _AssetTenantDetailsCard extends StatelessWidget {
               margin: const EdgeInsets.only(bottom: 8),
               padding: const EdgeInsets.all(10),
               decoration: BoxDecoration(
-                color: const Color(0xFFF8FAFC),
-                borderRadius: BorderRadius.circular(10),
-                border: Border.all(color: const Color(0xFFE2E8F0)),
-              ),
+            color: AppTheme.surfaceInner,
+            borderRadius: BorderRadius.circular(AppTheme.rInner),
+          ),
               child: Text(
                 value,
                 textAlign: TextAlign.right,
@@ -4851,6 +5128,10 @@ class _AssetTenantDetailsCard extends StatelessWidget {
   }
 }
 
+// غلافان رفيعان فوق مكوّني نظام التصميم، فتطابق صفحة تفاصيل العقار/النشاط
+// صفحة تفاصيل الالتزام الشخصي حرفًا بحرف: بطاقة رمادية واحدة، وصفوف يفصل
+// بينها خط أبيض رفيع. كانت الترويسة هنا بمربع أيقونة ملوّن والصفوف بلا أي
+// فاصل، فيبدو الجدول كتلة واحدة ملتصقة.
 class _AssetUnifiedCard extends StatelessWidget {
   const _AssetUnifiedCard({
     required this.title,
@@ -4865,45 +5146,12 @@ class _AssetUnifiedCard extends StatelessWidget {
   final List<Widget> children;
 
   @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.all(14),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: const Color(0xFFE2E8F0)),
-      ),
-      child: Column(
-        children: [
-          Row(
-            textDirection: TextDirection.rtl,
-            children: [
-              Container(
-                width: 38,
-                height: 38,
-                decoration: BoxDecoration(
-                  color: color.withValues(alpha: 0.1),
-                  borderRadius: BorderRadius.circular(8),
-                ),
-                child: Icon(icon, color: color, size: 20),
-              ),
-              const SizedBox(width: 10),
-              Text(
-                title,
-                style: const TextStyle(
-                  fontSize: 16,
-                  fontWeight: FontWeight.w900,
-                  color: Color(0xFF0F172A),
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 12),
-          ...children,
-        ],
-      ),
-    );
-  }
+  Widget build(BuildContext context) => AppDetailsCard(
+    title: title,
+    icon: icon,
+    color: color,
+    children: children,
+  );
 }
 
 class _AssetInfoRow extends StatelessWidget {
@@ -4920,38 +5168,8 @@ class _AssetInfoRow extends StatelessWidget {
   final Color color;
 
   @override
-  Widget build(BuildContext context) {
-    return Padding(
-      padding: const EdgeInsets.symmetric(vertical: 7),
-      child: Row(
-        textDirection: TextDirection.rtl,
-        children: [
-          Icon(icon, size: 19, color: color),
-          const SizedBox(width: 9),
-          Expanded(
-            child: Text(
-              label,
-              textAlign: TextAlign.right,
-              style: const TextStyle(
-                color: Color(0xFF64748B),
-                fontWeight: FontWeight.w600,
-              ),
-            ),
-          ),
-          Flexible(
-            child: Text(
-              value,
-              textAlign: TextAlign.right,
-              style: const TextStyle(
-                color: Color(0xFF1E293B),
-                fontWeight: FontWeight.w800,
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
+  Widget build(BuildContext context) =>
+      AppDetailRow(label: label, value: value, icon: icon);
 }
 
 class _DynamicListCard extends StatelessWidget {
@@ -4975,10 +5193,9 @@ class _DynamicListCard extends StatelessWidget {
       width: double.infinity,
       padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: const Color(0xFFDCE5EF)),
-      ),
+            color: AppTheme.surface,
+            borderRadius: BorderRadius.circular(AppTheme.rField),
+          ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.end,
         children: [
@@ -5050,10 +5267,9 @@ class _DetailHintCard extends StatelessWidget {
       width: double.infinity,
       padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: const Color(0xFFDCE5EF)),
-      ),
+            color: AppTheme.surface,
+            borderRadius: BorderRadius.circular(AppTheme.rField),
+          ),
       child: Text(
         message,
         textAlign: TextAlign.right,
@@ -5076,10 +5292,9 @@ class _AlertsKnowledgeCard extends StatelessWidget {
       width: double.infinity,
       padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: const Color(0xFFDCE5EF)),
-      ),
+            color: AppTheme.surface,
+            borderRadius: BorderRadius.circular(AppTheme.rField),
+          ),
       child: const Column(
         crossAxisAlignment: CrossAxisAlignment.end,
         children: [
@@ -5126,10 +5341,9 @@ class _ActivityLogCard extends StatelessWidget {
       width: double.infinity,
       padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: const Color(0xFFDCE5EF)),
-      ),
+            color: AppTheme.surface,
+            borderRadius: BorderRadius.circular(AppTheme.rField),
+          ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.end,
         children: [
@@ -5197,10 +5411,9 @@ class _HintBlock extends StatelessWidget {
       width: double.infinity,
       padding: const EdgeInsets.all(10),
       decoration: BoxDecoration(
-        color: const Color(0xFFF8FAFC),
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: const Color(0xFFDCE5EF)),
-      ),
+            color: AppTheme.surface,
+            borderRadius: BorderRadius.circular(AppTheme.rField),
+          ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.end,
         children: [
@@ -5806,10 +6019,9 @@ class _PropertyAnnexesEditor extends StatelessWidget {
     final selectedCount = counts.values.where((count) => count > 0).length;
     return Container(
       decoration: BoxDecoration(
-        color: const Color(0xFFF8FAFC),
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: const Color(0xFFE2E8F0)),
-      ),
+            color: AppTheme.surface,
+            borderRadius: BorderRadius.circular(AppTheme.rField),
+          ),
       child: ExpansionTile(
         tilePadding: const EdgeInsets.symmetric(horizontal: 12),
         childrenPadding: const EdgeInsets.fromLTRB(10, 0, 10, 12),
@@ -6340,7 +6552,7 @@ class _PropertyOwnershipStepScreenState
     }
 
     return Scaffold(
-      backgroundColor: const Color(0xFFF5F7FA),
+      backgroundColor: AppTheme.page,
       appBar: AppBar(
         toolbarHeight: 60,
         backgroundColor: Colors.white,
@@ -6441,7 +6653,7 @@ class _PropertyTypeGridScreenState extends State<_PropertyTypeGridScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: const Color(0xFFF5F7FA),
+      backgroundColor: AppTheme.page,
       appBar: AppBar(
         toolbarHeight: 60,
         backgroundColor: Colors.white,
@@ -6646,7 +6858,7 @@ class _AddPropertyStep1ScreenState extends State<_AddPropertyStep1Screen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: const Color(0xFFF5F7FA),
+      backgroundColor: AppTheme.page,
       appBar: AppBar(
         toolbarHeight: 60,
         backgroundColor: Colors.white,
@@ -7060,7 +7272,7 @@ class _PropertyUnitsDetailsScreenState
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: const Color(0xFFF5F7FA),
+      backgroundColor: AppTheme.page,
       appBar: AppBar(
         toolbarHeight: 60,
         backgroundColor: Colors.white,
@@ -7322,10 +7534,9 @@ class _UnitFormCardState extends State<_UnitFormCard> {
     return Container(
       padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: const Color(0xFFE1E7EF)),
-      ),
+            color: AppTheme.surface,
+            borderRadius: BorderRadius.circular(AppTheme.rField),
+          ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
@@ -7585,7 +7796,7 @@ class _PropertyReviewScreen extends StatelessWidget {
     final studios = units.where((u) => u.type == _kUnitStudio).length;
     final shops = units.where((u) => u.type == _kUnitShop).length;
     return Scaffold(
-      backgroundColor: const Color(0xFFF5F7FA),
+      backgroundColor: AppTheme.page,
       appBar: AppBar(
         toolbarHeight: 60,
         backgroundColor: Colors.white,
@@ -7625,10 +7836,9 @@ class _PropertyReviewScreen extends StatelessWidget {
             Container(
               padding: const EdgeInsets.all(14),
               decoration: BoxDecoration(
-                color: Colors.white,
-                borderRadius: BorderRadius.circular(14),
-                border: Border.all(color: const Color(0xFFE1E7EF)),
-              ),
+            color: AppTheme.surface,
+            borderRadius: BorderRadius.circular(AppTheme.rField),
+          ),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
@@ -7961,10 +8171,9 @@ class _EmployeeCard extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: const Color(0xFFE6ECF3)),
-      ),
+            color: AppTheme.surface,
+            borderRadius: BorderRadius.circular(AppTheme.rField),
+          ),
       child: Row(
         textDirection: TextDirection.rtl,
         children: [
@@ -8027,198 +8236,6 @@ class _EmployeeCard extends StatelessWidget {
 /// بطاقة عرض العقار في قائمة "العقارات" — بشارات حقيقية مبنية على بيانات
 /// العقار نفسه (عدد الوحدات، نوع العقار، إيجار من الباطن، شاغرة)، بدل
 /// البطاقة العامة المستخدمة لبقية الفئات.
-class _RealEstateListCard extends StatelessWidget {
-  const _RealEstateListCard({required this.item, required this.onTap});
-
-  final _AssetItem item;
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    final unitsCount = item.units.length;
-    final isSingleVacant = unitsCount <= 1 && item.vacantUnitsCount > 0;
-    final accent = item.iconColor ?? _kPropertyColor;
-    // ترتيب العناصر داخل صف rtl: أول عنصر هو الأيمن.
-    final accentPills = <Widget>[
-      if (item.subType.trim().isNotEmpty)
-        _pill(item.subType, filled: false, color: accent),
-      if (unitsCount > 0)
-        _pill(
-          unitsCount == 1
-              ? 'وحدة واحدة'
-              : unitsCount == 2
-              ? 'وحدتان'
-              : '$unitsCount وحدات',
-          filled: true,
-          color: accent,
-        ),
-    ];
-    final flagPills = <Widget>[
-      if (item.isSublease)
-        _pill(
-          'من الباطن',
-          filled: true,
-          color: const Color(0xFF7C3AED),
-          compact: true,
-        ),
-      if (isSingleVacant)
-        _pill(
-          'شاغرة',
-          filled: true,
-          color: const Color(0xFFF59E0B),
-          compact: true,
-        ),
-    ];
-    // اتجاه صريح للبطاقة: مع rtl يصبح CrossAxisAlignment.start = لليمين،
-    // وأول عنصر في الصف هو الأيمن — بغضّ النظر عن اتجاه الشاشة المحيطة.
-    return Directionality(
-      textDirection: TextDirection.rtl,
-      child: InkWell(
-      onTap: onTap,
-      borderRadius: BorderRadius.circular(14),
-      child: Container(
-        padding: const EdgeInsets.all(14),
-        decoration: BoxDecoration(
-          color: Colors.white,
-          borderRadius: BorderRadius.circular(14),
-          border: Border.all(color: const Color(0xFFE6ECF3)),
-        ),
-        child: Column(
-          crossAxisAlignment: CrossAxisAlignment.stretch,
-          children: [
-            Row(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                // اسم العقار وتحته موقعه مباشرةً في أقصى اليمين.
-                Expanded(
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        item.title,
-                        textAlign: TextAlign.right,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(
-                          fontSize: 15.5,
-                          fontWeight: FontWeight.w900,
-                          color: Color(0xFF0F172A),
-                        ),
-                      ),
-                      const SizedBox(height: 5),
-                      Row(
-                        textDirection: TextDirection.rtl,
-                        children: [
-                          const Icon(
-                            Icons.location_on_outlined,
-                            size: 15,
-                            color: Color(0xFF94A3B8),
-                          ),
-                          const SizedBox(width: 4),
-                          Expanded(
-                            child: Text(
-                              item.locationOrType,
-                              textAlign: TextAlign.right,
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                              style: const TextStyle(
-                                fontSize: 11.5,
-                                fontWeight: FontWeight.w600,
-                                color: Color(0xFF64748B),
-                              ),
-                            ),
-                          ),
-                        ],
-                      ),
-                    ],
-                  ),
-                ),
-                if (item.needsAttention) ...[
-                  const SizedBox(width: 8),
-                  const Icon(
-                    Icons.notification_important_rounded,
-                    size: 18,
-                    color: Color(0xFFE11D48),
-                  ),
-                ],
-                const SizedBox(width: 10),
-                Container(
-                  width: 44,
-                  height: 44,
-                  decoration: BoxDecoration(
-                    color: accent.withValues(alpha: 0.12),
-                    borderRadius: BorderRadius.circular(10),
-                  ),
-                  child: Icon(Icons.apartment_rounded, color: accent),
-                ),
-              ],
-            ),
-            // الصف الأساسي: نوع العقار (مفرّغ) على اليمين، وعدد الوحدات
-            // (معبّأ) على اليسار — بعرضين متساويين كما في التصميم المرجعي.
-            if (accentPills.isNotEmpty) ...[
-              const SizedBox(height: 12),
-              Row(
-                textDirection: TextDirection.rtl,
-                children: [
-                  for (int i = 0; i < accentPills.length; i++) ...[
-                    Expanded(child: accentPills[i]),
-                    if (i != accentPills.length - 1) const SizedBox(width: 10),
-                  ],
-                ],
-              ),
-            ],
-            if (flagPills.isNotEmpty) ...[
-              const SizedBox(height: 8),
-              Wrap(
-                alignment: WrapAlignment.start,
-                spacing: 8,
-                runSpacing: 8,
-                textDirection: TextDirection.rtl,
-                children: flagPills,
-              ),
-            ],
-          ],
-        ),
-      ),
-      ),
-    );
-  }
-
-  Widget _pill(
-    String label, {
-    required bool filled,
-    required Color color,
-    bool compact = false,
-  }) {
-    return Container(
-      padding: EdgeInsets.symmetric(
-        horizontal: compact ? 12 : 16,
-        vertical: compact ? 6 : 11,
-      ),
-      decoration: BoxDecoration(
-        color: filled ? color : Colors.white,
-        borderRadius: BorderRadius.circular(999),
-        border: filled ? null : Border.all(color: color, width: 1.3),
-      ),
-      child: Text(
-        label,
-        textAlign: TextAlign.center,
-        maxLines: 1,
-        overflow: TextOverflow.ellipsis,
-        style: TextStyle(
-          fontSize: compact ? 11 : 12.5,
-          fontWeight: FontWeight.w800,
-          color: filled ? Colors.white : color,
-        ),
-      ),
-    );
-  }
-}
-
-/// خريطة ثابتة (بدون مفتاح Google Maps API) أعلى تفاصيل العقار/الوحدة.
-/// عند تمرير [contract] نشط تُعرض بطاقة داكنة فوق الخريطة تلخّص عقد
-/// الإيجار الحالي (المستأجر، الدورية، الإيجار السنوي، تاريخ العقد) بنفس
-/// شكل الشاشات المرجعية؛ بدون عقد تبقى مجرد خريطة مع زر "فتح في الخرائط".
 class _LeaseMapHeader extends StatelessWidget {
   const _LeaseMapHeader({
     required this.latitude,
@@ -8542,10 +8559,9 @@ class _MultiUnitContractCard extends StatelessWidget {
       child: Container(
         padding: const EdgeInsets.all(12),
         decoration: BoxDecoration(
-          color: Colors.white,
-          borderRadius: BorderRadius.circular(12),
-          border: Border.all(color: const Color(0xFFE6ECF3)),
-        ),
+            color: AppTheme.surface,
+            borderRadius: BorderRadius.circular(AppTheme.rField),
+          ),
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
@@ -8680,9 +8696,8 @@ class _UnitCard extends StatelessWidget {
         child: Container(
           padding: const EdgeInsets.all(12),
           decoration: BoxDecoration(
-            color: Colors.white,
-            borderRadius: BorderRadius.circular(12),
-            border: Border.all(color: const Color(0xFFE6ECF3)),
+            color: AppTheme.surface,
+            borderRadius: BorderRadius.circular(AppTheme.rField),
           ),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -8868,10 +8883,9 @@ class _UnitFinancialsTab extends StatelessWidget {
           Container(
             padding: const EdgeInsets.symmetric(vertical: 14, horizontal: 10),
             decoration: BoxDecoration(
-              color: const Color(0xFFF5F7FA),
-              borderRadius: BorderRadius.circular(14),
-              border: Border.all(color: const Color(0xFFE6ECF3)),
-            ),
+            color: AppTheme.surface,
+            borderRadius: BorderRadius.circular(AppTheme.rField),
+          ),
             child: Row(
               children: [
                 Expanded(
@@ -8923,10 +8937,9 @@ class _UnitFinancialsTab extends StatelessWidget {
               Container(
                 margin: const EdgeInsets.only(bottom: 8),
                 decoration: BoxDecoration(
-                  color: Colors.white,
-                  borderRadius: BorderRadius.circular(12),
-                  border: Border.all(color: const Color(0xFFE6ECF3)),
-                ),
+            color: AppTheme.surface,
+            borderRadius: BorderRadius.circular(AppTheme.rField),
+          ),
                 child: InkWell(
                   borderRadius: BorderRadius.circular(12),
                   onTap: () => onEdit(t),
@@ -9937,7 +9950,7 @@ class _UnitDetailsScreenState extends State<_UnitDetailsScreen> {
     final leased = _contract != null;
     final hasMap = widget.assetLatitude != null && widget.assetLongitude != null;
     return Scaffold(
-      backgroundColor: const Color(0xFFF5F7FA),
+      backgroundColor: AppTheme.page,
       appBar: AppBar(
         backgroundColor: Colors.white,
         elevation: 0,
@@ -9962,15 +9975,19 @@ class _UnitDetailsScreenState extends State<_UnitDetailsScreen> {
             )
           : RefreshIndicator(
               onRefresh: _load,
-              child: ListView(
-                padding: const EdgeInsets.all(16),
-                children: [
-                  Container(
+              // CustomScrollView ليمكن تثبيت شريط التبويبات: البطاقة
+              // العلوية (الخريطة والحالة والإحصاءات) تختفي عند النزول
+              // ويبقى شريط "الإيجار / الحركة المالية / ..." ثابتًا.
+              child: CustomScrollView(
+                slivers: [
+                  SliverToBoxAdapter(
+                    child: Padding(
+                      padding: const EdgeInsets.fromLTRB(16, 16, 16, 0),
+                      child: Container(
                     decoration: BoxDecoration(
-                      color: Colors.white,
-                      borderRadius: BorderRadius.circular(15),
-                      border: Border.all(color: const Color(0xFFE6ECF3)),
-                    ),
+            color: AppTheme.surface,
+            borderRadius: BorderRadius.circular(AppTheme.rField),
+          ),
                     child: Column(
                       children: [
                         if (hasMap)
@@ -10078,26 +10095,37 @@ class _UnitDetailsScreenState extends State<_UnitDetailsScreen> {
                       ],
                     ),
                   ),
-                  const SizedBox(height: 12),
+                    ),
+                  ),
                   // شريط التبويبات يرث اتجاهه من الشاشة، وهذه الشاشة بلا
                   // غلاف rtl، فكانت التبويبات تُرتَّب من اليسار: "الإيجار"
                   // أولًا على اليسار و"الملاحظات" على اليمين. تثبيت rtl هنا
                   // يجعلها تبدأ بـ"الإيجار" من اليمين كبقية شاشات التفاصيل.
-                  Directionality(
-                    textDirection: TextDirection.rtl,
-                    child: DetailPageTabs(
-                      sections: _unitTabs,
-                      selectedIndex: _selectedTab,
-                      color: _kPropertyColor,
-                      onSelected: (i) => setState(() => _selectedTab = i),
+                  MeasuredPinnedHeader(
+                    background: AppTheme.page,
+                    child: Padding(
+                      padding: const EdgeInsets.fromLTRB(16, 12, 16, 12),
+                      child: Directionality(
+                        textDirection: TextDirection.rtl,
+                        child: DetailPageTabs(
+                          sections: _unitTabs,
+                          selectedIndex: _selectedTab,
+                          color: _kPropertyColor,
+                          onSelected: (i) => setState(() => _selectedTab = i),
+                        ),
+                      ),
                     ),
                   ),
-                  const SizedBox(height: 12),
-                  AnimatedSwitcher(
-                    duration: const Duration(milliseconds: 220),
-                    child: KeyedSubtree(
-                      key: ValueKey('unit-tab-$_selectedTab'),
-                      child: _buildTabContent(leased),
+                  SliverPadding(
+                    padding: const EdgeInsets.fromLTRB(16, 0, 16, 16),
+                    sliver: SliverToBoxAdapter(
+                      child: AnimatedSwitcher(
+                        duration: const Duration(milliseconds: 220),
+                        child: KeyedSubtree(
+                          key: ValueKey('unit-tab-$_selectedTab'),
+                          child: _buildTabContent(leased),
+                        ),
+                      ),
                     ),
                   ),
                 ],
@@ -10143,10 +10171,9 @@ class _UnitDetailsScreenState extends State<_UnitDetailsScreen> {
           Container(
             padding: const EdgeInsets.all(14),
             decoration: BoxDecoration(
-              color: const Color(0xFFF5F7FA),
-              borderRadius: BorderRadius.circular(14),
-              border: Border.all(color: const Color(0xFFE6ECF3)),
-            ),
+            color: AppTheme.surface,
+            borderRadius: BorderRadius.circular(AppTheme.rField),
+          ),
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
@@ -10290,9 +10317,8 @@ class _UnitDetailsScreenState extends State<_UnitDetailsScreen> {
         Container(
           padding: const EdgeInsets.all(14),
           decoration: BoxDecoration(
-            color: Colors.white,
-            borderRadius: BorderRadius.circular(14),
-            border: Border.all(color: const Color(0xFFE6ECF3)),
+            color: AppTheme.surface,
+            borderRadius: BorderRadius.circular(AppTheme.rField),
           ),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -10370,9 +10396,8 @@ class _UnitDetailsScreenState extends State<_UnitDetailsScreen> {
         Container(
           padding: const EdgeInsets.all(14),
           decoration: BoxDecoration(
-            color: Colors.white,
-            borderRadius: BorderRadius.circular(14),
-            border: Border.all(color: const Color(0xFFE6ECF3)),
+            color: AppTheme.surface,
+            borderRadius: BorderRadius.circular(AppTheme.rField),
           ),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -10436,10 +10461,9 @@ class _UnitDetailsScreenState extends State<_UnitDetailsScreen> {
               margin: const EdgeInsets.only(bottom: 8),
               padding: const EdgeInsets.all(12),
               decoration: BoxDecoration(
-                color: Colors.white,
-                borderRadius: BorderRadius.circular(12),
-                border: Border.all(color: const Color(0xFFE6ECF3)),
-              ),
+            color: AppTheme.surface,
+            borderRadius: BorderRadius.circular(AppTheme.rField),
+          ),
               child: InkWell(
                 onTap: () => _editOrDeleteOverduePayment(p),
                 child: Row(
@@ -10668,7 +10692,7 @@ class _MultiUnitContractFormScreenState
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: const Color(0xFFF5F7FA),
+      backgroundColor: AppTheme.page,
       appBar: AppBar(
         toolbarHeight: 60,
         backgroundColor: Colors.white,
@@ -10939,7 +10963,7 @@ class _AddBusinessActivityScreenState
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: const Color(0xFFF5F7FA),
+      backgroundColor: AppTheme.page,
       appBar: AppBar(
         toolbarHeight: 60,
         backgroundColor: Colors.white,
@@ -11158,10 +11182,9 @@ class _EmployeeFormRow extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.all(10),
       decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: const Color(0xFFE1E7EF)),
-      ),
+            color: AppTheme.surface,
+            borderRadius: BorderRadius.circular(AppTheme.rField),
+          ),
       child: Row(
         textDirection: TextDirection.rtl,
         children: [
@@ -11296,7 +11319,7 @@ class _AddEquipmentScreenState extends State<_AddEquipmentScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: const Color(0xFFF5F7FA),
+      backgroundColor: AppTheme.page,
       appBar: AppBar(
         toolbarHeight: 60,
         backgroundColor: Colors.white,
@@ -11446,8 +11469,7 @@ class _AddEquipmentScreenState extends State<_AddEquipmentScreen> {
                 minimumSize: const Size.fromHeight(50),
                 shape: RoundedRectangleBorder(
                   borderRadius: BorderRadius.circular(12),
-                ),
-              ),
+                )              ),
               child: const Text(
                 'إضافة المعدة',
                 style: TextStyle(fontSize: 15, fontWeight: FontWeight.w800),

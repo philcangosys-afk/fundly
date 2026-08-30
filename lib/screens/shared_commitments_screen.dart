@@ -1,8 +1,15 @@
 import 'dart:convert';
 import 'package:flutter/material.dart';
+import '../data/app_settings.dart';
 import '../data/shared_entries_repository.dart';
 import '../widgets/management_dashboard_chrome.dart';
+import '../widgets/detail_page_chrome.dart';
+import '../widgets/shared/app_filter_sheet.dart';
+import '../widgets/shared/followup_center_sheet.dart';
+import '../widgets/shared/app_design.dart';
+import 'smart_calendar_screen.dart';
 import '../widgets/shared/module_shared_widgets.dart';
+import '../widgets/shared/measured_pinned_header.dart';
 import 'package:share_plus/share_plus.dart';
 
 // ============================================================================
@@ -239,10 +246,9 @@ class _SharedQuickAddTile extends StatelessWidget {
         height: 76,
         padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 8),
         decoration: BoxDecoration(
-          color: const Color(0xFFF8FAFC),
-          borderRadius: BorderRadius.circular(14),
-          border: Border.all(color: const Color(0xFFE2E8F0)),
-        ),
+            color: AppTheme.surface,
+            borderRadius: BorderRadius.circular(AppTheme.rField),
+          ),
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
@@ -712,7 +718,7 @@ class _SharedItem {
   /// مبلغ في الشاشة يُلحق به "درهم" ثابتة — فتظهر ميزانية باليورو بالدرهم.
   String get currency {
     final value = (details['العملة'] ?? '').trim();
-    return value.isEmpty ? 'درهم' : value;
+    return value.isEmpty ? AppSettings.currencySuffix : value;
   }
 
   List<_SharedTransaction> get transactions => _parseSharedTransactions(details);
@@ -779,20 +785,16 @@ class _SharedCommitmentsScreenState extends State<SharedCommitmentsScreen> {
   bool _requestBannerDismissed = false;
   int _requestBannerDismissedAtCount = -1;
 
+  /// المؤشر المحدَّد في مركز المتابعة. لم تكن بطاقات المركز هنا قابلة
+  /// للاختيار إطلاقًا (بلا onTap ولا حالة)، بخلاف بقية مراكز المتابعة.
+  int _selectedFollowUpMetric = 0;
+
   // فلتر متقدم مبسّط (زر التصفية بجانب البحث): حالة الالتزام، نطاق التاريخ،
   // ونطاق المبلغ — تُطبَّق فوق فلتر الفئات وشريط البحث في _filteredItems().
-  String? _advFilterStatus;
-  DateTime? _advFilterDateFrom;
-  DateTime? _advFilterDateTo;
-  num? _advFilterAmountFrom;
-  num? _advFilterAmountTo;
+  /// قيم الفلتر الرئيسي — نفس البنية في الشاشات الأربع.
+  final AppFilterValues _filter = AppFilterValues();
 
-  bool get _hasActiveAdvancedFilters =>
-      _advFilterStatus != null ||
-      _advFilterDateFrom != null ||
-      _advFilterDateTo != null ||
-      _advFilterAmountFrom != null ||
-      _advFilterAmountTo != null;
+  bool get _hasActiveAdvancedFilters => _filter.isActive;
 
   @override
   void initState() {
@@ -841,20 +843,76 @@ class _SharedCommitmentsScreenState extends State<SharedCommitmentsScreen> {
       .where(_isOpenItem)
       .fold<int>(0, (sum, i) => sum + i.pendingApprovalsCount);
 
+  /// تطبيق أقسام الفلتر الرئيسي على بند مشترك.
+  bool _matchesMainFilter(_SharedItem item) {
+    switch (_filter.status) {
+      case 'المستحق بعد 7 أيام':
+        {
+          final due = _parseDueDate(item.dueDate);
+          if (due == null) return false;
+          final days = due
+              .difference(DateUtils.dateOnly(DateTime.now()))
+              .inDays;
+          if (days < 0 || days > 7) return false;
+        }
+      case 'نشط':
+        if (!_isOpenItem(item)) return false;
+      case 'مكتمل':
+        if (!item.status.contains('مكتمل')) return false;
+      case 'متأخر':
+        {
+          final due = _parseDueDate(item.dueDate);
+          if (due == null ||
+              !due.isBefore(DateUtils.dateOnly(DateTime.now())) ||
+              item.status.contains('مكتمل')) {
+            return false;
+          }
+        }
+      case 'ملغاة':
+        if (!item.status.contains('ملغا')) return false;
+      case 'مؤرشف':
+        if (!item.status.contains('مؤرشف')) return false;
+    }
+    if (!_filter.matchesAmount(item.amount)) return false;
+    if (!_filter.matchesDate(_parseDueDate(item.dueDate))) return false;
+    if (_filter.documentName.isNotEmpty &&
+        !AppFilterValues.textMatches(_filter.documentName, [
+          item.title,
+          ...item.details.values,
+        ])) {
+      return false;
+    }
+    if (_filter.personName.isNotEmpty &&
+        !AppFilterValues.textMatches(_filter.personName, [
+          item.title,
+          ...item.members.map((member) => member.name),
+        ])) {
+      return false;
+    }
+    if (_filter.delegateName.isNotEmpty &&
+        !AppFilterValues.textMatches(_filter.delegateName, [
+          item.details['اسم المفوَّض'] ?? '',
+          ...item.members.map((member) => member.name),
+        ])) {
+      return false;
+    }
+    if (_filter.placeName.isNotEmpty &&
+        !AppFilterValues.textMatches(_filter.placeName, [
+          item.details['المكان'] ?? '',
+          item.details['الموقع'] ?? '',
+          item.details['الوجهة'] ?? '',
+        ])) {
+      return false;
+    }
+    return true;
+  }
+
   List<_SharedItem> _filteredItems() {
     final query = _searchController.text.trim();
     var list = _items.where((i) {
       final typeMatches = _selectedType == 'الكل' || i.entryType == _selectedType;
       if (!typeMatches) return false;
-      if (_advFilterStatus != null && i.status != _advFilterStatus) return false;
-      if (_advFilterAmountFrom != null && i.amount < _advFilterAmountFrom!) return false;
-      if (_advFilterAmountTo != null && i.amount > _advFilterAmountTo!) return false;
-      if (_advFilterDateFrom != null || _advFilterDateTo != null) {
-        final due = _parseDueDate(i.dueDate);
-        if (due == null) return false;
-        if (_advFilterDateFrom != null && due.isBefore(_advFilterDateFrom!)) return false;
-        if (_advFilterDateTo != null && due.isAfter(_advFilterDateTo!)) return false;
-      }
+      if (!_matchesMainFilter(i)) return false;
       if (query.isEmpty) return true;
       // مطابقة موحّدة عربيًا بنفس معيار اقتراحات البحث. كانت المقارنة نصية
       // خام، فكتابة "احمد" أو اختيار اقتراح "أحمد" لا يُرجع أي نتيجة رغم
@@ -881,30 +939,36 @@ class _SharedCommitmentsScreenState extends State<SharedCommitmentsScreen> {
       );
     }).toList();
 
-    switch (_selectedSort) {
-      // ترتيب ثانوي ثابت (الأحدث إنشاءً) حتى لا تتبدّل مواضع البنود
-      // المتساوية عشوائيًا عند كل إعادة بناء للشاشة.
-      case 'الأعلى مبلغاً':
-        list.sort((a, b) {
-          final byAmount = b.amount.compareTo(a.amount);
-          if (byAmount != 0) return byAmount;
-          return (b.createdAt ?? DateTime(2000)).compareTo(
-            a.createdAt ?? DateTime(2000),
-          );
-        });
-        break;
-      case 'الأكثر أعضاء':
-        list.sort((a, b) {
-          final byMembers = b.membersCount.compareTo(a.membersCount);
-          if (byMembers != 0) return byMembers;
-          return (b.createdAt ?? DateTime(2000)).compareTo(
-            a.createdAt ?? DateTime(2000),
-          );
-        });
-        break;
-      default:
-        list.sort((a, b) => (b.createdAt ?? DateTime(2000)).compareTo(a.createdAt ?? DateTime(2000)));
+    // الفلتر الصغير يُقدّم المطابق ولا يُخفي غيره، ثم ترتيب ثانوي ثابت
+    // (الأحدث إنشاءً) حتى لا تتبدّل مواضع البنود المتساوية عشوائيًا.
+    int rank(_SharedItem item) {
+      switch (_selectedSort) {
+        case 'نشط':
+          return _isOpenItem(item) ? 0 : 1;
+        case 'مكتمل':
+          return item.status.contains('مكتمل') ? 0 : 1;
+        case 'ملغاة':
+          return item.status.contains('ملغا') ? 0 : 1;
+        default:
+          return 0;
+      }
     }
+
+    list.sort((a, b) {
+      // "أعلى/أقل مبلغ" من الفلتر الكبير يتقدّم على ترتيب الفلتر الصغير.
+      if (_filter.amountShortcut == 'أعلى مبلغ') {
+        final byAmount = b.amount.compareTo(a.amount);
+        if (byAmount != 0) return byAmount;
+      } else if (_filter.amountShortcut == 'أقل مبلغ') {
+        final byAmount = a.amount.compareTo(b.amount);
+        if (byAmount != 0) return byAmount;
+      }
+      final byRank = rank(a).compareTo(rank(b));
+      if (byRank != 0) return byRank;
+      return (b.createdAt ?? DateTime(2000)).compareTo(
+        a.createdAt ?? DateTime(2000),
+      );
+    });
     return list;
   }
 
@@ -937,7 +1001,7 @@ class _SharedCommitmentsScreenState extends State<SharedCommitmentsScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: const Color(0xFFF8FAFC),
+      backgroundColor: AppTheme.page,
       body: Directionality(
         textDirection: TextDirection.rtl,
         child: _buildScreenBody(),
@@ -963,11 +1027,13 @@ class _SharedCommitmentsScreenState extends State<SharedCommitmentsScreen> {
         onRefresh: _load,
         child: CustomScrollView(
           slivers: [
-            const ManagementDashboardHeader(
+            ManagementDashboardHeader(
               title: 'الالتزامات المشتركة',
               subtitle: 'إدارة ومتابعة التزاماتك مع الآخرين',
               icon: Icons.diversity_3_rounded,
-              colors: [Color(0xFF6D28D9), Color(0xFF7C3AED)],
+              colors: const [Color(0xFF6D28D9), Color(0xFF7C3AED)],
+              onSmartCalendarTap: _openSmartCalendar,
+              onClose: () => Navigator.of(context).pop(),
             ),
             SliverToBoxAdapter(
               child: Padding(
@@ -988,19 +1054,31 @@ class _SharedCommitmentsScreenState extends State<SharedCommitmentsScreen> {
                 child: _buildRequestsBanner(),
               ),
             ),
+            // مركز المتابعة يتحرّك مع الصفحة ويختفي عند النزول لأسفل.
             SliverToBoxAdapter(
               child: ColoredBox(
-                color: const Color(0xFFF5F8FC),
+                color: AppTheme.page,
                 child: Padding(
-                  padding: const EdgeInsets.fromLTRB(12, 8, 12, 8),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.stretch,
-                    children: [
-                      _buildFollowUpCenter(),
-                      const SizedBox(height: 14),
-                      _buildCategoriesBlock(),
-                    ],
-                  ),
+                  padding: const EdgeInsets.fromLTRB(12, 8, 12, 0),
+                  child: _buildFollowUpCenter(),
+                ),
+              ),
+            ),
+            // صف "الفئات" يبقى مثبَّتًا في الأعلى عند التمرير.
+            MeasuredPinnedHeader(
+              background: AppTheme.page,
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(12, 14, 12, 8),
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    _buildCategoriesBlock(),
+                    const SizedBox(height: 10),
+                    // سطر عنوان القائمة مثبَّت مع الفئات، كالالتزامات
+                    // الشخصية تمامًا.
+                    _buildListHeader(filtered.length),
+                  ],
                 ),
               ),
             ),
@@ -1008,8 +1086,6 @@ class _SharedCommitmentsScreenState extends State<SharedCommitmentsScreen> {
               padding: const EdgeInsets.fromLTRB(12, 12, 12, 90),
               sliver: SliverList(
                 delegate: SliverChildListDelegate([
-                  _buildListHeader(filtered.length),
-                  const SizedBox(height: 10),
                   if (filtered.isEmpty)
                     _buildEmptyState()
                   else
@@ -1100,49 +1176,41 @@ class _SharedCommitmentsScreenState extends State<SharedCommitmentsScreen> {
             textDirection: TextDirection.rtl,
             onChanged: (_) => setState(() {}),
             decoration: InputDecoration(
+              // حقل ممتلئ بلا حدود بنفس نصف قطر ولون حقول التطبيق.
               hintText: 'بحث في الالتزامات المشتركة',
-              hintStyle: const TextStyle(color: Color(0xFF94A3B8), fontWeight: FontWeight.w600),
-              prefixIcon: const Icon(Icons.search_rounded, color: Color(0xFF64748B)),
+              hintStyle: const TextStyle(color: AppTheme.muted, fontSize: 13, fontWeight: FontWeight.w600),
+              prefixIcon: const Icon(Icons.search_rounded, size: 21, color: AppTheme.chevron),
               suffixIcon: _searchController.text.isEmpty
                   ? null
                   : IconButton(
                       tooltip: 'مسح البحث',
-                      icon: const Icon(Icons.close_rounded, color: Color(0xFF64748B)),
+                      icon: const Icon(Icons.close_rounded, size: 18, color: AppTheme.muted),
                       onPressed: () {
                         _searchController.clear();
                         setState(() {});
                       },
                     ),
               filled: true,
-              fillColor: Colors.white,
+              fillColor: AppTheme.field,
               border: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(14),
-                borderSide: const BorderSide(color: Color(0xFFE2E8F0)),
+                borderRadius: BorderRadius.circular(AppTheme.rField),
+                borderSide: BorderSide.none,
               ),
-              enabledBorder: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(14),
-                borderSide: const BorderSide(color: Color(0xFFE2E8F0)),
-              ),
-              focusedBorder: OutlineInputBorder(
-                borderRadius: BorderRadius.circular(14),
-                borderSide: const BorderSide(color: Color(0xFF7C3AED), width: 1.4),
-              ),
-              contentPadding: const EdgeInsets.symmetric(vertical: 13),
+              contentPadding: const EdgeInsets.symmetric(vertical: 15),
             ),
           ),
         ),
-        const SizedBox(width: 9),
+        const SizedBox(width: AppTheme.sSm),
         InkWell(
           key: const ValueKey('shared-filter-button'),
           onTap: _openAdvancedFilterSheet,
-          borderRadius: BorderRadius.circular(14),
+          borderRadius: BorderRadius.circular(AppTheme.rField),
           child: Container(
-            width: 50,
-            height: 50,
+            width: 52,
+            height: 52,
             decoration: BoxDecoration(
               color: const Color(0xFF7C3AED),
-              borderRadius: BorderRadius.circular(14),
-              boxShadow: const [BoxShadow(color: Color(0x297C3AED), blurRadius: 12, offset: Offset(0, 5))],
+              borderRadius: BorderRadius.circular(AppTheme.rField),
             ),
             child: Stack(
               clipBehavior: Clip.none,
@@ -1187,15 +1255,16 @@ class _SharedCommitmentsScreenState extends State<SharedCommitmentsScreen> {
     return Padding(
       padding: const EdgeInsets.only(top: 6),
       child: Container(
+        // قائمة الاقتراحات تطفو فوق القائمة خلفها، فتحتفظ بظل خفيف يفصلها
+        // عمّا تحتها — وحده الاستثناء عن قاعدة "بلا ظلال".
         decoration: BoxDecoration(
-          color: Colors.white,
-          borderRadius: BorderRadius.circular(12),
-          border: Border.all(color: const Color(0xFFE2E8F0)),
+          color: AppTheme.surface,
+          borderRadius: BorderRadius.circular(AppTheme.rField),
           boxShadow: const [
             BoxShadow(
-              color: Color(0x0D0F172A),
-              blurRadius: 10,
-              offset: Offset(0, 4),
+              color: Color(0x1416232B),
+              blurRadius: 16,
+              offset: Offset(0, 6),
             ),
           ],
         ),
@@ -1254,256 +1323,47 @@ class _SharedCommitmentsScreenState extends State<SharedCommitmentsScreen> {
     );
   }
 
-  static const List<String> _sharedAdvFilterStatusOptions = [
-    _sharedStatusActive,
-    _sharedStatusCompleted,
-    _sharedStatusArchived,
-  ];
-
-  // فلتر متقدم مبسّط: حالة الالتزام، نطاق التاريخ، ونطاق المبلغ — بنفس روح
-  // فلتر الشخصية المتقدم لكن بحقول تناسب الالتزامات المشتركة فقط.
-  // نفس تصميم الفلتر المتقدم في الشخصية تمامًا (FractionallySizedBox 0.92،
-  // خلفية F8FAFC، رأس بأيقونة "tune" + عنوان + "مسح الكل"، فاصل، وأقسام
-  // بعناوين موحدة) — الشخصية هي المرجع الأساسي للتصميم؛ الحقول هنا (الحالة/
-  // التاريخ/المبلغ) هي فقط ما يناسب بيانات الالتزامات المشتركة.
+  // الفلتر الرئيسي: نفس قالب الشاشات الأربع، والأقسام وترتيبها مطابقة
+  // لملف "فلاتر فوندلي" لصفحة الالتزامات المشتركة.
   void _openAdvancedFilterSheet() {
-    var draftStatus = _advFilterStatus;
-    var draftFrom = _advFilterDateFrom;
-    var draftTo = _advFilterDateTo;
-    final amountFromCtrl = TextEditingController(text: _advFilterAmountFrom?.toStringAsFixed(0) ?? '');
-    final amountToCtrl = TextEditingController(text: _advFilterAmountTo?.toStringAsFixed(0) ?? '');
-
-    showModalBottomSheet<void>(
+    showAppFilterSheet(
       context: context,
-      isScrollControlled: true,
-      backgroundColor: Colors.transparent,
-      builder: (sheetContext) => Directionality(
-        textDirection: TextDirection.rtl,
-        child: StatefulBuilder(
-          builder: (context, setSheetState) {
-            Future<void> pickDate({required bool isFrom}) async {
-              // منتقي التاريخ يُبنى في مسار عرض مستقل خارج غلاف الاتجاه،
-              // فكان يفتح من اليسار لليمين في تطبيق عربي بالكامل.
-              final picked = await showDatePicker(
-                context: sheetContext,
-                initialDate: (isFrom ? draftFrom : draftTo) ?? DateTime.now(),
-                firstDate: DateTime(2000),
-                lastDate: DateTime(2100),
-                builder: (pickerContext, child) => Directionality(
-                  textDirection: TextDirection.rtl,
-                  child: child!,
-                ),
-              );
-              if (picked == null) return;
-              setSheetState(() {
-                if (isFrom) {
-                  draftFrom = picked;
-                } else {
-                  draftTo = picked;
-                }
-              });
-            }
-
-            return FractionallySizedBox(
-              heightFactor: 0.92,
-              child: Container(
-                decoration: const BoxDecoration(color: Color(0xFFF8FAFC), borderRadius: BorderRadius.vertical(top: Radius.circular(24))),
-                child: Column(
-                  children: [
-                    Container(
-                      width: 44,
-                      height: 4,
-                      margin: const EdgeInsets.only(top: 10, bottom: 12),
-                      decoration: BoxDecoration(color: const Color(0xFFCBD5E1), borderRadius: BorderRadius.circular(4)),
-                    ),
-                    Padding(
-                      padding: const EdgeInsets.symmetric(horizontal: 18),
-                      child: Row(
-                        children: [
-                          const Icon(Icons.tune_rounded, color: Color(0xFF7C3AED)),
-                          const SizedBox(width: 9),
-                          const Expanded(
-                            child: Text('الالتزامات المشتركة', style: TextStyle(fontSize: 18, fontWeight: FontWeight.w900, color: Color(0xFF0F172A))),
-                          ),
-                          TextButton(
-                            onPressed: () {
-                              setSheetState(() {
-                                draftStatus = null;
-                                draftFrom = null;
-                                draftTo = null;
-                                amountFromCtrl.clear();
-                                amountToCtrl.clear();
-                              });
-                              setState(() {
-                                _advFilterStatus = null;
-                                _advFilterDateFrom = null;
-                                _advFilterDateTo = null;
-                                _advFilterAmountFrom = null;
-                                _advFilterAmountTo = null;
-                              });
-                            },
-                            child: const Text('مسح الكل'),
-                          ),
-                        ],
-                      ),
-                    ),
-                    const Divider(height: 20),
-                    Expanded(
-                      child: ListView(
-                        padding: const EdgeInsets.fromLTRB(18, 0, 18, 16),
-                        children: [
-                          _sharedAdvFilterSectionLabel('الحالة'),
-                          Wrap(
-                            spacing: 7,
-                            runSpacing: 7,
-                            children: _sharedAdvFilterStatusOptions.map((s) {
-                              final selected = draftStatus == s;
-                              return ChoiceChip(
-                                label: Text(s),
-                                selected: selected,
-                                onSelected: (_) => setSheetState(() => draftStatus = selected ? null : s),
-                                selectedColor: const Color(0xFF7C3AED).withValues(alpha: 0.16),
-                                labelStyle: TextStyle(
-                                  fontSize: 12,
-                                  fontWeight: FontWeight.w800,
-                                  color: selected ? const Color(0xFF7C3AED) : const Color(0xFF475569),
-                                ),
-                                backgroundColor: Colors.white,
-                                side: BorderSide(color: selected ? const Color(0xFF7C3AED) : const Color(0xFFE2E8F0)),
-                              );
-                            }).toList(),
-                          ),
-                          const SizedBox(height: 16),
-                          _sharedAdvFilterSectionLabel('التاريخ'),
-                          Row(
-                            children: [
-                              Expanded(
-                                child: _sharedAdvFilterDateField(
-                                  label: 'من',
-                                  value: _formatAdvDate(draftFrom),
-                                  onTap: () => pickDate(isFrom: true),
-                                ),
-                              ),
-                              const SizedBox(width: 8),
-                              Expanded(
-                                child: _sharedAdvFilterDateField(
-                                  label: 'إلى',
-                                  value: _formatAdvDate(draftTo),
-                                  onTap: () => pickDate(isFrom: false),
-                                ),
-                              ),
-                            ],
-                          ),
-                          const SizedBox(height: 16),
-                          _sharedAdvFilterSectionLabel('المبلغ'),
-                          Row(
-                            children: [
-                              Expanded(
-                                child: TextField(
-                                  controller: amountFromCtrl,
-                                  keyboardType: TextInputType.number,
-                                  decoration: _sharedAdvFilterFieldDecoration('من'),
-                                ),
-                              ),
-                              const SizedBox(width: 8),
-                              Expanded(
-                                child: TextField(
-                                  controller: amountToCtrl,
-                                  keyboardType: TextInputType.number,
-                                  decoration: _sharedAdvFilterFieldDecoration('إلى'),
-                                ),
-                              ),
-                            ],
-                          ),
-                        ],
-                      ),
-                    ),
-                    Padding(
-                      padding: const EdgeInsets.fromLTRB(18, 0, 18, 20),
-                      child: SizedBox(
-                        width: double.infinity,
-                        height: 48,
-                        child: ElevatedButton(
-                          style: ElevatedButton.styleFrom(
-                            backgroundColor: const Color(0xFF7C3AED),
-                            shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
-                          ),
-                          onPressed: () {
-                            final amountFrom = num.tryParse(amountFromCtrl.text.trim());
-                            final amountTo = num.tryParse(amountToCtrl.text.trim());
-                            setState(() {
-                              _advFilterStatus = draftStatus;
-                              _advFilterDateFrom = draftFrom;
-                              _advFilterDateTo = draftTo;
-                              _advFilterAmountFrom = amountFrom;
-                              _advFilterAmountTo = amountTo;
-                            });
-                            Navigator.of(sheetContext).pop();
-                          },
-                          child: const Text('تطبيق الفلتر', style: TextStyle(fontSize: 15, fontWeight: FontWeight.w900, color: Colors.white)),
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            );
-          },
-        ),
-      ),
-    ).whenComplete(() {
-      amountFromCtrl.dispose();
-      amountToCtrl.dispose();
-    });
-  }
-
-  String _formatAdvDate(DateTime? date) {
-    if (date == null) return '—';
-    return '${date.day}/${date.month}/${date.year}';
-  }
-
-  Widget _sharedAdvFilterSectionLabel(String label) {
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 8),
-      child: Text(label, style: const TextStyle(fontSize: 12.5, fontWeight: FontWeight.w900, color: Color(0xFF334155))),
-    );
-  }
-
-  InputDecoration _sharedAdvFilterFieldDecoration(String hint) {
-    return InputDecoration(
-      hintText: hint,
-      hintStyle: const TextStyle(fontSize: 12, color: Color(0xFF94A3B8)),
-      filled: true,
-      fillColor: Colors.white,
-      contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
-      border: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: const BorderSide(color: Color(0xFFE2E8F0))),
-      enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: const BorderSide(color: Color(0xFFE2E8F0))),
-      focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(12), borderSide: const BorderSide(color: Color(0xFF7C3AED), width: 1.4)),
-    );
-  }
-
-  Widget _sharedAdvFilterDateField({required String label, required String value, required VoidCallback onTap}) {
-    return InkWell(
-      onTap: onTap,
-      borderRadius: BorderRadius.circular(12),
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
-        decoration: BoxDecoration(color: Colors.white, borderRadius: BorderRadius.circular(12), border: Border.all(color: const Color(0xFFE2E8F0))),
-        child: Row(
-          children: [
-            const Icon(Icons.calendar_today_outlined, size: 15, color: Color(0xFF64748B)),
-            const SizedBox(width: 7),
-            Expanded(
-              child: Text(
-                '$label: $value',
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: const TextStyle(fontSize: 11.5, fontWeight: FontWeight.w700, color: Color(0xFF334155)),
-              ),
-            ),
-          ],
-        ),
-      ),
+      title: 'الالتزامات المشتركة',
+      accent: const Color(0xFF6D28D9),
+      values: _filter..mainCategory = _selectedType,
+      mainCategories: _sharedCategoryChips
+          .map((chip) => chip.$1)
+          .toList(growable: false),
+      amountShortcuts: const ['أعلى مبلغ', 'أقل مبلغ'],
+      documentStates: const [],
+      sections: const [
+        AppFilterSection.mainCategory,
+        AppFilterSection.date,
+        AppFilterSection.status,
+        AppFilterSection.amount,
+        AppFilterSection.document,
+        AppFilterSection.people,
+        AppFilterSection.delegates,
+        AppFilterSection.place,
+      ],
+      onApply: (values) => setState(() {
+        _selectedType = values.mainCategory;
+        _filter
+          ..mainCategory = values.mainCategory
+          ..subCategory = values.subCategory
+          ..dateFrom = values.dateFrom
+          ..dateTo = values.dateTo
+          ..status = values.status
+          ..amountFrom = values.amountFrom
+          ..amountTo = values.amountTo
+          ..amountShortcut = values.amountShortcut
+          ..documentName = values.documentName
+          ..documentState = values.documentState
+          ..personName = values.personName
+          ..personCategory = values.personCategory
+          ..delegateName = values.delegateName
+          ..placeName = values.placeName;
+      }),
     );
   }
 
@@ -1566,15 +1426,10 @@ class _SharedCommitmentsScreenState extends State<SharedCommitmentsScreen> {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.start,
       children: [
-        const Padding(
-          padding: EdgeInsets.only(right: 2, bottom: 8),
-          child: Text(
-            'الفئات',
-            style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.w900, color: Color(0xFF334155)),
-          ),
-        ),
+        // بلا عنوان "الفئات" — كبقية الشاشات.
         SizedBox(
-          height: 42,
+          // نفس ارتفاع شريط الفئات في بقية الشاشات.
+          height: 46,
           child: ListView.separated(
             key: const ValueKey('shared-category-tabs'),
             scrollDirection: Axis.horizontal,
@@ -1585,6 +1440,7 @@ class _SharedCommitmentsScreenState extends State<SharedCommitmentsScreen> {
               final selected = _selectedType == chip.$1;
               return _SharedCategoryTab(
                 label: chip.$1,
+                count: _countForType(chip.$1),
                 icon: chip.$2,
                 color: chip.$3,
                 selected: selected,
@@ -1607,34 +1463,37 @@ class _SharedCommitmentsScreenState extends State<SharedCommitmentsScreen> {
           padding: const EdgeInsets.symmetric(horizontal: 9),
           alignment: Alignment.center,
           decoration: BoxDecoration(
-            color: const Color(0xFFF3E8FF),
-            borderRadius: BorderRadius.circular(11),
+            color: const Color(0xFF7C3AED).withValues(alpha: 0.12),
+            borderRadius: BorderRadius.circular(AppTheme.rIcon),
           ),
           child: Text(
             '$count',
             style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w900, color: Color(0xFF7C3AED)),
           ),
         ),
-        const SizedBox(width: 9),
+        const SizedBox(width: AppTheme.sMd),
         Expanded(
           child: Text(
-            _selectedType == 'الكل' ? 'جميع الالتزامات المشتركة' : _selectedType,
+            _selectedType == 'الكل' ? 'جميع الالتزامات' : _selectedType,
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
-            style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w900, color: Color(0xFF0F172A)),
+            style: AppTheme.cardTitle,
           ),
         ),
         PopupMenuButton<String>(
           key: const ValueKey('shared-sort-button'),
           tooltip: 'ترتيب الالتزامات',
           offset: const Offset(0, 8),
-          shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+          shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(AppTheme.rField),
+        ),
           onSelected: (value) => setState(() => _selectedSort = value),
           // عناصر القائمة تُبنى في مسار عرض مستقل خارج غلاف اتجاه الشاشة،
           // فتظهر بمحاذاة يسارية. كما لم يكن هناك أي مؤشر على الخيار
           // المفعّل حاليًا.
           itemBuilder: (context) =>
-              ['الأحدث أولاً', 'الأعلى مبلغاً', 'الأكثر أعضاء'].map((o) {
+              // الفلتر الصغير — كما في ملف "فلاتر فوندلي".
+              ['الأحدث أولاً', 'نشط', 'مكتمل', 'ملغاة'].map((o) {
                 final selected = o == _selectedSort;
                 return PopupMenuItem(
                   value: o,
@@ -1687,10 +1546,9 @@ class _SharedCommitmentsScreenState extends State<SharedCommitmentsScreen> {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 32),
       decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: const Color(0xFFE2E8F0)),
-      ),
+            color: AppTheme.surface,
+            borderRadius: BorderRadius.circular(AppTheme.rField),
+          ),
       child: Column(
         children: [
           Container(
@@ -1831,192 +1689,123 @@ class _SharedCommitmentsScreenState extends State<SharedCommitmentsScreen> {
     return share - paid;
   }
 
+  void _openSmartCalendar() {
+    Navigator.of(
+      context,
+    ).push(MaterialPageRoute(builder: (_) => const SmartCalendarScreen()));
+  }
+
   Widget _buildFollowUpCenter() {
     final groups = _buildFollowUpGroups();
     final pendingTotal = groups[0].total;
     final dueTotal = groups[1].total;
     final renewalsTotal = groups[3].total;
+    const accent = Color(0xFF6D28D9);
     final metrics = [
-      ('طلبات', pendingTotal, Icons.hourglass_top_rounded, const Color(0xFF2563EB)),
+      (
+        'طلبات',
+        pendingTotal,
+        Icons.hourglass_top_rounded,
+        const Color(0xFF2563EB),
+      ),
       ('مستحقات', dueTotal, Icons.payments_outlined, const Color(0xFF07835C)),
-      ('تجديدات', renewalsTotal, Icons.autorenew_rounded, const Color(0xFFB56A09)),
+      (
+        'تجديدات',
+        renewalsTotal,
+        Icons.autorenew_rounded,
+        const Color(0xFFB56A09),
+      ),
     ];
 
-    return Container(
+    // نفس بطاقة مركز المتابعة الموحّدة في بقية الشاشات: رمادية ناعمة،
+    // نصف قطر كبير، بلا حدود ولا ظل.
+    return AppCard(
       key: const ValueKey('shared-follow-up-center'),
-      padding: const EdgeInsets.fromLTRB(11, 9, 11, 10),
-      decoration: BoxDecoration(
-        gradient: const LinearGradient(
-          begin: Alignment.topRight,
-          end: Alignment.bottomLeft,
-          colors: [Color(0xFFF5F0FE), Color(0xFFEBDFFB)],
-        ),
-        borderRadius: BorderRadius.circular(18),
-        border: Border.all(color: const Color(0xFFDCC9F7)),
-        boxShadow: const [
-          BoxShadow(color: Color(0x1A6D28D9), blurRadius: 20, offset: Offset(0, 8)),
-        ],
+      leading: const AppIconTile(
+        icon: Icons.dashboard_customize_outlined,
+        color: accent,
       ),
-      child: Column(
-        children: [
-          Row(
-            children: [
-              Container(
-                width: 36,
-                height: 36,
-                decoration: BoxDecoration(
-                  gradient: const LinearGradient(
-                    begin: Alignment.topLeft,
-                    end: Alignment.bottomRight,
-                    colors: [Color(0xFFE0CEF7), Color(0xFFCBB0EF)],
-                  ),
-                  borderRadius: BorderRadius.circular(12),
-                ),
-                child: const Icon(Icons.dashboard_customize_outlined, color: Color(0xFF6D28D9), size: 20),
-              ),
-              const SizedBox(width: 9),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    const Text(
-                      'مركز المتابعة',
-                      style: TextStyle(fontSize: 14.5, fontWeight: FontWeight.w900, color: Color(0xFF6D28D9)),
-                    ),
-                    const SizedBox(height: 2),
-                    Text(
-                      _selectedType == 'الكل' ? 'الأهم والأقرب من جميع الالتزامات المشتركة' : 'متابعة $_selectedType',
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(fontSize: 10, fontWeight: FontWeight.w600, color: Color(0xFF6D28D9)),
-                    ),
-                  ],
-                ),
-              ),
-              InkWell(
-                key: const ValueKey('shared-follow-up-more'),
-                onTap: _openFollowUpSheet,
-                borderRadius: BorderRadius.circular(10),
-                child: const Padding(
-                  padding: EdgeInsets.symmetric(horizontal: 6, vertical: 5),
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Text('المزيد', style: TextStyle(fontSize: 11, fontWeight: FontWeight.w800, color: Color(0xFF6D28D9))),
-                      SizedBox(width: 3),
-                      Icon(Icons.arrow_forward_ios_rounded, size: 14, color: Color(0xFF6D28D9)),
-                    ],
-                  ),
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 7),
-          SizedBox(
-            height: 56,
-            child: ListView.separated(
+      title: 'مركز المتابعة',
+      subtitle: _selectedType == 'الكل'
+          ? 'الأهم والأقرب من جميع الالتزامات المشتركة'
+          : 'متابعة $_selectedType',
+      onTap: _openFollowUpSheet,
+      trailing: const AppMoreAction(key: ValueKey('shared-follow-up-more')),
+      child: SizedBox(
+        height: AppMetricChip.stripHeight,
+        child: LayoutBuilder(
+          builder: (context, constraints) {
+            final spacing = AppTheme.sSm * (metrics.length - 1);
+            final chipWidth =
+                ((constraints.maxWidth - spacing) / metrics.length)
+                    .clamp(74.0, 132.0);
+            // بلا reverse: يبدأ الشريط من اليمين تلقائيًا في الاتجاه
+            // العربي، كبقية الأشرطة في الصفحة.
+            return ListView.separated(
               scrollDirection: Axis.horizontal,
-              reverse: true,
+              padding: EdgeInsets.zero,
               itemCount: metrics.length,
-              separatorBuilder: (_, __) => const SizedBox(width: 7),
+              separatorBuilder: (_, _) => const SizedBox(width: AppTheme.sSm),
               itemBuilder: (context, index) {
                 final metric = metrics[index];
                 return SizedBox(
-                  width: 112,
-                  child: _SharedFollowUpMetric(
+                  width: chipWidth,
+                  child: AppMetricChip(
                     label: metric.$1,
                     count: metric.$2,
                     icon: metric.$3,
+                    color: metric.$4,
+                    selected: _selectedFollowUpMetric == index,
+                    onTap: () =>
+                        setState(() => _selectedFollowUpMetric = index),
                   ),
                 );
               },
-            ),
-          ),
-        ],
+            );
+          },
+        ),
       ),
     );
   }
 
   void _openFollowUpSheet() {
-    final groups = _buildFollowUpGroups();
-    final grandTotal = groups.fold<int>(0, (sum, g) => sum + g.total);
-    showModalBottomSheet<void>(
+    // القالب مشترك مع بقية الوحدات؛ هذه الشاشة تمرّر بياناتها ومسمياتها.
+    showFollowUpCenterSheet(
       context: context,
-      isScrollControlled: true,
-      backgroundColor: Colors.transparent,
-      builder: (sheetContext) => Directionality(
-        textDirection: TextDirection.rtl,
-        child: FractionallySizedBox(
-          heightFactor: 0.9,
-          child: Container(
-            decoration: const BoxDecoration(
-              color: Color(0xFFF8FAFC),
-              borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
-            ),
-            child: Column(
-              children: [
-                Container(
-                  width: 44,
-                  height: 4,
-                  margin: const EdgeInsets.only(top: 10, bottom: 12),
-                  decoration: BoxDecoration(color: const Color(0xFFCBD5E1), borderRadius: BorderRadius.circular(4)),
-                ),
-                Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 18),
-                  child: Row(
-                    children: [
-                      const Icon(Icons.dashboard_customize_outlined, color: Color(0xFF6D28D9)),
-                      const SizedBox(width: 9),
-                      const Expanded(
-                        child: Text(
-                          'مركز المتابعة الشامل',
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: TextStyle(fontSize: 18, fontWeight: FontWeight.w900, color: Color(0xFF0F172A)),
-                        ),
+      accent: const Color(0xFF6D28D9),
+      title: _selectedType == 'الكل'
+          ? 'مركز المتابعة'
+          : 'متابعة $_selectedType',
+      groups: [
+        for (final group in _buildFollowUpGroups())
+          FollowUpGroup(
+            title: group.title,
+            icon: group.icon,
+            color: group.color,
+            metrics: [
+              for (final metric in group.metrics)
+                FollowUpMetric(
+                  label: metric.label,
+                  icon: metric.icon,
+                  entries: [
+                    for (final ref in metric.items)
+                      FollowUpEntry(
+                        title: ref.item.title,
+                        subtitle: ref.item.dueDate.isEmpty
+                            ? ref.item.entryType
+                            : '${ref.item.entryType} · ${ref.item.dueDate}',
+                        icon: ref.item.icon,
+                        color: ref.item.color,
+                        trailingText: ref.item.amount > 0
+                            ? '${ref.item.amount} ${ref.item.currency}'
+                            : null,
+                        onTap: () => _openDetails(ref.item),
                       ),
-                      if (grandTotal > 0)
-                        Container(
-                          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 5),
-                          decoration: BoxDecoration(
-                            color: const Color(0xFF6D28D9).withValues(alpha: 0.1),
-                            borderRadius: BorderRadius.circular(20),
-                          ),
-                          child: Text(
-                            '$grandTotal',
-                            style: const TextStyle(fontSize: 12.5, fontWeight: FontWeight.w900, color: Color(0xFF6D28D9)),
-                          ),
-                        ),
-                    ],
-                  ),
+                  ],
                 ),
-                const SizedBox(height: 12),
-                Expanded(
-                  child: grandTotal == 0
-                      ? const Center(
-                          child: Text(
-                            'لا توجد عناصر تحتاج إلى متابعة حالياً',
-                            style: TextStyle(fontWeight: FontWeight.w700, color: Color(0xFF64748B)),
-                          ),
-                        )
-                      : ListView.separated(
-                          padding: const EdgeInsets.fromLTRB(14, 0, 14, 24),
-                          itemCount: groups.length,
-                          separatorBuilder: (_, __) => const SizedBox(height: 10),
-                          itemBuilder: (context, index) => _SharedFollowUpGroupCard(
-                            group: groups[index],
-                            onItemTap: (ref) {
-                              Navigator.of(sheetContext).pop();
-                              Future<void>.delayed(Duration.zero, () => _openDetails(ref.item));
-                            },
-                          ),
-                        ),
-                ),
-              ],
-            ),
+            ],
           ),
-        ),
-      ),
+      ],
     );
   }
 
@@ -2036,7 +1825,7 @@ class _SharedCommitmentsScreenState extends State<SharedCommitmentsScreen> {
           height: MediaQuery.of(sheetContext).size.height * 0.72,
           decoration: const BoxDecoration(
             color: Colors.white,
-            borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
+            borderRadius: BorderRadius.vertical(top: Radius.circular(AppTheme.rCard)),
             boxShadow: [BoxShadow(color: Color(0x1A000000), blurRadius: 24, offset: Offset(0, -4))],
           ),
           child: Directionality(
@@ -2087,10 +1876,9 @@ class _SharedCommitmentsScreenState extends State<SharedCommitmentsScreen> {
                     child: Container(
                       padding: const EdgeInsets.all(10),
                       decoration: BoxDecoration(
-                        color: const Color(0xFFF1F3F5),
-                        borderRadius: BorderRadius.circular(14),
-                        border: Border.all(color: const Color(0xFFE2E6EA)),
-                      ),
+            color: AppTheme.surface,
+            borderRadius: BorderRadius.circular(AppTheme.rField),
+          ),
                       child: GridView.count(
                         crossAxisCount: 3,
                         mainAxisSpacing: 8,
@@ -2273,7 +2061,7 @@ Future<void> _openSharedEntryForm(
               minChildSize: 0.5,
               expand: false,
               builder: (context, scrollController) => Container(
-                decoration: const BoxDecoration(color: Colors.white, borderRadius: BorderRadius.vertical(top: Radius.circular(24))),
+                decoration: const BoxDecoration(color: Colors.white, borderRadius: BorderRadius.vertical(top: Radius.circular(AppTheme.rCard))),
                 child: Form(
                   key: formKey,
                   child: ListView(
@@ -2370,6 +2158,7 @@ Widget _buildSharedField(
           validator: field.required ? (v) => v == null || v.isEmpty ? 'مطلوب' : null : null,
         );
       case _SharedFieldKind.people:
+        {
         final names = peopleValues[field.label] ?? const <String>[];
         final controller = controllers[field.label]!;
         return StatefulBuilder(
@@ -2443,6 +2232,7 @@ Widget _buildSharedField(
             ],
           ),
         );
+        }
       case _SharedFieldKind.date:
         final controller = controllers[field.label]!;
         return TextFormField(
@@ -2483,9 +2273,15 @@ InputDecoration _sharedFieldDecoration(String label, IconData icon, Color accent
   labelText: label,
   prefixIcon: Icon(icon, color: accent),
   filled: true,
-  fillColor: const Color(0xFFF8FAFC),
-  border: OutlineInputBorder(borderRadius: BorderRadius.circular(13), borderSide: const BorderSide(color: Color(0xFFE2E8F0))),
-  enabledBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(13), borderSide: const BorderSide(color: Color(0xFFE2E8F0))),
+  fillColor: AppTheme.field,
+  border: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(AppTheme.rField),
+        borderSide: BorderSide.none,
+      ),
+  enabledBorder: OutlineInputBorder(
+        borderRadius: BorderRadius.circular(AppTheme.rField),
+        borderSide: BorderSide.none,
+      ),
   focusedBorder: OutlineInputBorder(borderRadius: BorderRadius.circular(13), borderSide: BorderSide(color: accent, width: 1.5)),
 );
 
@@ -2525,264 +2321,6 @@ class _SharedFollowUpGroupData {
   const _SharedFollowUpGroupData({required this.title, required this.icon, required this.color, required this.metrics});
   int get total => metrics.fold(0, (sum, m) => sum + m.count);
 }
-
-class _SharedFollowUpMetric extends StatelessWidget {
-  const _SharedFollowUpMetric({required this.label, required this.count, required this.icon});
-  final String label;
-  final int count;
-  final IconData icon;
-
-  @override
-  Widget build(BuildContext context) {
-    const color = Color(0xFF6D28D9);
-    return Container(
-      padding: const EdgeInsets.fromLTRB(7, 3, 7, 0),
-      child: Column(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          Row(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              Icon(icon, color: color, size: 17),
-              const SizedBox(width: 5),
-              Text('$count', style: const TextStyle(fontSize: 16, fontWeight: FontWeight.w900, color: color)),
-            ],
-          ),
-          const SizedBox(height: 2),
-          Text(
-            label,
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            textAlign: TextAlign.center,
-            style: const TextStyle(fontSize: 9, fontWeight: FontWeight.w700, color: color),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-// بطاقة مجموعة داخل مركز المتابعة الشامل: العنوان + عدّاد، وعناصر فرعية كل
-// واحد منها يفتح صفحة منبثقة صغيرة (بدل التوسّع داخل نفس البطاقة) — بنفس
-// الأسلوب الذي ثبت أنه يمنع تراكب النصوص واختلاف الارتفاعات في الشخصية.
-class _SharedFollowUpGroupCard extends StatelessWidget {
-  const _SharedFollowUpGroupCard({required this.group, required this.onItemTap});
-  final _SharedFollowUpGroupData group;
-  final ValueChanged<_SharedCommitmentItemRef> onItemTap;
-
-  @override
-  Widget build(BuildContext context) {
-    final hasItems = group.total > 0;
-    return Container(
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: const Color(0xFFE2E8F0)),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          Padding(
-            padding: EdgeInsets.fromLTRB(13, 12, 13, hasItems ? 4 : 12),
-            child: Row(
-              children: [
-                Container(
-                  width: 34,
-                  height: 34,
-                  decoration: BoxDecoration(color: group.color.withValues(alpha: 0.12), borderRadius: BorderRadius.circular(10)),
-                  child: Icon(group.icon, color: group.color, size: 18),
-                ),
-                const SizedBox(width: 9),
-                Expanded(
-                  child: Text(
-                    group.title,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    softWrap: false,
-                    style: const TextStyle(fontSize: 13.5, fontWeight: FontWeight.w900, color: Color(0xFF0F172A)),
-                  ),
-                ),
-                Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 4),
-                  decoration: BoxDecoration(color: group.color.withValues(alpha: 0.1), borderRadius: BorderRadius.circular(20)),
-                  child: Text('${group.total}', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w900, color: group.color)),
-                ),
-              ],
-            ),
-          ),
-          if (hasItems)
-            Padding(
-              padding: const EdgeInsets.fromLTRB(13, 0, 13, 10),
-              child: Column(
-                children: [for (final metric in group.metrics) _buildRow(context, metric)],
-              ),
-            ),
-        ],
-      ),
-    );
-  }
-
-  Widget _buildRow(BuildContext context, _SharedFollowUpSubMetric metric) {
-    final enabled = metric.count > 0;
-    return InkWell(
-      onTap: enabled ? () => _openSheet(context, metric) : null,
-      borderRadius: BorderRadius.circular(10),
-      child: Padding(
-        padding: const EdgeInsets.symmetric(vertical: 7),
-        child: Row(
-          children: [
-            Icon(metric.icon, size: 16, color: enabled ? const Color(0xFF475569) : const Color(0xFFCBD5E1)),
-            const SizedBox(width: 8),
-            Expanded(
-              child: Text(
-                metric.label,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                softWrap: false,
-                style: TextStyle(fontSize: 12, fontWeight: FontWeight.w700, color: enabled ? const Color(0xFF334155) : const Color(0xFF94A3B8)),
-              ),
-            ),
-            Text('${metric.count}', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w900, color: enabled ? const Color(0xFF0F172A) : const Color(0xFFCBD5E1))),
-            if (enabled) ...[
-              const SizedBox(width: 4),
-              const Icon(Icons.chevron_left_rounded, size: 18, color: Color(0xFF94A3B8)),
-            ],
-          ],
-        ),
-      ),
-    );
-  }
-
-  void _openSheet(BuildContext context, _SharedFollowUpSubMetric metric) {
-    showModalBottomSheet<void>(
-      context: context,
-      isScrollControlled: true,
-      backgroundColor: Colors.transparent,
-      builder: (sheetContext) => Directionality(
-        textDirection: TextDirection.rtl,
-        child: ConstrainedBox(
-          constraints: BoxConstraints(maxHeight: MediaQuery.of(sheetContext).size.height * 0.62),
-          child: Container(
-            decoration: const BoxDecoration(color: Color(0xFFF8FAFC), borderRadius: BorderRadius.vertical(top: Radius.circular(22))),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Container(
-                  width: 40,
-                  height: 4,
-                  margin: const EdgeInsets.only(top: 10, bottom: 10),
-                  decoration: BoxDecoration(color: const Color(0xFFCBD5E1), borderRadius: BorderRadius.circular(4)),
-                ),
-                Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 16),
-                  child: Row(
-                    children: [
-                      Icon(metric.icon, size: 18, color: group.color),
-                      const SizedBox(width: 8),
-                      Expanded(
-                        child: Text(
-                          metric.label,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: const TextStyle(fontSize: 15, fontWeight: FontWeight.w900, color: Color(0xFF0F172A)),
-                        ),
-                      ),
-                      Container(
-                        padding: const EdgeInsets.symmetric(horizontal: 9, vertical: 4),
-                        decoration: BoxDecoration(color: group.color.withValues(alpha: 0.1), borderRadius: BorderRadius.circular(20)),
-                        child: Text('${metric.count}', style: TextStyle(fontSize: 12, fontWeight: FontWeight.w900, color: group.color)),
-                      ),
-                    ],
-                  ),
-                ),
-                const SizedBox(height: 10),
-                Flexible(
-                  child: ListView.separated(
-                    padding: const EdgeInsets.fromLTRB(16, 0, 16, 20),
-                    shrinkWrap: true,
-                    itemCount: metric.items.length,
-                    separatorBuilder: (_, __) => const SizedBox(height: 8),
-                    itemBuilder: (context, i) {
-                      final ref = metric.items[i];
-                      return _SharedFollowUpListItem(
-                        item: ref.item,
-                        onTap: () {
-                          Navigator.of(sheetContext).pop();
-                          onItemTap(ref);
-                        },
-                      );
-                    },
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-class _SharedFollowUpListItem extends StatelessWidget {
-  const _SharedFollowUpListItem({required this.item, required this.onTap});
-  final _SharedItem item;
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    return Material(
-      color: Colors.white,
-      borderRadius: BorderRadius.circular(12),
-      child: InkWell(
-        onTap: onTap,
-        borderRadius: BorderRadius.circular(12),
-        child: Container(
-          padding: const EdgeInsets.all(9),
-          decoration: BoxDecoration(borderRadius: BorderRadius.circular(12), border: Border.all(color: const Color(0xFFE2E8F0))),
-          child: Row(
-            children: [
-              Container(
-                width: 34,
-                height: 34,
-                decoration: BoxDecoration(color: item.color.withValues(alpha: 0.12), borderRadius: BorderRadius.circular(9)),
-                child: Icon(item.icon, color: item.color, size: 17),
-              ),
-              const SizedBox(width: 8),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      item.title,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(fontSize: 12.5, fontWeight: FontWeight.w800, color: Color(0xFF0F172A)),
-                    ),
-                    Text(
-                      '${item.entryType} · ${item.dueDate}',
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      softWrap: false,
-                      style: const TextStyle(fontSize: 10.5, fontWeight: FontWeight.w600, color: Color(0xFF64748B)),
-                    ),
-                  ],
-                ),
-              ),
-              const Icon(Icons.chevron_left_rounded, size: 18, color: Color(0xFF94A3B8)),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-// رقاقة الفئة: بلا سهم لأنواع فرعية (الأنواع الأربعة كل واحد منها نموذج
-// مستقل بلا تصنيفات فرعية)، بعكس الشخصية التي تحتاج قائمة منسدلة لبعض
-// فئاتها.
-// نفس "الصندوق الموحّد" المستخدم في كل شاشة تفاصيل الالتزام الشخصية
-// (_UnifiedDetailsCard هناك): بطاقة بيضاء برأس أيقونة+عنوان وظل خفيف، تحوي
-// صفوف بيانات. الشخصية هي المرجع الأساسي للتصميم في كل الوحدات.
 class _SharedUnifiedCard extends StatelessWidget {
   final String title;
   final IconData icon;
@@ -2796,11 +2334,9 @@ class _SharedUnifiedCard extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.all(16),
       decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: const Color(0xFFE2E8F0)),
-        boxShadow: const [BoxShadow(color: Color(0x0C0F172A), blurRadius: 12, offset: Offset(0, 4))],
-      ),
+            color: AppTheme.surface,
+            borderRadius: BorderRadius.circular(AppTheme.rField),
+          ),
       child: Column(
         children: [
           Row(
@@ -2907,10 +2443,9 @@ class _SharedTypeCard extends StatelessWidget {
       child: Container(
         padding: const EdgeInsets.all(8),
         decoration: BoxDecoration(
-          color: Colors.white,
-          borderRadius: BorderRadius.circular(10),
-          border: Border.all(color: const Color(0xFFDDE2E7)),
-        ),
+            color: AppTheme.surfaceInner,
+            borderRadius: BorderRadius.circular(AppTheme.rInner),
+          ),
         child: FittedBox(
           fit: BoxFit.scaleDown,
           child: Column(
@@ -2952,8 +2487,16 @@ class _SharedTypeCard extends StatelessWidget {
 }
 
 class _SharedCategoryTab extends StatelessWidget {
-  const _SharedCategoryTab({required this.label, required this.icon, required this.color, required this.selected, required this.onTap});
+  const _SharedCategoryTab({
+    required this.label,
+    required this.count,
+    required this.icon,
+    required this.color,
+    required this.selected,
+    required this.onTap,
+  });
   final String label;
+  final int count;
   final IconData icon;
   final Color color;
   final bool selected;
@@ -2961,28 +2504,15 @@ class _SharedCategoryTab extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final fg = selected ? Colors.white : color;
-    return Material(
-      color: selected ? color : Colors.white,
-      shape: RoundedRectangleBorder(
-        borderRadius: BorderRadius.circular(11),
-        side: BorderSide(color: selected ? color : const Color(0xFFDCE5EF), width: selected ? 1.4 : 1),
-      ),
-      clipBehavior: Clip.antiAlias,
-      child: InkWell(
-        onTap: onTap,
-        child: Padding(
-          padding: const EdgeInsets.symmetric(horizontal: 11),
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Icon(icon, size: 16, color: fg),
-              const SizedBox(width: 6),
-              Text(label, style: TextStyle(fontSize: 11, fontWeight: FontWeight.w800, color: selected ? Colors.white : const Color(0xFF334155))),
-            ],
-          ),
-        ),
-      ),
+    // شريحة الفئة الموحّدة في كل التطبيق — بلا عدّاد داخلها: العدد يظهر
+    // في رأس القائمة أسفلها فقط.
+    return AppCategoryChip(
+      label: label,
+      count: count,
+      icon: icon,
+      color: color,
+      selected: selected,
+      onTap: onTap,
     );
   }
 }
@@ -2997,72 +2527,25 @@ class _SharedCommitmentCard extends StatelessWidget {
   final _SharedItem item;
   final VoidCallback onTap;
 
-  String get _amountLabel => item.entryType == 'الرحلة / السفر' ? 'الميزانية' : 'المبلغ';
+  String get _amountLabel =>
+      item.entryType == 'الرحلة / السفر' ? 'الميزانية' : 'المبلغ';
 
   @override
   Widget build(BuildContext context) {
-    final statusColor = _sharedStatusColor(item.status);
-    return Material(
-      color: Colors.transparent,
-      borderRadius: BorderRadius.circular(15),
-      child: InkWell(
-        onTap: onTap,
-        borderRadius: BorderRadius.circular(15),
-        child: Container(
-          padding: const EdgeInsetsDirectional.fromSTEB(11, 10, 10, 10),
-          decoration: BoxDecoration(
-            color: Colors.white,
-            borderRadius: BorderRadius.circular(15),
-            border: Border.all(color: const Color(0xFFE6ECF3)),
-            boxShadow: const [BoxShadow(color: Color(0x0D0F172A), blurRadius: 10, offset: Offset(0, 3))],
-          ),
-          child: Row(
-            textDirection: TextDirection.rtl,
-            children: [
-              Container(
-                width: 46,
-                height: 46,
-                decoration: BoxDecoration(color: item.color.withValues(alpha: 0.11), borderRadius: BorderRadius.circular(12)),
-                child: Icon(item.icon, color: item.color, size: 23),
-              ),
-              const SizedBox(width: 10),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    Row(
-                      children: [
-                        Expanded(
-                          child: Text(item.title, maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 13.5, fontWeight: FontWeight.w900, color: Color(0xFF0F172A))),
-                        ),
-                        Container(width: 7, height: 7, margin: const EdgeInsets.only(left: 6), decoration: BoxDecoration(color: statusColor, shape: BoxShape.circle)),
-                      ],
-                    ),
-                    const SizedBox(height: 5),
-                    Text(item.entryType, maxLines: 1, overflow: TextOverflow.ellipsis, style: TextStyle(fontSize: 10, fontWeight: FontWeight.w700, color: item.color)),
-                  ],
-                ),
-              ),
-              const SizedBox(width: 6),
-              SizedBox(
-                width: 108,
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    Text('$_amountLabel : ${item.amount} ${item.currency}', maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 10.5, fontWeight: FontWeight.w900, color: Color(0xFF0F172A))),
-                    const SizedBox(height: 6),
-                    Text('التاريخ : ${item.dueDate.isEmpty ? '—' : item.dueDate}', maxLines: 1, overflow: TextOverflow.ellipsis, style: const TextStyle(fontSize: 9.5, fontWeight: FontWeight.w700, color: Color(0xFF64748B))),
-                  ],
-                ),
-              ),
-              const SizedBox(width: 4),
-              const Icon(Icons.chevron_right_rounded, color: Color(0xFF94A3B8), size: 22),
-            ],
-          ),
-        ),
-      ),
+    // بطاقة القائمة الموحَّدة نفسها المستعملة في الالتزامات الشخصية
+    // وإدارة الأشخاص.
+    return AppEntityCard(
+      icon: item.icon,
+      iconColor: item.color,
+      title: item.title,
+      subtitle: item.entryType,
+      statusColor: _sharedStatusColor(item.status),
+      stats: [
+        // المبلغ يظهر فقط إن وُجد فعلًا.
+        if (item.amount > 0) '$_amountLabel : ${item.amount} ${item.currency}',
+        if (item.dueDate.isNotEmpty) 'التاريخ : ${item.dueDate}',
+      ],
+      onTap: onTap,
     );
   }
 }
@@ -3303,7 +2786,7 @@ class _SharedCommitmentDetailsScreenState extends State<SharedCommitmentDetailsS
     // البيانات المميزة)، ثم فاصل مسافة، ثم صف التبويبات، ثم فاصل مسافة،
     // ثم محتوى التبويب المختار — بدل الأعمدة/الصفوف المنفصلة كما كان سابقًا.
     return Scaffold(
-      backgroundColor: const Color(0xFFF5F7FA),
+      backgroundColor: AppTheme.page,
       floatingActionButtonLocation: FloatingActionButtonLocation.endFloat,
       floatingActionButton: FloatingActionButton.extended(
         heroTag: 'shared-details-add',
@@ -3311,7 +2794,9 @@ class _SharedCommitmentDetailsScreenState extends State<SharedCommitmentDetailsS
         backgroundColor: item.color,
         foregroundColor: Colors.white,
         elevation: 7,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(AppTheme.rField),
+        ),
         icon: const Icon(Icons.add_rounded),
         label: Text(_fabLabelForTab(), style: const TextStyle(fontWeight: FontWeight.w700)),
         onPressed: _fabActionForTab(),
@@ -3340,11 +2825,9 @@ class _SharedCommitmentDetailsScreenState extends State<SharedCommitmentDetailsS
             Container(
               key: const ValueKey('shared-compact-details-header'),
               decoration: BoxDecoration(
-                color: Colors.white,
-                borderRadius: BorderRadius.circular(8),
-                border: Border.all(color: const Color(0xFFE1E7EF)),
-                boxShadow: const [BoxShadow(color: Color(0x0A0F172A), blurRadius: 12, offset: Offset(0, 4))],
-              ),
+            color: AppTheme.surface,
+            borderRadius: BorderRadius.circular(AppTheme.rField),
+          ),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
@@ -3419,7 +2902,7 @@ class _SharedCommitmentDetailsScreenState extends State<SharedCommitmentDetailsS
             child: Container(
               constraints: BoxConstraints(maxHeight: MediaQuery.of(context).size.height * 0.85),
               padding: const EdgeInsets.fromLTRB(16, 12, 16, 18),
-              decoration: const BoxDecoration(color: Colors.white, borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
+              decoration: const BoxDecoration(color: Colors.white, borderRadius: BorderRadius.vertical(top: Radius.circular(AppTheme.rCard))),
               child: SingleChildScrollView(
                 child: Column(
                   mainAxisSize: MainAxisSize.min,
@@ -3701,47 +3184,17 @@ class _SharedCommitmentDetailsScreenState extends State<SharedCommitmentDetailsS
   // بحدود رفيعة يحوي كل التبويبات بعرض متساوٍ (أيقونة فوق نص فوق خط
   // سفلي متحرك)، بدل صف مستطيلات قابل للتمرير الأفقي كما كان سابقًا.
   Widget _buildTabsRow() {
-    return Container(
+    // كانت هنا نسخة يدوية مطابقة لشريط التبويبات المشترك فتخلّفت عنه عند
+    // أي تعديل (آخرها: السماح بسطرين للعناوين الطويلة). الآن تستدعيه.
+    return DetailPageTabs(
       key: const ValueKey('shared-inline-details-tabs'),
-      height: 58,
-      padding: const EdgeInsets.symmetric(horizontal: 2),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: const Color(0xFFE1E7EF)),
-      ),
-      child: Row(
-        children: List.generate(_tabs.length, (index) {
-          final selected = _tabIndex == index;
-          return Expanded(
-            child: InkWell(
-              key: ValueKey('shared-inline-details-tab-$index'),
-              onTap: () => setState(() => _tabIndex = index),
-              child: Column(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  Icon(_tabIcons[index], size: 18, color: selected ? item.color : const Color(0xFF94A3B8)),
-                  const SizedBox(height: 4),
-                  Text(
-                    _tabs[index],
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    textAlign: TextAlign.center,
-                    style: TextStyle(fontSize: 8.5, fontWeight: selected ? FontWeight.w900 : FontWeight.w700, color: selected ? item.color : const Color(0xFF64748B)),
-                  ),
-                  const SizedBox(height: 4),
-                  AnimatedContainer(
-                    duration: const Duration(milliseconds: 160),
-                    width: selected ? 22 : 0,
-                    height: 2,
-                    color: selected ? item.color : Colors.transparent,
-                  ),
-                ],
-              ),
-            ),
-          );
-        }),
-      ),
+      sections: [
+        for (var i = 0; i < _tabs.length; i++)
+          DetailSectionTab(label: _tabs[i], icon: _tabIcons[i]),
+      ],
+      selectedIndex: _tabIndex,
+      color: item.color,
+      onSelected: (index) => setState(() => _tabIndex = index),
     );
   }
 
@@ -3903,7 +3356,7 @@ class _SharedCommitmentDetailsScreenState extends State<SharedCommitmentDetailsS
         builder: (sheetContext) => Directionality(
           textDirection: TextDirection.rtl,
           child: Container(
-            decoration: const BoxDecoration(color: Colors.white, borderRadius: BorderRadius.vertical(top: Radius.circular(20))),
+            decoration: const BoxDecoration(color: Colors.white, borderRadius: BorderRadius.vertical(top: Radius.circular(AppTheme.rCard))),
             padding: const EdgeInsets.all(16),
             child: Column(
               mainAxisSize: MainAxisSize.min,
@@ -3951,7 +3404,7 @@ class _SharedCommitmentDetailsScreenState extends State<SharedCommitmentDetailsS
             padding: EdgeInsets.only(bottom: MediaQuery.of(context).viewInsets.bottom),
             child: Container(
               padding: const EdgeInsets.fromLTRB(18, 16, 18, 22),
-              decoration: const BoxDecoration(color: Colors.white, borderRadius: BorderRadius.vertical(top: Radius.circular(22))),
+              decoration: const BoxDecoration(color: Colors.white, borderRadius: BorderRadius.vertical(top: Radius.circular(AppTheme.rCard))),
               child: Form(
                 key: formKey,
                 child: Column(
@@ -4124,7 +3577,7 @@ class _SharedCommitmentDetailsScreenState extends State<SharedCommitmentDetailsS
             padding: EdgeInsets.only(bottom: MediaQuery.of(context).viewInsets.bottom),
             child: Container(
               padding: const EdgeInsets.fromLTRB(18, 16, 18, 22),
-              decoration: const BoxDecoration(color: Colors.white, borderRadius: BorderRadius.vertical(top: Radius.circular(22))),
+              decoration: const BoxDecoration(color: Colors.white, borderRadius: BorderRadius.vertical(top: Radius.circular(AppTheme.rCard))),
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [
@@ -4255,7 +3708,7 @@ class _SharedCommitmentDetailsScreenState extends State<SharedCommitmentDetailsS
             padding: EdgeInsets.only(bottom: MediaQuery.of(context).viewInsets.bottom),
             child: Container(
               padding: const EdgeInsets.fromLTRB(18, 16, 18, 22),
-              decoration: const BoxDecoration(color: Colors.white, borderRadius: BorderRadius.vertical(top: Radius.circular(22))),
+              decoration: const BoxDecoration(color: Colors.white, borderRadius: BorderRadius.vertical(top: Radius.circular(AppTheme.rCard))),
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 children: [

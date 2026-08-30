@@ -5,6 +5,7 @@
 // ============================================================================
 import 'dart:typed_data';
 import 'package:supabase_flutter/supabase_flutter.dart';
+import 'app_session.dart';
 import 'commitment_additions_models.dart';
 
 class CommitmentAdditionsRepository {
@@ -48,7 +49,10 @@ class CommitmentAdditionsRepository {
         .from('commitment_payments')
         .update({
           'amount': payment.amount,
-          'payment_date': payment.paymentDate.toIso8601String().split('T').first,
+          'payment_date': payment.paymentDate
+              .toIso8601String()
+              .split('T')
+              .first,
           'payment_method': payment.paymentMethod,
           'reference_number': payment.referenceNumber,
           'notes': payment.notes,
@@ -68,7 +72,8 @@ class CommitmentAdditionsRepository {
 
   /// Get payment summary for a commitment
   Future<CommitmentPaymentSummary?> getPaymentSummary(
-      String commitmentId) async {
+    String commitmentId,
+  ) async {
     final response = await _client
         .from('commitment_payment_summary')
         .select()
@@ -84,8 +89,7 @@ class CommitmentAdditionsRepository {
   // ==========================================================================
 
   /// Get all attachments for a commitment
-  Future<List<CommitmentAttachment>> getAttachments(
-      String commitmentId) async {
+  Future<List<CommitmentAttachment>> getAttachments(String commitmentId) async {
     final response = await _client
         .from('commitment_attachments')
         .select()
@@ -99,7 +103,8 @@ class CommitmentAdditionsRepository {
 
   /// Add a new attachment
   Future<CommitmentAttachment> addAttachment(
-      CommitmentAttachment attachment) async {
+    CommitmentAttachment attachment,
+  ) async {
     final response = await _client
         .from('commitment_attachments')
         .insert(attachment.toInsertJson())
@@ -110,8 +115,7 @@ class CommitmentAdditionsRepository {
   }
 
   /// Delete an attachment (and its file from storage)
-  Future<void> deleteAttachment(
-      String attachmentId, String fileUrl) async {
+  Future<void> deleteAttachment(String attachmentId, String fileUrl) async {
     // Delete from database
     await _client
         .from('commitment_attachments')
@@ -133,9 +137,15 @@ class CommitmentAdditionsRepository {
     String fileName,
     List<int> fileBytes,
   ) async {
-    final path = '$_userId/$commitmentId/${DateTime.now().millisecondsSinceEpoch}_$fileName';
-    
-    await _client.storage.from('commitment-attachments').uploadBinary(
+    // هذا المستودع كان يقرأ المستخدم الحالي فقط دون ضمان وجود جلسة، فإن
+    // استُدعي قبل أي مستودع آخر كان المعرّف فارغًا وتفشل العملية بصمت.
+    await AppSession.ensureSignedIn();
+    final path =
+        '$_userId/$commitmentId/${DateTime.now().millisecondsSinceEpoch}_$fileName';
+
+    await _client.storage
+        .from('commitment-attachments')
+        .uploadBinary(
           path,
           Uint8List.fromList(fileBytes),
           fileOptions: const FileOptions(upsert: false),
@@ -150,7 +160,8 @@ class CommitmentAdditionsRepository {
 
   /// Get all appointments for a commitment
   Future<List<CommitmentAppointment>> getAppointments(
-      String commitmentId) async {
+    String commitmentId,
+  ) async {
     final response = await _client
         .from('commitment_appointments')
         .select()
@@ -164,7 +175,8 @@ class CommitmentAdditionsRepository {
 
   /// Get upcoming appointments for a commitment
   Future<List<CommitmentAppointment>> getUpcomingAppointments(
-      String commitmentId) async {
+    String commitmentId,
+  ) async {
     final today = DateTime.now().toIso8601String().split('T').first;
     final response = await _client
         .from('commitment_appointments')
@@ -181,7 +193,8 @@ class CommitmentAdditionsRepository {
 
   /// Add a new appointment
   Future<CommitmentAppointment> addAppointment(
-      CommitmentAppointment appointment) async {
+    CommitmentAppointment appointment,
+  ) async {
     final response = await _client
         .from('commitment_appointments')
         .insert(appointment.toInsertJson())
@@ -193,15 +206,18 @@ class CommitmentAdditionsRepository {
 
   /// Update an appointment
   Future<CommitmentAppointment> updateAppointment(
-      CommitmentAppointment appointment) async {
+    CommitmentAppointment appointment,
+  ) async {
     final response = await _client
         .from('commitment_appointments')
         .update({
           'appointment_type': appointment.appointmentType,
           'title': appointment.title,
           'description': appointment.description,
-          'appointment_date':
-              appointment.appointmentDate.toIso8601String().split('T').first,
+          'appointment_date': appointment.appointmentDate
+              .toIso8601String()
+              .split('T')
+              .first,
           'appointment_time': appointment.appointmentTime != null
               ? '${appointment.appointmentTime!.hour.toString().padLeft(2, '0')}:${appointment.appointmentTime!.minute.toString().padLeft(2, '0')}:00'
               : null,
@@ -221,7 +237,9 @@ class CommitmentAdditionsRepository {
   }
 
   /// Mark appointment as completed
-  Future<CommitmentAppointment> completeAppointment(String appointmentId) async {
+  Future<CommitmentAppointment> completeAppointment(
+    String appointmentId,
+  ) async {
     final response = await _client
         .from('commitment_appointments')
         .update({
@@ -380,6 +398,7 @@ class CommitmentAdditionsRepository {
 
   /// Get all commitments with full summaries
   Future<List<CommitmentFullSummary>> getAllCommitmentsWithSummary() async {
+    await AppSession.ensureSignedIn();
     final response = await _client
         .from('commitment_full_summary')
         .select()

@@ -7,6 +7,7 @@ import 'people_management_screen.dart';
 import 'personal_commitments_screen.dart';
 import 'projects_activities_screen.dart';
 import 'shared_commitments_screen.dart';
+import '../widgets/shared/app_design.dart';
 
 class SmartCalendarScreen extends StatefulWidget {
   const SmartCalendarScreen({super.key, this.metricsLoader});
@@ -656,9 +657,8 @@ class _SmartCalendarScreenState extends State<SmartCalendarScreen> {
     return Container(
       padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: const Color(0xFFE2E8F0)),
+        color: AppTheme.surface,
+        borderRadius: BorderRadius.circular(AppTheme.rField),
       ),
       child: Column(
         children: [
@@ -804,9 +804,8 @@ class _SmartCalendarScreenState extends State<SmartCalendarScreen> {
     return Container(
       margin: const EdgeInsets.only(bottom: 8),
       decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: const Color(0xFFE2E8F0)),
+        color: AppTheme.surface,
+        borderRadius: BorderRadius.circular(AppTheme.rField),
       ),
       child: ListTile(
         onTap: record == null ? () => _openItem(item) : null,
@@ -979,9 +978,8 @@ class _SmartCalendarScreenState extends State<SmartCalendarScreen> {
       margin: const EdgeInsets.only(top: 12),
       padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: const Color(0xFFE2E8F0)),
+        color: AppTheme.surface,
+        borderRadius: BorderRadius.circular(AppTheme.rField),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -1028,7 +1026,7 @@ class _SmartCalendarScreenState extends State<SmartCalendarScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: const Color(0xFFF5F8FC),
+      backgroundColor: AppTheme.page,
       appBar: AppBar(
         leading: IconButton(
           tooltip: 'إغلاق',

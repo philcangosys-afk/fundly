@@ -1,5 +1,7 @@
 import 'package:flutter/material.dart';
 
+import 'shared/app_design.dart';
+
 class DetailHeaderMetric {
   const DetailHeaderMetric({
     required this.label,
@@ -45,57 +47,42 @@ class DetailPageHeader extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final isRtl = Directionality.of(context) == TextDirection.rtl;
-    final visualMetrics = isRtl
-        ? List<DetailHeaderMetric>.from(metrics.reversed)
-        : List<DetailHeaderMetric>.from(metrics);
+    // الترتيب معكوس دائمًا لأن الشجرة أدناه تفرض rtl صراحةً مهما كان
+    // الاتجاه المحيط؛ ربط العكس بالاتجاه المحيط كان يقلب المؤشرات في أي
+    // سياق ليس rtl أصلًا.
+    final visualMetrics = List<DetailHeaderMetric>.from(metrics.reversed);
 
     return Directionality(
       textDirection: TextDirection.rtl,
       child: Container(
         key: const ValueKey('shared-detail-page-header'),
-        padding: const EdgeInsets.all(16),
+        padding: const EdgeInsets.all(AppTheme.sLg),
+        // بطاقة الملخص العلوية بنفس لون وحواف البطاقات الموحّدة: رمادية
+        // ناعمة بلا حدود ولا ظل، والمؤشرات داخلها في بطاقة بيضاء.
         decoration: BoxDecoration(
-          color: Colors.white,
-          borderRadius: BorderRadius.circular(8),
-          border: Border.all(color: const Color(0xFFE1E7EF)),
-          boxShadow: const [
-            BoxShadow(
-              color: Color(0x0A0F172A),
-              blurRadius: 12,
-              offset: Offset(0, 4),
-            ),
-          ],
+          color: AppTheme.surface,
+          borderRadius: BorderRadius.circular(AppTheme.rCard),
         ),
         child: Column(
           children: [
             Row(
               textDirection: TextDirection.rtl,
               children: [
-                Container(
-                  width: 44,
-                  height: 44,
-                  decoration: BoxDecoration(
-                    color: color.withValues(alpha: 0.1),
-                    borderRadius: BorderRadius.circular(8),
-                  ),
-                  child: Icon(icon, color: color, size: 22),
-                ),
-                const SizedBox(width: 11),
+                AppIconTile(icon: icon, color: color),
+                const SizedBox(width: AppTheme.sMd),
                 Expanded(
                   child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.end,
+                    // داخل غلاف rtl المفروض أعلاه تعني start "اليمين".
+                    // كانت end تعني اليسار، فيبتعد العنوان القصير عن
+                    // أيقونته إلى الطرف المقابل.
+                    crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       Text(
                         title,
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
                         textAlign: TextAlign.right,
-                        style: const TextStyle(
-                          fontSize: 16,
-                          fontWeight: FontWeight.w900,
-                          color: Color(0xFF172033),
-                        ),
+                        style: AppTheme.cardTitle,
                       ),
                       const SizedBox(height: 3),
                       Text(
@@ -103,39 +90,45 @@ class DetailPageHeader extends StatelessWidget {
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
                         textAlign: TextAlign.right,
-                        style: const TextStyle(
-                          fontSize: 11,
-                          fontWeight: FontWeight.w700,
-                          color: Color(0xFF64748B),
-                        ),
+                        style: AppTheme.rowSubtitle,
                       ),
                     ],
                   ),
                 ),
+                const SizedBox(width: AppTheme.sSm),
                 Container(
-                  padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 10,
+                    vertical: 5,
+                  ),
                   decoration: BoxDecoration(
-                    color: statusColor.withValues(alpha: 0.1),
-                    borderRadius: BorderRadius.circular(6),
+                    color: statusColor.withValues(alpha: 0.13),
+                    borderRadius: BorderRadius.circular(AppTheme.rPill),
                   ),
                   child: Text(
                     status,
                     style: TextStyle(
-                      fontSize: 9.5,
+                      fontSize: 10,
                       fontWeight: FontWeight.w900,
                       color: statusColor,
                     ),
                   ),
                 ),
-                if (trailing != null) ...[const SizedBox(width: 4), trailing!],
+                if (trailing != null) ...[
+                  const SizedBox(width: AppTheme.sXs),
+                  trailing!,
+                ],
               ],
             ),
-            const SizedBox(height: 14),
+            const SizedBox(height: AppTheme.sMd),
             Container(
-              padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 11),
+              padding: const EdgeInsets.symmetric(
+                horizontal: AppTheme.sMd,
+                vertical: AppTheme.sMd,
+              ),
               decoration: BoxDecoration(
-                color: const Color(0xFFF7F9FC),
-                borderRadius: BorderRadius.circular(8),
+                color: AppTheme.surfaceInner,
+                borderRadius: BorderRadius.circular(AppTheme.rInner),
               ),
               child: Row(
                 textDirection: TextDirection.ltr,
@@ -144,13 +137,15 @@ class DetailPageHeader extends StatelessWidget {
                     child: Row(
                       textDirection: TextDirection.ltr,
                       children: [
-                        Expanded(child: _DetailMetric(metric: visualMetrics[index])),
+                        Expanded(
+                          child: _DetailMetric(metric: visualMetrics[index]),
+                        ),
                         if (index < visualMetrics.length - 1)
                           const SizedBox(
                             height: 54,
                             child: VerticalDivider(
                               width: 14,
-                              color: Color(0xFFE2E8F0),
+                              color: AppTheme.line,
                             ),
                           ),
                       ],
@@ -175,6 +170,13 @@ class DetailPageTabs extends StatelessWidget {
     required this.onSelected,
   });
 
+  /// الارتفاع الموحَّد لشريط تبويبات صفحات التفاصيل.
+  ///
+  /// يتّسع لسطرين من النص: عناوين مثل "متابعة وتنظيم" و"مواقع وأماكن"
+  /// كانت تُقصّ بثلاث نقاط في تبويب عرضه سُدس الشاشة، فيقرأ المستخدم
+  /// "متابعة وت…". الآن تنزل الكلمة الثانية سطرًا كاملًا تحت الأولى.
+  static const stripHeight = 68.0;
+
   final List<DetailSectionTab> sections;
   final int selectedIndex;
   final Color color;
@@ -182,15 +184,17 @@ class DetailPageTabs extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    // شريط تبويبات موحَّد: حاوية رمادية ناعمة بلا حدود، والتبويب المحدَّد
+    // يتميّز بلونه وبخط سفلي رفيع بمقاس ولون ثابتين في كل صفحات التفاصيل.
     return Container(
       key: const ValueKey('shared-detail-page-tabs'),
-      height: 58,
-      padding: const EdgeInsets.symmetric(horizontal: 4),
+      height: stripHeight,
+      padding: const EdgeInsets.symmetric(horizontal: AppTheme.sXs),
       decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: const Color(0xFFE1E7EF)),
+        color: AppTheme.surface,
+        borderRadius: BorderRadius.circular(AppTheme.rField),
       ),
+      clipBehavior: Clip.antiAlias,
       child: Row(
         children: List.generate(sections.length, (index) {
           final section = sections[index];
@@ -199,33 +203,44 @@ class DetailPageTabs extends StatelessWidget {
             child: InkWell(
               key: ValueKey('shared-detail-page-tab-$index'),
               onTap: () => onSelected(index),
-              child: Column(
+              child: Padding(
+                padding: const EdgeInsets.symmetric(horizontal: 2),
+                child: Column(
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
                   Icon(
                     section.icon,
-                    size: 18,
-                    color: selected ? color : const Color(0xFF94A3B8),
+                    size: 19,
+                    color: selected ? color : AppTheme.muted,
                   ),
                   const SizedBox(height: 4),
+                  // سطران بمحاذاة وسط، وكسر الأسطر عند المسافة بين
+                  // الكلمتين لا داخل الكلمة الواحدة.
                   Text(
                     section.label,
-                    maxLines: 1,
+                    maxLines: 2,
+                    textAlign: TextAlign.center,
                     overflow: TextOverflow.ellipsis,
                     style: TextStyle(
-                      fontSize: 9.5,
+                      fontSize: 10,
+                      height: 1.2,
                       fontWeight: selected ? FontWeight.w900 : FontWeight.w700,
-                      color: selected ? color : const Color(0xFF64748B),
+                      color: selected ? color : AppTheme.muted,
                     ),
                   ),
-                  const SizedBox(height: 4),
+                  const SizedBox(height: 5),
                   AnimatedContainer(
-                    duration: const Duration(milliseconds: 160),
-                    width: selected ? 28 : 0,
-                    height: 2,
-                    color: selected ? color : Colors.transparent,
+                    duration: const Duration(milliseconds: 180),
+                    curve: Curves.easeOut,
+                    width: selected ? 26 : 0,
+                    height: 3,
+                    decoration: BoxDecoration(
+                      color: selected ? color : Colors.transparent,
+                      borderRadius: BorderRadius.circular(AppTheme.rPill),
+                    ),
                   ),
-                ],
+                  ],
+                ),
               ),
             ),
           );
@@ -244,16 +259,16 @@ class _DetailMetric extends StatelessWidget {
   Widget build(BuildContext context) {
     return Column(
       children: [
-        Icon(metric.icon, size: 17, color: const Color(0xFF64748B)),
+        Icon(metric.icon, size: 17, color: AppTheme.chevron),
         const SizedBox(height: 5),
         Text(
           metric.label,
           maxLines: 1,
           overflow: TextOverflow.ellipsis,
           style: const TextStyle(
-            fontSize: 9,
-            fontWeight: FontWeight.w700,
-            color: Color(0xFF94A3B8),
+            fontSize: 9.5,
+            fontWeight: FontWeight.w600,
+            color: AppTheme.muted,
           ),
         ),
         const SizedBox(height: 3),
@@ -263,9 +278,9 @@ class _DetailMetric extends StatelessWidget {
           overflow: TextOverflow.ellipsis,
           textAlign: TextAlign.center,
           style: const TextStyle(
-            fontSize: 10.5,
+            fontSize: 11,
             fontWeight: FontWeight.w900,
-            color: Color(0xFF1E293B),
+            color: AppTheme.title,
           ),
         ),
         if (metric.caption.isNotEmpty) ...[
@@ -275,9 +290,9 @@ class _DetailMetric extends StatelessWidget {
             maxLines: 1,
             overflow: TextOverflow.ellipsis,
             style: const TextStyle(
-              fontSize: 8.5,
-              fontWeight: FontWeight.w700,
-              color: Color(0xFF64748B),
+              fontSize: 9,
+              fontWeight: FontWeight.w600,
+              color: AppTheme.chevron,
             ),
           ),
         ],

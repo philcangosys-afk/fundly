@@ -1,6 +1,6 @@
 # Supabase setup for personal entries
 
-The Flutter application is configured for project `pcppwpbaknxflzbqbrxj`, but the remote project currently has anonymous sign-ins disabled and does not expose the required `personal_entries` table.
+The Flutter application is configured for project `pcppwpbaknxflzbqbrxj` and uses **Anonymous Sign-in** for simplicity during testing.
 
 ## 1. Enable anonymous sign-ins
 
@@ -10,6 +10,8 @@ The Flutter application is configured for project `pcppwpbaknxflzbqbrxj`, but th
 4. Enable anonymous sign-ins and save.
 
 Anonymous users receive a real `auth.users` ID. The row-level security policies use this ID so each installation can only read and modify its own entries.
+
+**Note:** Data is tied to the device. If the app is uninstalled or data is cleared, a new anonymous user will be created and previous data won't be accessible from that device.
 
 ## 2. Create the table and storage policies
 

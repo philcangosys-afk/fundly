@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import 'package:shared_preferences/shared_preferences.dart';
+import 'shared/app_design.dart';
 import 'shared/search_matching.dart';
 
 class ManagementPinnedControls extends StatelessWidget {
@@ -22,7 +23,7 @@ class ManagementPinnedControls extends StatelessWidget {
         height: height,
         child: ColoredBox(
           key: const ValueKey('pinned-dashboard-controls'),
-          color: const Color(0xFFF5F8FC),
+          color: AppTheme.page,
           child: Padding(
             padding: EdgeInsets.fromLTRB(
               horizontalPadding,
@@ -73,6 +74,13 @@ class _ManagementPinnedControlsDelegate extends SliverPersistentHeaderDelegate {
   }
 }
 
+/// ترويسة شاشات الوحدات الأربع.
+///
+/// كانت الأزرار اختيارية، فاختلفت الترويسات: العقارات فيها زرّا الكلندر
+/// والرجوع، والشخصية فيها الكلندر وحده، والأفراد الرجوع وحده،
+/// والمشتركة بلا أزرار إطلاقًا. الآن يظهر الزرّان دائمًا، وصار
+/// [onSmartCalendarTap] مطلوبًا حتى لا تنسى شاشة جديدة تمريره فتفترق
+/// عن أخواتها بصمت.
 class ManagementDashboardHeader extends StatelessWidget {
   const ManagementDashboardHeader({
     super.key,
@@ -80,7 +88,7 @@ class ManagementDashboardHeader extends StatelessWidget {
     required this.subtitle,
     required this.icon,
     required this.colors,
-    this.onSmartCalendarTap,
+    required this.onSmartCalendarTap,
     this.onClose,
   });
 
@@ -88,45 +96,34 @@ class ManagementDashboardHeader extends StatelessWidget {
   final String subtitle;
   final IconData icon;
   final List<Color> colors;
-  final VoidCallback? onSmartCalendarTap;
+  final VoidCallback onSmartCalendarTap;
+
+  /// زر الرجوع في الترويسة. افتراضيًا: الرجوع للخلف.
   final VoidCallback? onClose;
 
   @override
   Widget build(BuildContext context) {
+    // ترويسة بيضاء موحّدة مع بقية التطبيق: أيقونة الوحدة في مربّع بلونها،
+    // العنوان بلون النص الأساسي، والأزرار بمقاس وشكل أزرار التطبيق. كانت
+    // ترويسة متدرّجة ملوّنة بحدود شبه شفافة تختلف عن كل شاشة أخرى.
+    final accent = colors.first;
     return SliverAppBar(
       pinned: true,
       floating: false,
       automaticallyImplyLeading: false,
-      toolbarHeight: 88,
+      toolbarHeight: 84,
       elevation: 0,
-      scrolledUnderElevation: 5,
-      shadowColor: colors.first.withValues(alpha: 0.28),
-      backgroundColor: colors.first,
-      flexibleSpace: DecoratedBox(
-        decoration: BoxDecoration(
-          gradient: LinearGradient(
-            colors: colors,
-            begin: Alignment.topRight,
-            end: Alignment.bottomLeft,
-          ),
-        ),
-      ),
-      titleSpacing: 14,
+      scrolledUnderElevation: 0,
+      surfaceTintColor: Colors.transparent,
+      backgroundColor: AppTheme.page,
+      shape: const Border(bottom: BorderSide(color: AppTheme.line)),
+      titleSpacing: AppTheme.pageInset,
       title: Directionality(
         textDirection: TextDirection.rtl,
         child: Row(
           children: [
-            Container(
-              width: 42,
-              height: 42,
-              decoration: BoxDecoration(
-                color: Colors.white.withValues(alpha: 0.16),
-                borderRadius: BorderRadius.circular(12),
-                border: Border.all(color: Colors.white.withValues(alpha: 0.22)),
-              ),
-              child: Icon(icon, color: Colors.white, size: 23),
-            ),
-            const SizedBox(width: 11),
+            AppIconTile(icon: icon, color: accent),
+            const SizedBox(width: AppTheme.sMd),
             Expanded(
               child: Column(
                 mainAxisSize: MainAxisSize.min,
@@ -136,50 +133,39 @@ class ManagementDashboardHeader extends StatelessWidget {
                     title,
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(
-                      color: Colors.white,
-                      fontSize: 18,
-                      fontWeight: FontWeight.w900,
-                    ),
+                    style: AppTheme.cardTitle,
                   ),
                   const SizedBox(height: 3),
                   Text(
                     subtitle,
                     maxLines: 1,
                     overflow: TextOverflow.ellipsis,
-                    style: TextStyle(
-                      color: Colors.white.withValues(alpha: 0.82),
-                      fontSize: 10.5,
-                      fontWeight: FontWeight.w600,
-                    ),
+                    style: AppTheme.rowSubtitle,
                   ),
                 ],
               ),
             ),
-            if (onSmartCalendarTap != null) ...[
-              const SizedBox(width: 2),
-              IconButton(
-                tooltip: 'كلندر ذكي',
-                onPressed: onSmartCalendarTap,
-                icon: const Icon(
-                  Icons.calendar_month_rounded,
-                  color: Colors.white,
-                  size: 23,
-                ),
-              ),
-            ],
-            if (onClose != null) ...[
-              const SizedBox(width: 8),
-              IconButton(
-                tooltip: 'إغلاق',
-                onPressed: onClose,
-                icon: const Icon(
-                  Icons.close_rounded,
-                  color: Colors.white,
-                  size: 25,
-                ),
-              ),
-            ],
+            const SizedBox(width: AppTheme.sSm),
+            AppIconButton(
+              tooltip: 'كلندر ذكي',
+              icon: Icons.calendar_month_rounded,
+              background: AppTheme.field,
+              color: accent,
+              onTap: onSmartCalendarTap,
+            ),
+            const SizedBox(width: AppTheme.sSm),
+            // سهم رجوع لا علامة إغلاق: الشاشة تُفتح فوق الرئيسية فالخروج
+            // منها رجوع للخلف، وهو نفس السهم المستخدم في صفحات التفاصيل.
+            // علامة X تعني "إلغاء/إغلاق نافذة" فتوحي بمعنى مختلف.
+            // السهم يشير يمينًا لا يسارًا: الواجهة عربية والرجوع في اتجاه
+            // القراءة من اليمين إلى اليسار يعني السهم المتّجه يمينًا.
+            AppIconButton(
+              tooltip: 'رجوع',
+              icon: Icons.arrow_forward_ios_rounded,
+              background: AppTheme.field,
+              color: AppTheme.chevron,
+              onTap: onClose ?? () => Navigator.of(context).maybePop(),
+            ),
           ],
         ),
       ),
@@ -208,11 +194,11 @@ class ManagementListHeading extends StatelessWidget {
           Container(
             constraints: const BoxConstraints(minWidth: 36),
             height: 36,
-            padding: const EdgeInsets.symmetric(horizontal: 9),
+            padding: const EdgeInsets.symmetric(horizontal: 10),
             alignment: Alignment.center,
             decoration: BoxDecoration(
-              color: accentColor.withValues(alpha: 0.1),
-              borderRadius: BorderRadius.circular(11),
+              color: accentColor.withValues(alpha: 0.12),
+              borderRadius: BorderRadius.circular(AppTheme.rIcon),
             ),
             child: Text(
               '$count',
@@ -223,17 +209,13 @@ class ManagementListHeading extends StatelessWidget {
               ),
             ),
           ),
-          const SizedBox(width: 9),
+          const SizedBox(width: AppTheme.sMd),
           Expanded(
             child: Text(
               title,
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
-              style: const TextStyle(
-                fontSize: 14,
-                fontWeight: FontWeight.w900,
-                color: Color(0xFF0F172A),
-              ),
+              style: AppTheme.cardTitle,
             ),
           ),
         ],
@@ -363,62 +345,57 @@ class _ManagementSearchBarState extends State<ManagementSearchBar> {
                   decoration: InputDecoration(
                     // كان النص الإرشادي المُمرَّر من كل شاشة يُتجاهل ويُستبدل
                     // بنص فارغ، فيظهر مربع البحث خاليًا بلا أي دلالة.
+                    // حقل ممتلئ بلا حدود بنفس نصف قطر ولون حقول التطبيق.
                     hintText: widget.hint ?? '',
                     hintStyle: const TextStyle(
-                      color: Color(0xFF94A3B8),
+                      color: AppTheme.muted,
                       fontSize: 13,
                       fontWeight: FontWeight.w600,
                     ),
                     suffixIcon: const Icon(
                       Icons.search_rounded,
-                      color: Color(0xFF64748B),
+                      size: 21,
+                      color: AppTheme.chevron,
                     ),
                     filled: true,
-                    fillColor: Colors.white,
+                    fillColor: AppTheme.field,
                     border: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(14),
-                      borderSide: const BorderSide(color: Color(0xFFE2E8F0)),
+                      borderRadius: BorderRadius.circular(AppTheme.rField),
+                      borderSide: BorderSide.none,
                     ),
-                    enabledBorder: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(14),
-                      borderSide: const BorderSide(color: Color(0xFFE2E8F0)),
-                    ),
-                    focusedBorder: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(14),
-                      borderSide: BorderSide(
-                        color: widget.accentColor,
-                        width: 1.4,
-                      ),
-                    ),
-                    contentPadding: const EdgeInsets.symmetric(vertical: 13),
+                    contentPadding: const EdgeInsets.symmetric(vertical: 15),
                   ),
                 ),
               ),
             ),
-            const SizedBox(width: 9),
-            InkWell(
-              onTap: widget.onFilterTap,
-              borderRadius: BorderRadius.circular(14),
-              child: Container(
-                width: 50,
-                height: 50,
-                decoration: BoxDecoration(
-                  color: widget.accentColor,
-                  borderRadius: BorderRadius.circular(14),
+            const SizedBox(width: AppTheme.sSm),
+            Material(
+              color: widget.accentColor,
+              borderRadius: BorderRadius.circular(AppTheme.rField),
+              clipBehavior: Clip.antiAlias,
+              child: InkWell(
+                onTap: widget.onFilterTap,
+                child: const SizedBox(
+                  width: 52,
+                  height: 52,
+                  child: Icon(
+                    Icons.tune_rounded,
+                    color: Colors.white,
+                    size: 21,
+                  ),
                 ),
-                child: const Icon(Icons.tune_rounded, color: Colors.white),
               ),
             ),
           ],
         ),
         if (visibleItems.isNotEmpty) ...[
-          const SizedBox(height: 6),
+          const SizedBox(height: AppTheme.sSm),
           Container(
             decoration: BoxDecoration(
-              color: Colors.white,
-              borderRadius: BorderRadius.circular(12),
-              border: Border.all(color: const Color(0xFFE2E8F0)),
+              color: AppTheme.surface,
+              borderRadius: BorderRadius.circular(AppTheme.rInner),
             ),
+            clipBehavior: Clip.antiAlias,
             child: Column(
               children: visibleItems
                   .map(
@@ -435,6 +412,7 @@ class _ManagementSearchBarState extends State<ManagementSearchBar> {
                         item,
                         maxLines: 1,
                         overflow: TextOverflow.ellipsis,
+                        style: AppTheme.rowTitle,
                       ),
                       onTap: () => _selectSearch(item),
                     ),
@@ -474,10 +452,6 @@ class ManagementFollowUpCenter extends StatefulWidget {
 class _ManagementFollowUpCenterState extends State<ManagementFollowUpCenter> {
   int _selectedMetricIndex = 0;
 
-  static const _followUpColor = Color(0xFF8A6D1F);
-  static const _followUpBackground = Color(0xFFFAF7EC);
-  static const _followUpBorder = Color(0xFFE8DCB5);
-
   void _selectMetric(int index) {
     setState(() => _selectedMetricIndex = index);
     widget.onMetricSelected?.call(index);
@@ -487,149 +461,53 @@ class _ManagementFollowUpCenterState extends State<ManagementFollowUpCenter> {
   Widget build(BuildContext context) {
     final selectedMetricIndex =
         widget.selectedMetricIndex ?? _selectedMetricIndex;
-    return Container(
+    // مركز المتابعة بنفس لون وحواف البطاقات الموحّدة في التطبيق: رمادي
+    // ناعم، نصف قطر كبير، بلا حدود ولا ظل. كان صندوقًا ذهبيًا بحدّ وظل
+    // لا يشبه أي عنصر آخر في التطبيق.
+    return AppCard(
       key: const ValueKey('management-follow-up-surface'),
-      padding: const EdgeInsets.fromLTRB(11, 9, 11, 10),
-      decoration: BoxDecoration(
-        color: _followUpBackground,
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: _followUpBorder),
-        boxShadow: const [
-          BoxShadow(
-            color: Color(0x128A6D1F),
-            blurRadius: 18,
-            offset: Offset(0, 7),
-          ),
-        ],
+      leading: AppIconTile(
+        icon: Icons.dashboard_customize_outlined,
+        color: widget.accentColor,
       ),
-      child: Column(
-        children: [
-          Row(
-            children: [
-              Container(
-                width: 36,
-                height: 36,
-                decoration: BoxDecoration(
-                  color: _followUpBorder,
-                  borderRadius: BorderRadius.circular(11),
-                ),
-                child: Icon(
-                  Icons.dashboard_customize_outlined,
-                  color: _followUpColor,
-                  size: 20,
-                ),
-              ),
-              const SizedBox(width: 9),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    const Text(
-                      'مركز المتابعة',
-                      style: TextStyle(
-                        fontSize: 14.5,
-                        fontWeight: FontWeight.w900,
-                        color: _followUpColor,
-                      ),
-                    ),
-                    const SizedBox(height: 2),
-                    Text(
-                      widget.subtitle,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
-                        fontSize: 10,
-                        fontWeight: FontWeight.w600,
-                        color: _followUpColor,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-              if (widget.onMore != null)
-                IconButton(
-                  onPressed: widget.onMore,
-                  tooltip: 'عرض المتابعة كاملة',
-                  visualDensity: VisualDensity.compact,
-                  color: _followUpColor,
-                  icon: const Icon(Icons.arrow_forward_ios_rounded, size: 19),
-                ),
-            ],
-          ),
-          const SizedBox(height: 7),
-          LayoutBuilder(
-            builder: (context, constraints) {
-              final spacing = 7.0 * (widget.metrics.length - 1);
-              final cardWidth =
-                  ((constraints.maxWidth - spacing) / widget.metrics.length)
-                      .clamp(72.0, 112.0);
-
-              return SizedBox(
-                height: 56,
-                child: ListView.separated(
-                  scrollDirection: Axis.horizontal,
-                  reverse: true,
-                  itemCount: widget.metrics.length,
-                  separatorBuilder: (_, __) => const SizedBox(width: 7),
-                  itemBuilder: (context, index) {
-                    final metric = widget.metrics[index];
-                    final selected = selectedMetricIndex == index;
-                    return SizedBox(
-                      width: cardWidth,
-                      child: InkWell(
-                        key: ValueKey('management-flat-metric-$index'),
-                        onTap: () => _selectMetric(index),
-                        child: AnimatedContainer(
-                          duration: const Duration(milliseconds: 180),
-                          padding: const EdgeInsets.fromLTRB(7, 3, 7, 0),
-                          decoration: const BoxDecoration(),
-                          child: Column(
-                            mainAxisAlignment: MainAxisAlignment.center,
-                            children: [
-                              Row(
-                                mainAxisAlignment: MainAxisAlignment.center,
-                                children: [
-                                  Icon(
-                                    metric.icon,
-                                    color: _followUpColor,
-                                    size: 17,
-                                  ),
-                                  const SizedBox(width: 5),
-                                  Text(
-                                    '${metric.count}',
-                                    style: const TextStyle(
-                                      fontSize: 16,
-                                      fontWeight: FontWeight.w900,
-                                      color: _followUpColor,
-                                    ),
-                                  ),
-                                ],
-                              ),
-                              const SizedBox(height: 2),
-                              Text(
-                                metric.label,
-                                maxLines: 1,
-                                overflow: TextOverflow.ellipsis,
-                                textAlign: TextAlign.center,
-                                style: TextStyle(
-                                  fontSize: 9,
-                                  fontWeight: selected
-                                      ? FontWeight.w900
-                                      : FontWeight.w700,
-                                  color: _followUpColor,
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
-                      ),
-                    );
-                  },
-                ),
-              );
-            },
-          ),
-        ],
+      title: 'مركز المتابعة',
+      subtitle: widget.subtitle,
+      onTap: widget.onMore,
+      trailing: const AppMoreAction(),
+      child: SizedBox(
+        height: AppMetricChip.stripHeight,
+        child: LayoutBuilder(
+          builder: (context, constraints) {
+            final spacing = AppTheme.sSm * (widget.metrics.length - 1);
+            final chipWidth =
+                ((constraints.maxWidth - spacing) / widget.metrics.length)
+                    .clamp(74.0, 132.0);
+            // بلا reverse: داخل الاتجاه العربي يبدأ الشريط من اليمين
+            // تلقائيًا. كان reverse يقلبه فيبدأ من اليسار، بعكس كل شريط
+            // آخر في الصفحة نفسها.
+            return ListView.separated(
+              scrollDirection: Axis.horizontal,
+              padding: EdgeInsets.zero,
+              itemCount: widget.metrics.length,
+              separatorBuilder: (_, _) => const SizedBox(width: AppTheme.sSm),
+              itemBuilder: (context, index) {
+                final metric = widget.metrics[index];
+                return SizedBox(
+                  width: chipWidth,
+                  child: AppMetricChip(
+                    key: ValueKey('management-flat-metric-$index'),
+                    label: metric.label,
+                    count: metric.count,
+                    icon: metric.icon,
+                    color: metric.color,
+                    selected: selectedMetricIndex == index,
+                    onTap: () => _selectMetric(index),
+                  ),
+                );
+              },
+            );
+          },
+        ),
       ),
     );
   }
@@ -655,42 +533,14 @@ class ManagementCategoryTab extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return InkWell(
+    // شريحة الفئة الموحَّدة: بلا حدود، والمحدَّدة ممتلئة بلون الوحدة.
+    return AppCategoryChip(
+      label: label,
+      count: count,
+      icon: icon,
+      color: color,
+      selected: selected,
       onTap: onTap,
-      borderRadius: BorderRadius.circular(12),
-      child: AnimatedContainer(
-        duration: const Duration(milliseconds: 180),
-        padding: const EdgeInsets.symmetric(horizontal: 10),
-        decoration: BoxDecoration(
-          color: selected ? color : Colors.white,
-          borderRadius: BorderRadius.circular(12),
-          border: Border.all(color: selected ? color : const Color(0xFFDCE5EF)),
-        ),
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(icon, size: 15, color: selected ? Colors.white : color),
-            const SizedBox(width: 5),
-            Text(
-              label,
-              style: TextStyle(
-                color: selected ? Colors.white : const Color(0xFF334155),
-                fontSize: 10.5,
-                fontWeight: FontWeight.w800,
-              ),
-            ),
-            const SizedBox(width: 5),
-            Text(
-              '$count',
-              style: TextStyle(
-                color: selected ? Colors.white : color,
-                fontSize: 10,
-                fontWeight: FontWeight.w900,
-              ),
-            ),
-          ],
-        ),
-      ),
     );
   }
 }
@@ -722,11 +572,11 @@ class ManagementSortHeader extends StatelessWidget {
           Container(
             constraints: const BoxConstraints(minWidth: 36),
             height: 36,
-            padding: const EdgeInsets.symmetric(horizontal: 9),
+            padding: const EdgeInsets.symmetric(horizontal: 10),
             alignment: Alignment.center,
             decoration: BoxDecoration(
-              color: accentColor.withValues(alpha: 0.1),
-              borderRadius: BorderRadius.circular(11),
+              color: accentColor.withValues(alpha: 0.12),
+              borderRadius: BorderRadius.circular(AppTheme.rIcon),
             ),
             child: Text(
               '$count',
@@ -737,17 +587,13 @@ class ManagementSortHeader extends StatelessWidget {
               ),
             ),
           ),
-          const SizedBox(width: 9),
+          const SizedBox(width: AppTheme.sMd),
           Expanded(
             child: Text(
               title,
               maxLines: 1,
               overflow: TextOverflow.ellipsis,
-              style: const TextStyle(
-                fontSize: 14,
-                fontWeight: FontWeight.w900,
-                color: Color(0xFF0F172A),
-              ),
+              style: AppTheme.cardTitle,
             ),
           ),
           PopupMenuButton<String>(
@@ -816,35 +662,21 @@ class ManagementCompactCard extends StatelessWidget {
       color: Colors.transparent,
       child: InkWell(
         onTap: onTap,
-        borderRadius: BorderRadius.circular(15),
+        borderRadius: BorderRadius.circular(AppTheme.rField),
         child: Container(
           height: 94,
-          padding: const EdgeInsetsDirectional.fromSTEB(11, 10, 10, 10),
+          padding: const EdgeInsetsDirectional.fromSTEB(14, 12, 12, 12),
+          // بطاقة قائمة رمادية موحّدة بلا حدود ولا ظل، بنفس نصف قطر صفوف
+          // القوائم في كل التطبيق.
           decoration: BoxDecoration(
-            color: Colors.white,
-            borderRadius: BorderRadius.circular(15),
-            border: Border.all(color: const Color(0xFFE6ECF3)),
-            boxShadow: const [
-              BoxShadow(
-                color: Color(0x0D0F172A),
-                blurRadius: 10,
-                offset: Offset(0, 3),
-              ),
-            ],
+            color: AppTheme.surface,
+            borderRadius: BorderRadius.circular(AppTheme.rField),
           ),
           child: Row(
             textDirection: TextDirection.rtl,
             children: [
-              Container(
-                width: 46,
-                height: 46,
-                decoration: BoxDecoration(
-                  color: accentColor.withValues(alpha: 0.11),
-                  borderRadius: BorderRadius.circular(12),
-                ),
-                child: Icon(icon, color: accentColor, size: 23),
-              ),
-              const SizedBox(width: 10),
+              AppIconTile(icon: icon, color: accentColor),
+              const SizedBox(width: AppTheme.sMd),
               Expanded(
                 child: Column(
                   mainAxisAlignment: MainAxisAlignment.center,
@@ -854,11 +686,7 @@ class ManagementCompactCard extends StatelessWidget {
                       title,
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
-                        fontSize: 13.5,
-                        fontWeight: FontWeight.w900,
-                        color: Color(0xFF0F172A),
-                      ),
+                      style: AppTheme.rowTitle,
                     ),
                     const SizedBox(height: 5),
                     Row(
@@ -879,7 +707,7 @@ class ManagementCompactCard extends StatelessWidget {
                         const Icon(
                           Icons.calendar_today_outlined,
                           size: 11,
-                          color: Color(0xFF94A3B8),
+                          color: AppTheme.muted,
                         ),
                         const SizedBox(width: 3),
                         Flexible(
@@ -888,9 +716,9 @@ class ManagementCompactCard extends StatelessWidget {
                             maxLines: 1,
                             overflow: TextOverflow.ellipsis,
                             style: const TextStyle(
-                              fontSize: 9.5,
-                              fontWeight: FontWeight.w700,
-                              color: Color(0xFF64748B),
+                              fontSize: 10,
+                              fontWeight: FontWeight.w600,
+                              color: AppTheme.muted,
                             ),
                           ),
                         ),
@@ -910,9 +738,9 @@ class ManagementCompactCard extends StatelessWidget {
                       maxLines: 1,
                       overflow: TextOverflow.ellipsis,
                       style: const TextStyle(
-                        fontSize: 11.5,
+                        fontSize: 12,
                         fontWeight: FontWeight.w900,
-                        color: Color(0xFF0F172A),
+                        color: AppTheme.title,
                       ),
                     ),
                     const SizedBox(height: 7),
@@ -922,8 +750,8 @@ class ManagementCompactCard extends StatelessWidget {
                         vertical: 4,
                       ),
                       decoration: BoxDecoration(
-                        color: statusColor.withValues(alpha: 0.1),
-                        borderRadius: BorderRadius.circular(99),
+                        color: statusColor.withValues(alpha: 0.13),
+                        borderRadius: BorderRadius.circular(AppTheme.rPill),
                       ),
                       child: Text(
                         status,

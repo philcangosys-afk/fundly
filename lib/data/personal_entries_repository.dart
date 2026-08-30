@@ -3,6 +3,8 @@ import 'dart:typed_data';
 import 'package:image_picker/image_picker.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
+import 'app_session.dart';
+
 class PersonalEntryRecord {
   final String? id;
   final String category;
@@ -125,19 +127,10 @@ class SupabasePersonalEntriesRepository implements PersonalEntriesRepository {
   SupabasePersonalEntriesRepository({SupabaseClient? client})
     : _client = client ?? Supabase.instance.client;
 
-  Future<User> _authenticatedUser() async {
-    final currentUser = _client.auth.currentUser;
-    if (currentUser != null) return currentUser;
-
-    final response = await _client.auth.signInAnonymously().timeout(
-      _requestTimeout,
-    );
-    final user = response.user;
-    if (user == null) {
-      throw const AuthException('تعذر إنشاء جلسة لحفظ البيانات');
-    }
-    return user;
-  }
+  /// يدخل بحساب التطبيق الثابت عبر [AppSession]. كان يستدعي
+  /// signInAnonymously() فيُنشئ مستخدمًا جديدًا عند كل إعادة تثبيت،
+  /// فتصبح كل البيانات السابقة غير مرئية.
+  Future<User> _authenticatedUser() => AppSession.ensureSignedIn();
 
   @override
   Future<List<PersonalEntryRecord>> fetchAll() async {

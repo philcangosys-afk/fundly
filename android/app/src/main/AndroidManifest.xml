@@ -1,4 +1,10 @@
 <manifest xmlns:android="http://schemas.android.com/apk/res/android">
+    <!-- مطلوبة للاتصال بـSupabase. كانت معرّفة في debug/ و profile/ فقط،
+         وهي ملفات لا تدخل في بناء الإصدار (release) — لذلك كان التطبيق
+         يعمل عبر USB بينما تفشل كل عمليات القراءة والحفظ في نسخة الـAPK
+         بلا أي صلاحية إنترنت. -->
+    <uses-permission android:name="android.permission.INTERNET"/>
+    <uses-permission android:name="android.permission.ACCESS_NETWORK_STATE"/>
     <application
         android:label="fundly"
         android:name="${applicationName}"

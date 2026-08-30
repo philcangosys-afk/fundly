@@ -3,6 +3,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 
 import '../detail_page_chrome.dart';
 import '../management_dashboard_chrome.dart';
+import 'app_design.dart';
 
 // أدوات مطابقة البحث نُقلت إلى ملف مستقل لتجنّب الاستيراد الدائري مع
 // management_dashboard_chrome.dart، ويُعاد تصديرها هنا حتى تبقى كل
@@ -10,37 +11,6 @@ import '../management_dashboard_chrome.dart';
 export 'search_matching.dart';
 
 enum ThreeDotMenuAction { edit, share, delete, archive, freeze, pinHome }
-
-class ModuleHeader extends StatelessWidget {
-  const ModuleHeader({
-    super.key,
-    required this.icon,
-    required this.title,
-    required this.subtitle,
-    required this.moduleColors,
-    this.onSmartCalendarTap,
-    this.onClose,
-  });
-
-  final IconData icon;
-  final String title;
-  final String subtitle;
-  final List<Color> moduleColors;
-  final VoidCallback? onSmartCalendarTap;
-  final VoidCallback? onClose;
-
-  @override
-  Widget build(BuildContext context) {
-    return ManagementDashboardHeader(
-      title: title,
-      subtitle: subtitle,
-      icon: icon,
-      colors: moduleColors,
-      onSmartCalendarTap: onSmartCalendarTap,
-      onClose: onClose,
-    );
-  }
-}
 
 class SearchAndFilterBar extends StatelessWidget {
   const SearchAndFilterBar({
@@ -134,15 +104,15 @@ class UnifiedSearchFilterBar extends StatelessWidget {
                       color: Color(0xFF475569),
                     ),
                     filled: true,
-                    fillColor: Colors.white,
+                    fillColor: AppTheme.field,
                     border: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(12),
-                      borderSide: const BorderSide(color: Color(0xFFDCE5EF)),
-                    ),
+        borderRadius: BorderRadius.circular(AppTheme.rField),
+        borderSide: BorderSide.none,
+      ),
                     enabledBorder: OutlineInputBorder(
-                      borderRadius: BorderRadius.circular(12),
-                      borderSide: const BorderSide(color: Color(0xFFDCE5EF)),
-                    ),
+        borderRadius: BorderRadius.circular(AppTheme.rField),
+        borderSide: BorderSide.none,
+      ),
                     focusedBorder: OutlineInputBorder(
                       borderRadius: BorderRadius.circular(12),
                       borderSide: BorderSide(color: accentColor, width: 1.5),
@@ -499,7 +469,9 @@ class _AddFabState extends State<AddFab> {
         backgroundColor: widget.backgroundColor,
         foregroundColor: widget.foregroundColor,
         elevation: 7,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(AppTheme.rField),
+        ),
         icon: Icon(widget.icon, color: widget.foregroundColor),
         label: Text(
           widget.label,

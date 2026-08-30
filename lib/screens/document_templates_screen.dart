@@ -7,8 +7,11 @@ import 'package:share_plus/share_plus.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../data/app_reminders_store.dart';
+import '../data/delegations_repository.dart';
+import '../data/project_assets_repository.dart';
 import '../data/user_signature_store.dart';
 import 'signature_settings_screen.dart';
+import '../widgets/shared/app_design.dart';
 
 class DocumentTemplatesScreen extends StatefulWidget {
   const DocumentTemplatesScreen({super.key, this.linkedProperty});
@@ -21,7 +24,14 @@ class DocumentTemplatesScreen extends StatefulWidget {
 }
 
 class _DocumentTemplatesScreenState extends State<DocumentTemplatesScreen> {
-  static const _recordsKey = 'document_template_records_v1';
+  // كانت السجلات تُحفظ محليًا فقط (SharedPreferences)، فتضيع عند حذف
+  // التطبيق ولا تظهر على أي جهاز آخر — بخلاف بقية بيانات التطبيق.
+  final DelegationsRepository _repository = SupabaseDelegationsRepository();
+  final ProjectAssetsRepository _assetsRepository =
+      SupabaseProjectAssetsRepository();
+
+  /// الكيانات التي يمكن ربط المستند بها، مقروءة من بياناتها الحقيقية.
+  List<({String kind, String label, String id})> _linkTargets = const [];
 
   static const Map<String, List<String>> _templateFields = {
     'إيصال أمانة': ['اسم المدين', 'اسم الدائن', 'المبلغ', 'سبب الدين'],
@@ -41,7 +51,8 @@ class _DocumentTemplatesScreenState extends State<DocumentTemplatesScreen> {
     'إنذار': Icons.warning_amber_rounded,
   };
 
-  List<Map<String, dynamic>> _savedRecords = const [];
+  List<DocumentRecordEntry> _savedRecords = const [];
+  bool _loading = true;
   List<List<Offset>> _signature = const [];
 
   @override
@@ -51,21 +62,65 @@ class _DocumentTemplatesScreenState extends State<DocumentTemplatesScreen> {
   }
 
   Future<void> _load() async {
-    final prefs = await SharedPreferences.getInstance();
-    final raw = prefs.getString(_recordsKey);
+    if (!mounted) return;
+    // مؤشر التحميل في أول تحميل فقط، وإلا أزال السحبُ للتحديث القائمةَ
+    // ومعها مؤشر السحب نفسه.
+    setState(() => _loading = _savedRecords.isEmpty);
     final signature = await UserSignatureStore.load();
-    var records = <Map<String, dynamic>>[];
-    if (raw != null && raw.isNotEmpty) {
-      try {
-        records = (jsonDecode(raw) as List<dynamic>)
-            .map((item) => Map<String, dynamic>.from(item as Map))
-            .toList(growable: false);
-      } catch (_) {}
+    var records = <DocumentRecordEntry>[];
+    try {
+      records = await _repository.fetchDocuments();
+    } catch (_) {
+      // تُترك القائمة فارغة؛ يظهر الخطأ عند محاولة الحفظ.
+    }
+    // كيانات الربط الحقيقية: الأشخاص/الجهات من إدارة الأفراد، والعقارات
+    // والأنشطة من قاعدة البيانات — فيرتبط الإيصال أو العقد بسجل فعلي بدل
+    // أن يكون ورقة معزولة لا يعرف التطبيق علاقتها بشيء.
+    final targets = <({String kind, String label, String id})>[];
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final rawPeople = prefs.getString('people_management_records_v1');
+      if (rawPeople != null && rawPeople.trim().isNotEmpty) {
+        final decoded = jsonDecode(rawPeople);
+        if (decoded is List) {
+          var index = 0;
+          for (final entry in decoded.whereType<Map>()) {
+            final name = (entry['fullName'] ?? '').toString().trim();
+            index++;
+            if (name.isEmpty) continue;
+            // المعرّف يجب أن يكون فريدًا: شخصان بنفس الاسم كانا سيُنتجان
+            // خيارين بنفس القيمة، وهو ما يُسقط القائمة المنسدلة بتأكيد
+            // داخلي فور اختيار أحدهما.
+            targets.add((
+              kind: 'شخص/جهة',
+              label: name,
+              id: 'person:$index:$name',
+            ));
+          }
+        }
+      }
+    } catch (_) {
+      // مخزون تالف — تُتخطّى قائمة الأشخاص فقط.
+    }
+    try {
+      final assets = await _assetsRepository.fetchAssets();
+      for (final asset in assets) {
+        if (asset.id == null || asset.title.trim().isEmpty) continue;
+        targets.add((
+          kind: 'عقار/نشاط',
+          label: asset.title.trim(),
+          id: 'asset:${asset.id!}',
+        ));
+      }
+    } catch (_) {
+      // تعذّر جلب الأصول — تبقى قائمة الأشخاص متاحة.
     }
     if (!mounted) return;
     setState(() {
       _savedRecords = records;
       _signature = signature;
+      _linkTargets = targets;
+      _loading = false;
     });
   }
 
@@ -82,6 +137,7 @@ class _DocumentTemplatesScreenState extends State<DocumentTemplatesScreen> {
     }
     var reminderLabel = 'قبل أسبوع';
     var includeSignature = false;
+    ({String kind, String label, String id})? link;
 
     await showModalBottomSheet<void>(
       context: context,
@@ -99,7 +155,9 @@ class _DocumentTemplatesScreenState extends State<DocumentTemplatesScreen> {
             ),
             decoration: const BoxDecoration(
               color: Colors.white,
-              borderRadius: BorderRadius.vertical(top: Radius.circular(22)),
+              borderRadius: BorderRadius.vertical(
+                top: Radius.circular(AppTheme.rCard),
+              ),
             ),
             child: SingleChildScrollView(
               child: Directionality(
@@ -204,6 +262,50 @@ class _DocumentTemplatesScreenState extends State<DocumentTemplatesScreen> {
                         ),
                       ),
                     const SizedBox(height: 12),
+                    // ربط المستند بسجل حقيقي في التطبيق (شخص/جهة أو
+                    // عقار/نشاط) بدل أن يبقى ورقة معزولة لا يعرف التطبيق
+                    // علاقتها بشيء.
+                    if (_linkTargets.isEmpty)
+                      const ListTile(
+                        contentPadding: EdgeInsets.zero,
+                        leading: Icon(Icons.link_off_rounded),
+                        title: Text('لا توجد سجلات للربط بها بعد'),
+                        subtitle: Text(
+                          'أضف شخصًا أو عقارًا ليمكن ربط المستند به',
+                        ),
+                      )
+                    else
+                      DropdownButtonFormField<String>(
+                        initialValue: link?.id,
+                        isExpanded: true,
+                        decoration: const InputDecoration(
+                          labelText: 'ربط المستند بـ (اختياري)',
+                          border: OutlineInputBorder(),
+                          isDense: true,
+                        ),
+                        items: [
+                          const DropdownMenuItem<String>(
+                            value: null,
+                            child: Text('بدون ربط'),
+                          ),
+                          ..._linkTargets.map(
+                            (t) => DropdownMenuItem<String>(
+                              value: t.id,
+                              child: Text(
+                                '${t.kind}: ${t.label}',
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                              ),
+                            ),
+                          ),
+                        ],
+                        onChanged: (value) => setSheetState(() {
+                          link = value == null
+                              ? null
+                              : _linkTargets.firstWhere((t) => t.id == value);
+                        }),
+                      ),
+                    const SizedBox(height: 12),
                     FilledButton.icon(
                       onPressed: () => _saveTemplate(
                         sheetContext,
@@ -211,6 +313,7 @@ class _DocumentTemplatesScreenState extends State<DocumentTemplatesScreen> {
                         controllers,
                         reminderLabel,
                         includeSignature,
+                        link,
                       ),
                       icon: const Icon(Icons.save_outlined),
                       label: const Text('حفظ النموذج'),
@@ -235,6 +338,7 @@ class _DocumentTemplatesScreenState extends State<DocumentTemplatesScreen> {
     Map<String, TextEditingController> controllers,
     String reminderLabel,
     bool includeSignature,
+    ({String kind, String label, String id})? link,
   ) async {
     final firstField = _templateFields[type]!.first;
     if (controllers[firstField]!.text.trim().isEmpty) {
@@ -244,30 +348,41 @@ class _DocumentTemplatesScreenState extends State<DocumentTemplatesScreen> {
       return;
     }
 
-    final id = 'template-${DateTime.now().microsecondsSinceEpoch}';
     final values = {
       for (final entry in controllers.entries)
         entry.key: entry.value.text.trim(),
     };
-    final record = <String, dynamic>{
-      'id': id,
-      'type': type,
-      'values': values,
-      'reminder': reminderLabel,
-      'includeSignature': includeSignature,
-      'createdAt': DateTime.now().toIso8601String(),
-    };
-    final next = [record, ..._savedRecords];
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setString(_recordsKey, jsonEncode(next));
+    values['includeSignature'] = includeSignature ? '1' : '0';
+    values['reminder'] = reminderLabel;
 
     final expiry = AppRemindersStore.parseDisplayDate(
       values['تاريخ الانتهاء'] ?? '',
     );
-    if (expiry != null) {
+
+    DocumentRecordEntry saved;
+    try {
+      saved = await _repository.upsertDocument(
+        DocumentRecordEntry(
+          docType: type,
+          fields: values,
+          linkedKind: link?.kind,
+          linkedLabel: link?.label,
+          linkedId: link?.id,
+          issuedOn: DateTime.now(),
+        ),
+      );
+    } catch (_) {
+      if (!sheetContext.mounted) return;
+      ScaffoldMessenger.of(sheetContext).showSnackBar(
+        const SnackBar(content: Text('تعذّر حفظ النموذج. حاول مرة أخرى.')),
+      );
+      return;
+    }
+
+    if (expiry != null && saved.id != null) {
       await AppRemindersStore.upsert(
         AppReminder(
-          id: id,
+          id: saved.id!,
           title: '$type: ${values[firstField]}',
           module: widget.linkedProperty == null
               ? 'النماذج والمستندات'
@@ -280,17 +395,33 @@ class _DocumentTemplatesScreenState extends State<DocumentTemplatesScreen> {
       );
     }
 
+    await _load();
     if (!mounted || !sheetContext.mounted) return;
-    setState(() => _savedRecords = next);
     Navigator.of(sheetContext).pop();
+    // الرسالة تصف ما حدث فعلًا: التذكير لا يُنشأ إلا عند إدخال تاريخ
+    // انتهاء. كانت تُعلن إنشاء تذكير في كل مرة حتى بلا تاريخ.
     ScaffoldMessenger.of(context).showSnackBar(
-      const SnackBar(content: Text('تم حفظ النموذج وإضافة تذكير الانتهاء')),
+      SnackBar(
+        content: Text(
+          expiry == null
+              ? 'تم حفظ النموذج'
+              : 'تم حفظ النموذج وإضافة تذكير الانتهاء',
+        ),
+      ),
     );
   }
 
-  Future<void> _shareRecord(Map<String, dynamic> record) async {
-    final values = Map<String, dynamic>.from(record['values'] as Map);
-    final signature = record['includeSignature'] == true
+  Future<void> _shareRecord(DocumentRecordEntry record) async {
+    // تُستبعد الحقول الداخلية من المعاينة حتى لا تظهر أسطر مثل
+    // "includeSignature: 1" داخل المستند المُشارَك.
+    const internal = {'includeSignature', 'reminder'};
+    final values = <String, dynamic>{
+      for (final e in record.fields.entries)
+        if (!internal.contains(e.key)) e.key: e.value,
+      if ((record.linkedLabel ?? '').isNotEmpty)
+        'مرتبط بـ': '${record.linkedKind}: ${record.linkedLabel}',
+    };
+    final signature = record.fields['includeSignature'] == '1'
         ? await UserSignatureStore.load()
         : <List<Offset>>[];
     if (!mounted) return;
@@ -313,7 +444,7 @@ class _DocumentTemplatesScreenState extends State<DocumentTemplatesScreen> {
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
                     Text(
-                      record['type']?.toString() ?? '',
+                      record.docType,
                       textAlign: TextAlign.center,
                       style: const TextStyle(
                         fontSize: 21,
@@ -371,7 +502,7 @@ class _DocumentTemplatesScreenState extends State<DocumentTemplatesScreen> {
                 if (data == null || !dialogContext.mounted) return;
                 await SharePlus.instance.share(
                   ShareParams(
-                    text: record['type']?.toString(),
+                    text: record.docType,
                     files: [
                       XFile.fromData(
                         data.buffer.asUint8List(),
@@ -391,16 +522,25 @@ class _DocumentTemplatesScreenState extends State<DocumentTemplatesScreen> {
     );
   }
 
-  Future<void> _deleteRecord(Map<String, dynamic> record) async {
-    final id = record['id']?.toString() ?? '';
-    final next = _savedRecords
-        .where((item) => item['id']?.toString() != id)
-        .toList(growable: false);
-    final prefs = await SharedPreferences.getInstance();
-    await prefs.setString(_recordsKey, jsonEncode(next));
-    await AppRemindersStore.remove(id);
+  Future<void> _deleteRecord(DocumentRecordEntry record) async {
+    final id = record.id;
+    if (id == null) return;
+    try {
+      await _repository.deleteDocument(id);
+      // يُحذف تذكير الانتهاء المرتبط أيضًا، وإلا بقي ينبّه عن مستند محذوف.
+      await AppRemindersStore.remove(id);
+    } catch (_) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(const SnackBar(content: Text('تعذّر حذف النموذج')));
+      return;
+    }
+    await _load();
     if (!mounted) return;
-    setState(() => _savedRecords = next);
+    ScaffoldMessenger.of(
+      context,
+    ).showSnackBar(const SnackBar(content: Text('تم حذف النموذج')));
   }
 
   Widget _textField(
@@ -461,103 +601,122 @@ class _DocumentTemplatesScreenState extends State<DocumentTemplatesScreen> {
         ),
         centerTitle: true,
       ),
-      body: Directionality(
-        textDirection: TextDirection.rtl,
-        child: ListView(
-          padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
-          children: [
-            const Text(
-              'اختر نموذجًا جاهزًا واملأ بياناته',
-              style: TextStyle(
-                fontSize: 17,
-                fontWeight: FontWeight.w900,
-                color: Color(0xFF0F172A),
-              ),
-            ),
-            const SizedBox(height: 12),
-            GridView.count(
-              shrinkWrap: true,
-              physics: const NeverScrollableScrollPhysics(),
-              crossAxisCount: 2,
-              childAspectRatio: 1.5,
-              crossAxisSpacing: 10,
-              mainAxisSpacing: 10,
-              children: _templateFields.keys
-                  .map(
-                    (type) => Material(
-                      color: Colors.white,
-                      borderRadius: BorderRadius.circular(10),
-                      child: InkWell(
-                        onTap: () => _openTemplate(type),
-                        borderRadius: BorderRadius.circular(10),
-                        child: Container(
-                          padding: const EdgeInsets.all(12),
-                          decoration: BoxDecoration(
-                            border: Border.all(color: const Color(0xFFE2E8F0)),
-                            borderRadius: BorderRadius.circular(10),
-                          ),
-                          child: Column(
-                            mainAxisAlignment: MainAxisAlignment.center,
-                            children: [
-                              Icon(
-                                _templateIcons[type],
-                                color: const Color(0xFF0F6AA8),
-                              ),
-                              const SizedBox(height: 7),
-                              Text(
-                                type,
-                                textAlign: TextAlign.center,
-                                style: const TextStyle(
-                                  fontWeight: FontWeight.w800,
-                                ),
-                              ),
-                            ],
-                          ),
-                        ),
+      body: _loading
+          ? const Center(child: CircularProgressIndicator())
+          : Directionality(
+              textDirection: TextDirection.rtl,
+              child: RefreshIndicator(
+                onRefresh: _load,
+                child: ListView(
+                  padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
+                  children: [
+                    const Text(
+                      'اختر نموذجًا جاهزًا واملأ بياناته',
+                      style: TextStyle(
+                        fontSize: 17,
+                        fontWeight: FontWeight.w900,
+                        color: Color(0xFF0F172A),
                       ),
                     ),
-                  )
-                  .toList(growable: false),
-            ),
-            if (_savedRecords.isNotEmpty) ...[
-              const SizedBox(height: 22),
-              const Text(
-                'النماذج المحفوظة',
-                style: TextStyle(fontSize: 16, fontWeight: FontWeight.w900),
-              ),
-              const SizedBox(height: 8),
-              for (final record in _savedRecords)
-                Card(
-                  child: ListTile(
-                    leading: Icon(
-                      _templateIcons[record['type']] ??
-                          Icons.description_outlined,
+                    const SizedBox(height: 12),
+                    GridView.count(
+                      shrinkWrap: true,
+                      physics: const NeverScrollableScrollPhysics(),
+                      crossAxisCount: 2,
+                      childAspectRatio: 1.5,
+                      crossAxisSpacing: 10,
+                      mainAxisSpacing: 10,
+                      children: _templateFields.keys
+                          .map(
+                            (type) => Material(
+                              color: Colors.white,
+                              borderRadius: BorderRadius.circular(10),
+                              child: InkWell(
+                                onTap: () => _openTemplate(type),
+                                borderRadius: BorderRadius.circular(10),
+                                child: Container(
+                                  padding: const EdgeInsets.all(12),
+                                  decoration: BoxDecoration(
+                                    border: Border.all(
+                                      color: const Color(0xFFE2E8F0),
+                                    ),
+                                    borderRadius: BorderRadius.circular(10),
+                                  ),
+                                  child: Column(
+                                    mainAxisAlignment: MainAxisAlignment.center,
+                                    children: [
+                                      Icon(
+                                        _templateIcons[type],
+                                        color: const Color(0xFF0F6AA8),
+                                      ),
+                                      const SizedBox(height: 7),
+                                      Text(
+                                        type,
+                                        textAlign: TextAlign.center,
+                                        style: const TextStyle(
+                                          fontWeight: FontWeight.w800,
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              ),
+                            ),
+                          )
+                          .toList(growable: false),
                     ),
-                    title: Text(record['type']?.toString() ?? ''),
-                    subtitle: Text(
-                      (Map<String, dynamic>.from(
-                                record['values'] as Map,
-                              )['تاريخ الانتهاء']?.toString().isEmpty ??
-                              true)
-                          ? 'بدون تاريخ انتهاء'
-                          : 'ينتهي: ${Map<String, dynamic>.from(record['values'] as Map)['تاريخ الانتهاء']}',
-                    ),
-                    trailing: PopupMenuButton<String>(
-                      onSelected: (action) {
-                        if (action == 'share') _shareRecord(record);
-                        if (action == 'delete') _deleteRecord(record);
-                      },
-                      itemBuilder: (_) => const [
-                        PopupMenuItem(value: 'share', child: Text('مشاركة')),
-                        PopupMenuItem(value: 'delete', child: Text('حذف')),
-                      ],
-                    ),
-                  ),
+                    if (_savedRecords.isNotEmpty) ...[
+                      const SizedBox(height: 22),
+                      const Text(
+                        'النماذج المحفوظة',
+                        style: TextStyle(
+                          fontSize: 16,
+                          fontWeight: FontWeight.w900,
+                        ),
+                      ),
+                      const SizedBox(height: 8),
+                      for (final record in _savedRecords)
+                        Card(
+                          child: ListTile(
+                            leading: Icon(
+                              _templateIcons[record.docType] ??
+                                  Icons.description_outlined,
+                            ),
+                            title: Text(record.docType),
+                            subtitle: Text(
+                              [
+                                (record.fields['تاريخ الانتهاء'] ?? '').isEmpty
+                                    ? 'بدون تاريخ انتهاء'
+                                    : 'ينتهي: ${record.fields['تاريخ الانتهاء']}',
+                                if ((record.linkedLabel ?? '').isNotEmpty)
+                                  '${record.linkedKind}: ${record.linkedLabel}',
+                              ].join('  •  '),
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                            trailing: PopupMenuButton<String>(
+                              onSelected: (action) {
+                                if (action == 'share') _shareRecord(record);
+                                if (action == 'delete') _deleteRecord(record);
+                              },
+                              itemBuilder: (_) => const [
+                                PopupMenuItem(
+                                  value: 'share',
+                                  child: Text('مشاركة'),
+                                ),
+                                PopupMenuItem(
+                                  value: 'delete',
+                                  child: Text('حذف'),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ),
+                    ],
+                  ],
                 ),
-            ],
-          ],
-        ),
-      ),
+              ),
+            ),
     );
   }
 }

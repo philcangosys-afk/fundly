@@ -1,16 +1,136 @@
-# fundly
+# Fundly
 
-A new Flutter project.
+تطبيق Flutter لإدارة الالتزامات الشخصية والمشتركة، العقارات، المحافظ، والمشاريع.
 
-## Getting Started
+## 🚨 مشكلة شائعة: البيانات لا تظهر؟
 
-This project is a starting point for a Flutter application.
+إذا كان التطبيق يعمل لكن **لا يعرض البيانات القديمة** أو **لا يحفظ بيانات جديدة**:
 
-A few resources to get you started if this is your first Flutter project:
+### الحل السريع (5 دقائق)
+📖 **اقرأ**: [QUICK_FIX.md](QUICK_FIX.md) للحل الفوري
 
-- [Lab: Write your first Flutter app](https://docs.flutter.dev/get-started/codelab)
-- [Cookbook: Useful Flutter samples](https://docs.flutter.dev/cookbook)
+📖 **دليل تفصيلي**: [حل_مشكلة_البيانات.md](حل_مشكلة_البيانات.md)
 
-For help getting started with Flutter development, view the
-[online documentation](https://docs.flutter.dev/), which offers tutorials,
-samples, guidance on mobile development, and a full API reference.
+### السبب
+التطبيق تحول من الدخول المجهول إلى حساب ثابت (`app@fundly.local`). البيانات القديمة محفوظة في Supabase لكنها تحت حساب مجهول سابق.
+
+### الحل المختصر
+1. افتح [Supabase Dashboard](https://supabase.com/dashboard) → المشروع `pcppwpbaknxflzbqbrxj`
+2. أنشئ المستخدم `app@fundly.local` (إذا لم يكن موجودًا)
+3. شغّل `supabase/migrations/_quick_fix_data_recovery.sql`
+4. أعد تشغيل التطبيق
+
+---
+
+## بناء التطبيق
+
+### Debug
+```bash
+flutter run
+```
+
+### Release APK
+```bash
+flutter build apk --release
+```
+
+الملف الناتج: `build/app/outputs/flutter-apk/app-release.apk`
+
+---
+
+## إعداد Supabase
+
+### 1. إنشاء قاعدة البيانات
+اتبع التعليمات في: [SUPABASE_SETUP.md](SUPABASE_SETUP.md)
+
+### 2. تشغيل الترحيلات (Migrations)
+انسخ والصق محتويات `supabase/migrations/_combined_run_in_supabase.sql` في **SQL Editor**
+
+---
+
+## الميزات الرئيسية
+
+### 📋 إدارة الالتزامات
+- **شخصية**: التزامات خاصة بك فقط
+- **مشتركة**: التزامات مع آخرين
+- دعم المرفقات، المواعيد، الملاحظات، والمدفوعات
+
+### 🏢 إدارة العقارات والمشاريع
+- عقارات (أراضي، شقق، مباني)
+- أنشطة تجارية
+- معدات
+- مشاريع أخرى
+- تتبع الوحدات والعقود والإيجارات
+
+### 💰 المحافظ المالية
+- محافظ متعددة بعملات مختلفة
+- تتبع الحركات المالية
+- ربط بالالتزامات والعقارات
+
+### 👥 إدارة الأشخاص
+- قائمة جهات الاتصال
+- ربط الأشخاص بالالتزامات والعقارات
+- التفويضات
+
+### 📅 التقويم الذكي
+- عرض موحد لكل المواعيد
+- مزامنة مع الالتزامات
+
+### 🔔 التنبيهات
+- تذكيرات للمواعيد القادمة
+- تنبيهات للمدفوعات المستحقة
+
+---
+
+## شاشة حالة البيانات
+
+للتحقق من الاتصال والبيانات داخل التطبيق:
+1. افتح **الإعدادات**
+2. اختر **حالة البيانات والاتصال**
+3. تحقق من:
+   - الحساب الحالي (`app@fundly.local`)
+   - عدد السجلات في كل جدول
+
+---
+
+## ملفات التوثيق
+
+| الملف | الوصف |
+|------|-------|
+| [QUICK_FIX.md](QUICK_FIX.md) | حل سريع لمشكلة البيانات |
+| [حل_مشكلة_البيانات.md](حل_مشكلة_البيانات.md) | دليل تفصيلي لمشكلة البيانات |
+| [SUPABASE_SETUP.md](SUPABASE_SETUP.md) | إعداد قاعدة البيانات |
+| [PROJECT_CONTEXT.md](PROJECT_CONTEXT.md) | سياق المشروع والبنية |
+| [IMPLEMENTATION_GUIDE.md](IMPLEMENTATION_GUIDE.md) | دليل التطوير |
+
+---
+
+## متطلبات التشغيل
+
+- Flutter SDK 3.0+
+- Dart SDK 2.17+
+- Android SDK (للبناء على Android)
+- حساب Supabase
+
+---
+
+## الأمان والخصوصية
+
+⚠️ **ملاحظة مهمة**: التطبيق يستخدم حساب ثابت (`app@fundly.local`) مضمّن في الكود. هذا يعني:
+- ✅ البيانات تبقى بعد إعادة التثبيت
+- ✅ البيانات تظهر على أي جهاز
+- ⚠️ **كل من لديه نسخة من التطبيق يصل لنفس البيانات**
+
+**الاستخدام الموصى به**:
+- الاستخدام الشخصي
+- دائرة موثوقة (عائلة، فريق صغير)
+
+**غير موصى به**:
+- التوزيع العام
+- البيانات الحساسة جدًا
+
+لتغيير كلمة المرور، راجع: [QUICK_FIX.md](QUICK_FIX.md#-الأمان)
+
+---
+
+**آخر تحديث**: 28 أغسطس 2026

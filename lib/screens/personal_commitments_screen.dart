@@ -5,10 +5,16 @@ import 'package:image_picker/image_picker.dart';
 import 'package:share_plus/share_plus.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
+import '../data/app_settings.dart';
 import '../data/personal_entries_repository.dart';
 import 'smart_calendar_screen.dart';
 import '../widgets/management_dashboard_chrome.dart';
+import '../widgets/detail_page_chrome.dart';
+import '../widgets/shared/app_design.dart';
+import '../widgets/shared/app_filter_sheet.dart';
+import '../widgets/shared/followup_center_sheet.dart';
 import '../widgets/shared/module_shared_widgets.dart';
+import '../widgets/shared/measured_pinned_header.dart';
 
 const _addedAttachmentTypeKey = 'نوع المرفق الإضافي';
 const _addedAttachmentNameKey = 'اسم المرفق الإضافي';
@@ -195,40 +201,14 @@ class _PersonalCommitmentsScreenState extends State<PersonalCommitmentsScreen> {
   // حالة شاشة الفلتر المتقدم (زر "تصفية" بجانب البحث). "الفئة الرئيسية"
   // تُدار عبر _selectedEntryType نفسه (نفس فلتر الفئات في الأعلى)؛ بقية
   // الحقول فلاتر إضافية تُطبَّق فوقه وفوق شريط البحث في _filteredItems().
-  String? _advFilterSubType; // نوع إدخال محدد ضمن الفئة الرئيسية
-  DateTime? _advFilterDateFrom;
-  DateTime? _advFilterDateTo;
-  String? _advFilterStatus; // المستحق بعد 7 أيام | مكتمل | متأخر | مؤرشف
-  num? _advFilterAmountFrom;
-  num? _advFilterAmountTo;
-  String _advFilterAmountSort = 'بدون ترتيب'; // بدون ترتيب | الأعلى | الأقل
-  String _advFilterDocumentName = '';
-  String _advFilterPlaceName = '';
+  /// قيم الفلتر الرئيسي — نفس البنية في الشاشات الأربع.
+  final AppFilterValues _filter = AppFilterValues();
 
-  bool get _hasActiveAdvancedFilters =>
-      _advFilterSubType != null ||
-      _advFilterDateFrom != null ||
-      _advFilterDateTo != null ||
-      _advFilterStatus != null ||
-      _advFilterAmountFrom != null ||
-      _advFilterAmountTo != null ||
-      _advFilterAmountSort != 'بدون ترتيب' ||
-      _advFilterDocumentName.isNotEmpty ||
-      _advFilterPlaceName.isNotEmpty;
+  // اسم مختصر للفئة الفرعية، تستعمله رقائق الفئات وعنوان القائمة.
+  String? get _advFilterSubType => _filter.subCategory;
+  set _advFilterSubType(String? value) => _filter.subCategory = value;
 
-  void _clearAdvancedFilters() {
-    setState(() {
-      _advFilterSubType = null;
-      _advFilterDateFrom = null;
-      _advFilterDateTo = null;
-      _advFilterStatus = null;
-      _advFilterAmountFrom = null;
-      _advFilterAmountTo = null;
-      _advFilterAmountSort = 'بدون ترتيب';
-      _advFilterDocumentName = '';
-      _advFilterPlaceName = '';
-    });
-  }
+  bool get _hasActiveAdvancedFilters => _filter.isActive;
 
   static const String _statusOverdue = 'متأخرة';
   static const String _statusDueSoon = 'قريبة الاستحقاق';
@@ -251,7 +231,7 @@ class _PersonalCommitmentsScreenState extends State<PersonalCommitmentsScreen> {
       color: Color(0xFF0EA5E9),
       icon: Icons.account_balance_wallet,
       types: [
-        _EntryType('مصروف', Icons.trending_down),
+        _EntryType('المصروفات الشخصية', Icons.trending_down),
         _EntryType('إيراد', Icons.trending_up),
         _EntryType('تحويل مالي', Icons.swap_horiz),
         _EntryType('دين / قرض / سلفة', Icons.handshake),
@@ -267,20 +247,21 @@ class _PersonalCommitmentsScreenState extends State<PersonalCommitmentsScreen> {
       types: [_EntryType('مستند', Icons.description_outlined)],
     ),
     _EntryCategory(
-      title: 'تنظيم ومتابعة',
+      title: 'التنظيم والمتابعة',
       subtitle: 'مهام ومواعيد وعادات',
       color: Color(0xFF7C3AED),
       icon: Icons.event_note_outlined,
+      // الأنواع الخمسة المعتمدة في ملف الإدخالات: مهمة، موعد، عادة،
+      // تذكير، ملاحظات. حُذف "تجديد" و"متابعة" و"تسجيل / تخطيط" لأنها
+      // ليست في الملف. أُبقي "تفويض" لأنه نظام قائم بذاته في التطبيق
+      // (طلبات وتفويضات) لا مجرد نوع إدخال.
       types: [
         _EntryType('مهمة', Icons.task_alt_outlined),
         _EntryType('موعد', Icons.event_outlined),
         _EntryType('عادة', Icons.repeat_rounded),
-        _EntryType('ملاحظات', Icons.sticky_note_2_outlined),
-        _EntryType('تجديد', Icons.autorenew_rounded),
-        _EntryType('تفويض', Icons.assignment_ind_outlined),
         _EntryType('تذكير', Icons.notifications_active_outlined),
-        _EntryType('متابعة', Icons.fact_check_outlined),
-        _EntryType('تسجيل / تخطيط', Icons.edit_calendar_outlined),
+        _EntryType('ملاحظات', Icons.sticky_note_2_outlined),
+        _EntryType('تفويض', Icons.assignment_ind_outlined),
       ],
     ),
     _EntryCategory(
@@ -289,20 +270,21 @@ class _PersonalCommitmentsScreenState extends State<PersonalCommitmentsScreen> {
       color: Color(0xFFDC2626),
       icon: Icons.medical_information_outlined,
       types: [
-        _EntryType('أدوية وبياناتها', Icons.medication_outlined),
-        _EntryType('حسابات', Icons.password_rounded),
+        _EntryType('أدوية', Icons.medication_outlined),
+        _EntryType('كلمات سر', Icons.password_rounded),
       ],
     ),
     _EntryCategory(
-      title: 'نمط حياة',
+      title: 'نمط الحياة',
       subtitle: 'مناسبات واشتراكات وهدايا',
       color: Color(0xFFDB2777),
       icon: Icons.celebration_outlined,
+      // "جمعية" ليست ضمن نمط الحياة في الملف المعتمد (وهي أصلًا التزام
+      // مشترك لا شخصي)، فحُذفت من القائمة وبقي نموذجها لعرض ما سُجّل سابقًا.
       types: [
         _EntryType('مناسبة', Icons.celebration_outlined),
-        _EntryType('اشتراكات', Icons.autorenew),
+        _EntryType('اشتراك', Icons.autorenew),
         _EntryType('هدية', Icons.volunteer_activism_outlined),
-        _EntryType('جمعية', Icons.groups_outlined),
       ],
     ),
     _EntryCategory(
@@ -419,7 +401,9 @@ class _PersonalCommitmentsScreenState extends State<PersonalCommitmentsScreen> {
       icon: form?.icon ?? Icons.description_outlined,
       iconColor: color,
       iconBackground: color.withValues(alpha: 0.12),
-      subscriptionMembers: record.entryType == 'اشتراكات'
+      subscriptionMembers:
+          record.entryType == 'اشتراك' ||
+              record.entryType == 'اشتراكات'
           ? int.tryParse(record.details['عدد الأفراد'] ?? '') ?? 1
           : null,
       entryType: record.entryType,
@@ -453,17 +437,16 @@ class _PersonalCommitmentsScreenState extends State<PersonalCommitmentsScreen> {
 
     filtered = _applyAdvancedFilters(filtered);
 
-    if (_advFilterAmountSort == 'الأعلى') {
+    if (_filter.amountShortcut == 'أعلى مبلغ') {
       filtered.sort((a, b) => b.amount.compareTo(a.amount));
-    } else if (_advFilterAmountSort == 'الأقل') {
+    } else if (_filter.amountShortcut == 'أقل مبلغ') {
       filtered.sort((a, b) => a.amount.compareTo(b.amount));
     } else if (_selectedSort == 'الأحدث أولاً') {
       filtered.sort((a, b) => _itemDate(b).compareTo(_itemDate(a)));
     } else {
-      final selectedPriority = _sortStatusForLabel(_selectedSort);
       filtered.sort((a, b) {
-        final aSelected = a.status == selectedPriority ? 0 : 1;
-        final bSelected = b.status == selectedPriority ? 0 : 1;
+        final aSelected = _quickSortRank(a, _selectedSort);
+        final bSelected = _quickSortRank(b, _selectedSort);
         if (aSelected != bSelected) return aSelected.compareTo(bSelected);
         final pa = _statusPriority[a.status] ?? 99;
         final pb = _statusPriority[b.status] ?? 99;
@@ -477,66 +460,99 @@ class _PersonalCommitmentsScreenState extends State<PersonalCommitmentsScreen> {
   // يطبّق فلاتر شاشة "الفلتر المتقدم" (الفئة الفرعية، التاريخ، الحالة،
   // المبلغ، المستند، المكان) فوق فلتر الفئة الرئيسية وشريط البحث.
   List<_CommitmentItem> _applyAdvancedFilters(List<_CommitmentItem> items) {
-    if (!_hasActiveAdvancedFilters) return items;
+    if (!_filter.isActive) return items;
     return items.where((item) {
-      if (_advFilterSubType != null) {
+      if (_filter.subCategory != null) {
         // فئة "مستند" الفرعية مجموعات عرض (وثائق شخصية/ضمانات/مستندات
         // عامة) وليست أنواع إدخال منفصلة، فتُطابَق عبر حقل "نوع المستند"
         // داخل التفاصيل بدل مطابقة نوع الإدخال نفسه.
-        final documentGroup = _documentSubtypeGroups[_advFilterSubType];
+        final documentGroup = _documentSubtypeGroups[_filter.subCategory];
         if (documentGroup != null) {
           if (item.entryType != 'مستند' ||
               !documentGroup.contains(item.details['نوع المستند'] ?? '')) {
             return false;
           }
-        } else if (item.entryType != _advFilterSubType) {
+        } else if (item.entryType != _filter.subCategory) {
           return false;
         }
       }
-      final itemDate = _parseDueDate(item.dueDate) ?? _itemDate(item);
-      if (_advFilterDateFrom != null &&
-          itemDate.isBefore(_advFilterDateFrom!)) {
+      if (!_filter.matchesDate(_parseDueDate(item.dueDate) ?? _itemDate(item))) {
         return false;
       }
-      if (_advFilterDateTo != null &&
-          itemDate.isAfter(_advFilterDateTo!)) {
-        return false;
+      switch (_filter.status) {
+        case 'المستحق بعد 7 أيام':
+          if (_effectiveStatus(item) != _statusDueSoon) return false;
+        case 'نشط':
+          if (_effectiveStatus(item) != _statusActive) return false;
+        case 'مكتمل':
+          if (item.status != _statusCompleted) return false;
+        case 'متأخر':
+          if (_effectiveStatus(item) != _statusOverdue) return false;
+        case 'ملغاة':
+          if (item.status != 'ملغاة') return false;
+        case 'مؤرشف':
+          if (item.status != 'مؤرشف') return false;
       }
-      if (_advFilterStatus != null) {
-        switch (_advFilterStatus) {
-          case 'المستحق بعد 7 أيام':
-            if (_effectiveStatus(item) != _statusDueSoon) return false;
-            break;
-          case 'مكتمل':
-            if (item.status != _statusCompleted) return false;
-            break;
-          case 'متأخر':
-            if (_effectiveStatus(item) != _statusOverdue) return false;
-            break;
-          case 'مؤرشف':
-            if (item.status != 'مؤرشف') return false;
-            break;
-        }
+      if (!_filter.matchesAmount(item.amount)) return false;
+      // اختصارات المبلغ: "لي" و"عليّ" تعتمدان على اتجاه الدين المسجَّل.
+      switch (_filter.amountShortcut) {
+        case 'لي':
+          if (!(item.details['نوع الدين'] ?? '').startsWith('لي')) return false;
+        case 'عليّ':
+          if (!(item.details['نوع الدين'] ?? '').startsWith('له')) return false;
       }
-      if (_advFilterAmountFrom != null && item.amount < _advFilterAmountFrom!) {
-        return false;
-      }
-      if (_advFilterAmountTo != null && item.amount > _advFilterAmountTo!) {
-        return false;
-      }
-      if (_advFilterDocumentName.isNotEmpty) {
-        final matchesDoc =
-            item.title.contains(_advFilterDocumentName) ||
-            (item.details['اسم المستند'] ?? '').contains(
-              _advFilterDocumentName,
-            );
+      if (_filter.documentName.isNotEmpty) {
+        final matchesDoc = AppFilterValues.textMatches(_filter.documentName, [
+          item.title,
+          item.details['اسم المستند'] ?? '',
+          item.details['نوع المستند'] ?? '',
+        ]);
         if (!matchesDoc) return false;
       }
-      if (_advFilterPlaceName.isNotEmpty) {
+      if (_filter.documentState != null) {
+        if (item.entryType != 'مستند') return false;
+        final expiry = _parseDueDate(item.dueDate);
+        final today = DateUtils.dateOnly(DateTime.now());
+        switch (_filter.documentState) {
+          case 'قريب الانتهاء':
+            if (expiry == null ||
+                expiry.isBefore(today) ||
+                expiry.difference(today).inDays > 30) {
+              return false;
+            }
+          case 'منتهي':
+            if (expiry == null || !expiry.isBefore(today)) return false;
+          case 'مسودة':
+            if (expiry != null) return false;
+        }
+      }
+      if (_filter.personName.isNotEmpty) {
+        final matchesPerson = AppFilterValues.textMatches(_filter.personName, [
+          item.title,
+          item.details['اسم الجهة'] ?? '',
+          item.details['اسم المستلم'] ?? '',
+          item.details['الجهة'] ?? '',
+          item.details['اسم المفوَّض'] ?? '',
+        ]);
+        if (!matchesPerson) return false;
+      }
+      if (_filter.delegateName.isNotEmpty) {
+        final matchesDelegate = AppFilterValues.textMatches(
+          _filter.delegateName,
+          [item.details['اسم المفوَّض'] ?? '', item.title],
+        );
+        if (item.entryType != 'تفويض' || !matchesDelegate) return false;
+      }
+      if (_filter.placeName.isNotEmpty) {
+        // مقصور على إدخالات المواقع: حقل "العنوان" مستعمل أيضًا في المصروف
+        // والإيراد والدين، فبحث اسم المكان كان يسحب معه إدخالات مالية.
         final matchesPlace =
-            item.title.contains(_advFilterPlaceName) ||
-            (item.details['اسم الموقع'] ?? '').contains(_advFilterPlaceName) ||
-            (item.details['العنوان'] ?? '').contains(_advFilterPlaceName);
+            item.entryType == 'مواقع وأماكن' &&
+            AppFilterValues.textMatches(_filter.placeName, [
+              item.title,
+              item.details['اسم الموقع'] ?? '',
+              item.details['العنوان'] ?? '',
+            ]);
         if (!matchesPlace) return false;
       }
       return true;
@@ -547,7 +563,8 @@ class _PersonalCommitmentsScreenState extends State<PersonalCommitmentsScreen> {
   // يُستخدم في: عرض/فلترة القائمة، عدّاد الفئات، وتحديد category عند الحفظ.
   static const Map<String, String> _entryTypeCategorySlug = {
     // مالية
-    'مصروف': 'financial',
+    'المصروفات الشخصية': 'financial',
+    'مصروف': 'financial', // اسم قديم — لبيانات سُجّلت قبل توحيد المسميات
     'إيراد': 'financial',
     'تحويل مالي': 'financial',
     'دين / قرض / سلفة': 'financial',
@@ -566,7 +583,9 @@ class _PersonalCommitmentsScreenState extends State<PersonalCommitmentsScreen> {
     'تفويض': 'organization',
     'تذكير': 'organization',
     // أدوية وبيانات وكلمات سر
-    'أدوية وبياناتها': 'medical_accounts',
+    'أدوية': 'medical_accounts',
+    'كلمات سر': 'medical_accounts',
+    'أدوية وبياناتها': 'medical_accounts', // أسماء قديمة
     'حسابات': 'medical_accounts',
     'الحسابات والبيانات': 'medical_accounts',
     'كلمات السر': 'medical_accounts',
@@ -588,9 +607,9 @@ class _PersonalCommitmentsScreenState extends State<PersonalCommitmentsScreen> {
   static const Map<String, String> _categorySlugFilterLabel = {
     'financial': 'مالية',
     'document': 'مستند',
-    'organization': 'تنظيم ومتابعة',
+    'organization': 'التنظيم والمتابعة',
     'medical_accounts': 'أدوية وبيانات وكلمات سر',
-    'lifestyle': 'نمط حياة',
+    'lifestyle': 'نمط الحياة',
     'location': 'مواقع وأماكن',
     'custody': 'عهدة مالية',
   };
@@ -600,21 +619,15 @@ class _PersonalCommitmentsScreenState extends State<PersonalCommitmentsScreen> {
     return slug != null && _categorySlugFilterLabel[slug] == filter;
   }
 
-  // سطر الملخص الوحيد الذي يظهر فيه رقم عدد الالتزامات (وليس على رقائق
-  // الفئات نفسها)، حسب الفئة المختارة، أو الفئة الفرعية إن وُجدت.
+  // عنوان القائمة: اسم الفئة المختارة، أو الفئة الفرعية إن وُجدت. كان
+  // يظهر مكرَّرًا في سطر ملخّص فوق القائمة وفي رأسها معًا؛ بقي في الرأس
+  // وحده لأنه المثبَّت عند التمرير ومعه العدد وزر الترتيب.
   String _categorySummaryLabel() {
     if (_advFilterSubType != null) return _advFilterSubType!;
     return _selectedEntryType == 'الكل'
-        ? 'جميع الالتزامات الشخصية'
+        ? 'جميع الالتزامات'
         : _selectedEntryType;
   }
-
-  // يجب أن يطابق هذا الرقم دائمًا عدد العناصر التي تظهر فعليًا في القائمة
-  // أسفله؛ لذلك يُحسَب من نفس نتيجة _filteredItems() (تشمل فلتر البحث
-  // والفلتر المتقدم)، لا من عدد الفئة الخام فقط — لتفادي ظهور رقم لا يطابق
-  // القائمة الفعلية (مثال: كتابة نص بحث ثم نسيانه يجعل القائمة فارغة رغم
-  // أن الرقم كان يعرض إجمالي الفئة).
-  int _categorySummaryCount() => _filteredItems().length;
 
   List<_CommitmentItem> _itemsForSelectedEntryType() {
     if (_selectedEntryType == 'الكل') return List.of(_items);
@@ -689,7 +702,8 @@ class _PersonalCommitmentsScreenState extends State<PersonalCommitmentsScreen> {
     final items = _itemsForSelectedEntryType();
 
     const financialTypes = {
-      'مصروف',
+      'المصروفات الشخصية',
+      'مصروف', // اسم قديم
       'إيراد',
       'تحويل مالي',
       'دين / قرض / سلفة',
@@ -727,7 +741,12 @@ class _PersonalCommitmentsScreenState extends State<PersonalCommitmentsScreen> {
         .where(
           (i) =>
               _isOpenItem(i) &&
-              const {'مصروف', 'قسط', 'غرامة'}.contains(i.entryType),
+              const {
+                'المصروفات الشخصية',
+                'مصروف',
+                'قسط',
+                'غرامة',
+              }.contains(i.entryType),
         )
         .toList();
     final pendingIncome = items
@@ -752,7 +771,7 @@ class _PersonalCommitmentsScreenState extends State<PersonalCommitmentsScreen> {
         .where(
           (i) =>
               _isOpenItem(i) &&
-              i.entryType == 'اشتراكات' &&
+              (i.entryType == 'اشتراك' || i.entryType == 'اشتراكات') &&
               isDueSoonOrOverdue(i),
         )
         .toList();
@@ -998,13 +1017,33 @@ class _PersonalCommitmentsScreenState extends State<PersonalCommitmentsScreen> {
   // إدراجه هنا ليظهر تلقائيًا ضمن بند "طلباتي" في مركز المتابعة.
   static const Set<String> _requestEntryTypes = {'تفويض'};
 
-  String _sortStatusForLabel(String label) => switch (label) {
-    'متأخرة' => _statusOverdue,
-    'قريبة الاستحقاق' => _statusDueSoon,
-    'مكتملة' => _statusCompleted,
-    'نشطة' => _statusActive,
-    _ => '',
-  };
+  /// رتبة العنصر ضمن الفلتر الصغير: 0 مطابق فيتقدّم، 1 غير مطابق.
+  ///
+  /// الفلتر الصغير لا يُخفي شيئًا بل يُقدّم المطابق — فيبقى المستخدم يرى
+  /// قائمته كاملة ولا يظنّ أن بياناته اختفت.
+  int _quickSortRank(_CommitmentItem item, String label) {
+    final today = DateUtils.dateOnly(DateTime.now());
+    final due = _parseDueDate(item.dueDate);
+    switch (label) {
+      case 'نشط':
+        return _effectiveStatus(item) == _statusActive ? 0 : 1;
+      case 'قريب الإستحقاق':
+        return _effectiveStatus(item) == _statusDueSoon ? 0 : 1;
+      case 'مكتمل':
+        return item.status == _statusCompleted ? 0 : 1;
+      case 'ملغاة':
+        return item.status == 'ملغاة' ? 0 : 1;
+      case 'مستندات قريبة الإنتهاء':
+        if (item.entryType != 'مستند' || due == null) return 1;
+        final days = due.difference(today).inDays;
+        return days >= 0 && days <= 30 ? 0 : 1;
+      case 'مستندات منتهية':
+        if (item.entryType != 'مستند' || due == null) return 1;
+        return due.isBefore(today) ? 0 : 1;
+      default:
+        return 1;
+    }
+  }
 
   void _openNewEntrySheet() {
     showModalBottomSheet<void>(
@@ -1016,7 +1055,7 @@ class _PersonalCommitmentsScreenState extends State<PersonalCommitmentsScreen> {
           height: MediaQuery.of(context).size.height * 0.72,
           decoration: const BoxDecoration(
             color: Colors.white,
-            borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
+            borderRadius: BorderRadius.vertical(top: Radius.circular(AppTheme.rCard)),
             boxShadow: [
               BoxShadow(
                 color: Color(0x1A000000),
@@ -1095,10 +1134,9 @@ class _PersonalCommitmentsScreenState extends State<PersonalCommitmentsScreen> {
                     child: Container(
                       padding: const EdgeInsets.all(10),
                       decoration: BoxDecoration(
-                        color: const Color(0xFFF1F3F5),
-                        borderRadius: BorderRadius.circular(14),
-                        border: Border.all(color: const Color(0xFFE2E6EA)),
-                      ),
+            color: AppTheme.surface,
+            borderRadius: BorderRadius.circular(AppTheme.rField),
+          ),
                       child: GridView.count(
                         crossAxisCount: 3,
                         mainAxisSpacing: 8,
@@ -1134,7 +1172,7 @@ class _PersonalCommitmentsScreenState extends State<PersonalCommitmentsScreen> {
           height: MediaQuery.of(context).size.height * 0.72,
           decoration: const BoxDecoration(
             color: Colors.white,
-            borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
+            borderRadius: BorderRadius.vertical(top: Radius.circular(AppTheme.rCard)),
             boxShadow: [
               BoxShadow(
                 color: Color(0x1A000000),
@@ -1234,10 +1272,9 @@ class _PersonalCommitmentsScreenState extends State<PersonalCommitmentsScreen> {
                     child: Container(
                       padding: const EdgeInsets.all(10),
                       decoration: BoxDecoration(
-                        color: const Color(0xFFF1F3F5),
-                        borderRadius: BorderRadius.circular(14),
-                        border: Border.all(color: const Color(0xFFE2E6EA)),
-                      ),
+            color: AppTheme.surface,
+            borderRadius: BorderRadius.circular(AppTheme.rField),
+          ),
                       child: GridView.count(
                         crossAxisCount: 3,
                         mainAxisSpacing: 8,
@@ -1273,10 +1310,31 @@ class _PersonalCommitmentsScreenState extends State<PersonalCommitmentsScreen> {
     );
   }
 
+  /// هل يُعرض هذا الحقل الآن؟
+  ///
+  /// التصنيف الفرعي لا يظهر إلا بعد اختيار التصنيف الرئيسي: قائمته مشتقّة
+  /// من الرئيسي أصلًا، فعرضها قبله يعني قائمة فارغة تربك المستخدم.
+  static bool _isFieldVisible(
+    _FinancialField field,
+    Map<String, TextEditingController> controllers,
+  ) {
+    if (field.label != 'التصنيف الفرعي') return true;
+    final main = controllers['التصنيف الرئيسي']?.text.trim() ?? '';
+    if (main.isEmpty) return false;
+    // "+ إضافة أخرى" في الرئيسي: لا فرعي إلا بعد كتابة اسم التصنيف الجديد.
+    return true;
+  }
+
   Future<void> _openFinancialEntryForm(_FinancialEntryForm form) async {
     final formKey = GlobalKey<FormState>();
     final controllers = <String, TextEditingController>{
       for (final field in form.fields) field.label: TextEditingController(),
+      // حقل نصّي مرافق لكل قائمة اختيار، يظهر عند اختيار "+ إضافة أخرى".
+      // بدونه كان الخيار يُحفظ حرفيًا كنص "+ إضافة أخرى" في طريقة الدفع
+      // والتكرار بلا أي وسيلة لكتابة القيمة الحقيقية.
+      for (final field in form.fields)
+        if (field.kind == _FinancialFieldKind.select)
+          '${field.label} (مخصص)': TextEditingController(),
     };
     final customSubcategoryController = TextEditingController();
     final customMainCategoryController = TextEditingController();
@@ -1317,7 +1375,7 @@ class _PersonalCommitmentsScreenState extends State<PersonalCommitmentsScreen> {
                 ),
                 decoration: const BoxDecoration(
                   color: Colors.white,
-                  borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+                  borderRadius: BorderRadius.vertical(top: Radius.circular(AppTheme.rCard)),
                 ),
                 child: Directionality(
                   textDirection: TextDirection.rtl,
@@ -1529,7 +1587,9 @@ class _PersonalCommitmentsScreenState extends State<PersonalCommitmentsScreen> {
                             const SizedBox(height: 12),
                           ],
                           for (final field in form.fields.where(
-                            (field) => field.isPrimary,
+                            (field) =>
+                                field.isPrimary &&
+                                _isFieldVisible(field, controllers),
                           )) ...[
                             _buildDynamicField(
                               field,
@@ -1557,12 +1617,9 @@ class _PersonalCommitmentsScreenState extends State<PersonalCommitmentsScreen> {
                                 vertical: 13,
                               ),
                               decoration: BoxDecoration(
-                                color: const Color(0xFFF8FAFC),
-                                borderRadius: BorderRadius.circular(13),
-                                border: Border.all(
-                                  color: const Color(0xFFE2E8F0),
-                                ),
-                              ),
+            color: AppTheme.surface,
+            borderRadius: BorderRadius.circular(AppTheme.rField),
+          ),
                               child: Row(
                                 children: [
                                   const Icon(
@@ -1598,7 +1655,9 @@ class _PersonalCommitmentsScreenState extends State<PersonalCommitmentsScreen> {
                                 crossAxisAlignment: CrossAxisAlignment.stretch,
                                 children: [
                                   for (final field in form.fields.where(
-                                    (field) => !field.isPrimary,
+                                    (field) =>
+                                        !field.isPrimary &&
+                                        _isFieldVisible(field, controllers),
                                   )) ...[
                                     _buildDynamicField(
                                       field,
@@ -1640,8 +1699,8 @@ class _PersonalCommitmentsScreenState extends State<PersonalCommitmentsScreen> {
                                       side: BorderSide(color: form.color),
                                       minimumSize: const Size.fromHeight(48),
                                       shape: RoundedRectangleBorder(
-                                        borderRadius: BorderRadius.circular(13),
-                                      ),
+          borderRadius: BorderRadius.circular(AppTheme.rField),
+        ),
                                     ),
                                   ),
                                 ],
@@ -1707,8 +1766,8 @@ class _PersonalCommitmentsScreenState extends State<PersonalCommitmentsScreen> {
                               foregroundColor: Colors.white,
                               minimumSize: const Size.fromHeight(52),
                               shape: RoundedRectangleBorder(
-                                borderRadius: BorderRadius.circular(13),
-                              ),
+          borderRadius: BorderRadius.circular(AppTheme.rField),
+        ),
                             ),
                           ),
                         ],
@@ -1781,8 +1840,8 @@ class _PersonalCommitmentsScreenState extends State<PersonalCommitmentsScreen> {
                     color: Colors.white,
                     surfaceTintColor: Colors.white,
                     shape: RoundedRectangleBorder(
-                      borderRadius: BorderRadius.circular(14),
-                    ),
+          borderRadius: BorderRadius.circular(AppTheme.rField),
+        ),
                     onSelected: (value) =>
                         setModalState(() => controller.text = value),
                     itemBuilder: (context) => [
@@ -1837,7 +1896,9 @@ class _PersonalCommitmentsScreenState extends State<PersonalCommitmentsScreen> {
             )
           : [
               ...field.options,
-              if (!field.options.contains('+ إضافة أخرى')) '+ إضافة أخرى',
+              if (field.allowCustom &&
+                  !field.options.contains('+ إضافة أخرى'))
+                '+ إضافة أخرى',
             ];
       final value = options.contains(controller.text) ? controller.text : null;
 
@@ -1906,12 +1967,32 @@ class _PersonalCommitmentsScreenState extends State<PersonalCommitmentsScreen> {
                   : null,
             ),
           ],
+          // بقية القوائم (طريقة الدفع، التكرار، ...) تحصل على نفس الحقل
+          // النصّي عند اختيار "+ إضافة أخرى".
+          if (field.label != 'التصنيف الرئيسي' &&
+              field.label != 'التصنيف الفرعي' &&
+              controller.text == '+ إضافة أخرى' &&
+              controllers['${field.label} (مخصص)'] != null) ...[
+            const SizedBox(height: 12),
+            TextFormField(
+              controller: controllers['${field.label} (مخصص)'],
+              decoration: _expenseInputDecoration(
+                '${field.label} — القيمة الجديدة',
+                Icons.add_rounded,
+              ),
+              validator: (text) => text == null || text.trim().isEmpty
+                  ? 'يرجى إدخال ${field.label}'
+                  : null,
+            ),
+          ],
         ],
       );
     }
     return TextFormField(
       controller: controller,
-      readOnly: field.kind == _FinancialFieldKind.date,
+      readOnly:
+          field.kind == _FinancialFieldKind.date ||
+          field.kind == _FinancialFieldKind.time,
       obscureText: field.kind == _FinancialFieldKind.secret,
       keyboardType: field.kind == _FinancialFieldKind.number
           ? const TextInputType.numberWithOptions(decimal: true)
@@ -1925,10 +2006,22 @@ class _PersonalCommitmentsScreenState extends State<PersonalCommitmentsScreen> {
         field.label,
         field.icon,
         suffixText: field.kind == _FinancialFieldKind.number && field.isAmount
-            ? 'درهم'
+            ? AppSettings.currencySuffix
             : null,
       ),
-      onTap: field.kind == _FinancialFieldKind.date
+      onTap: field.kind == _FinancialFieldKind.time
+          ? () async {
+              final picked = await showTimePicker(
+                context: context,
+                initialTime: TimeOfDay.now(),
+              );
+              if (picked != null) {
+                final hour = picked.hour.toString().padLeft(2, '0');
+                final minute = picked.minute.toString().padLeft(2, '0');
+                controller.text = '$hour:$minute';
+              }
+            }
+          : field.kind == _FinancialFieldKind.date
           ? () async {
               final now = DateTime.now();
               final date = await showDatePicker(
@@ -1973,11 +2066,14 @@ class _PersonalCommitmentsScreenState extends State<PersonalCommitmentsScreen> {
       return '';
     }
 
-    final titleValue = valueFor((field) => field.isTitle);
+    String labelFor(bool Function(_FinancialField field) predicate) {
+      for (final field in form.fields) {
+        if (predicate(field)) return field.label;
+      }
+      return '';
+    }
+
     final amountValue = valueFor((field) => field.isAmount);
-    final dateValue = valueFor(
-      (field) => field.kind == _FinancialFieldKind.date,
-    );
     final details = <String, String>{
       for (final field in form.fields)
         if (controllers[field.label]!.text.trim().isNotEmpty)
@@ -1992,6 +2088,24 @@ class _PersonalCommitmentsScreenState extends State<PersonalCommitmentsScreen> {
     if (details['التصنيف الفرعي'] == '+ إضافة أخرى' && trimmedSub.isNotEmpty) {
       details['التصنيف الفرعي'] = trimmedSub;
     }
+    // بقية القوائم: تُستبدل "+ إضافة أخرى" بالقيمة التي كتبها المستخدم.
+    for (final field in form.fields) {
+      if (field.kind != _FinancialFieldKind.select) continue;
+      if (details[field.label] != '+ إضافة أخرى') continue;
+      final custom = controllers['${field.label} (مخصص)']?.text.trim() ?? '';
+      if (custom.isNotEmpty) details[field.label] = custom;
+    }
+
+    // العنوان يُقرأ بعد الاستبدال لا قبله: نماذج مثل "غرامة" عنوانها هو
+    // التصنيف الفرعي، فكان يُحفظ حرفيًا "+ إضافة أخرى" بدل ما كتبه المستخدم.
+    final titleValue = (details[labelFor((field) => field.isTitle)] ?? '')
+        .trim();
+    // تاريخ الاستحقاق هو ما تُبنى عليه حالة التأخّر والتنبيهات؛ وبدون هذا
+    // التفضيل كان الدين يُقيَّم على "تاريخ الدين" لأنه أول حقل تاريخ.
+    final dueDateLabel = details.containsKey('تاريخ الاستحقاق')
+        ? 'تاريخ الاستحقاق'
+        : labelFor((field) => field.kind == _FinancialFieldKind.date);
+    final dateValue = (details[dueDateLabel] ?? '').trim();
 
     final fallbackTitle = details['التصنيف الفرعي']?.trim().isNotEmpty == true
         ? details['التصنيف الفرعي']!.trim()
@@ -2056,14 +2170,14 @@ class _PersonalCommitmentsScreenState extends State<PersonalCommitmentsScreen> {
       prefixIcon: Icon(icon, color: const Color(0xFF0EA5E9)),
       suffixText: suffixText,
       filled: true,
-      fillColor: const Color(0xFFF8FAFC),
+      fillColor: AppTheme.field,
       border: OutlineInputBorder(
-        borderRadius: BorderRadius.circular(13),
-        borderSide: const BorderSide(color: Color(0xFFE2E8F0)),
+        borderRadius: BorderRadius.circular(AppTheme.rField),
+        borderSide: BorderSide.none,
       ),
       enabledBorder: OutlineInputBorder(
-        borderRadius: BorderRadius.circular(13),
-        borderSide: const BorderSide(color: Color(0xFFE2E8F0)),
+        borderRadius: BorderRadius.circular(AppTheme.rField),
+        borderSide: BorderSide.none,
       ),
       focusedBorder: OutlineInputBorder(
         borderRadius: BorderRadius.circular(13),
@@ -2099,21 +2213,10 @@ class _PersonalCommitmentsScreenState extends State<PersonalCommitmentsScreen> {
     setState(() {});
   }
 
-  void _addEntryLike(_CommitmentItem item) {
-    final form = item.entryType == null
-        ? null
-        : _financialEntryForms[item.entryType];
-    if (form == null) {
-      _openNewEntrySheet();
-      return;
-    }
-    _openFinancialEntryForm(form);
-  }
-
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: const Color(0xFFF8FAFC),
+      backgroundColor: AppTheme.page,
       body: Directionality(
         textDirection: TextDirection.rtl,
         child: _buildScreenBody(),
@@ -2143,6 +2246,7 @@ class _PersonalCommitmentsScreenState extends State<PersonalCommitmentsScreen> {
             icon: Icons.account_balance_wallet_rounded,
             colors: const [Color(0xFF1D4ED8), Color(0xFF2563EB)],
             onSmartCalendarTap: _openSmartCalendar,
+            onClose: () => Navigator.of(context).pop(),
           ),
           SliverToBoxAdapter(
             child: Padding(
@@ -2156,27 +2260,35 @@ class _PersonalCommitmentsScreenState extends State<PersonalCommitmentsScreen> {
               child: _buildRequestsBanner(),
             ),
           ),
-          // ملاحظة مهمة: تم اختبار تثبيت صف "الفئات" في أعلى الشاشة (سلوك
-          // sticky) عبر SliverPersistentHeader بارتفاع ثابت، لكنه تسبّب في
-          // شاشة بيضاء فارغة (نفس فئة العطل التي حدثت سابقًا مع نفس الآلية).
-          // لأن هذا الملف عانى من هذه المشكلة أكثر من مرة، تم التراجع عن
-          // التثبيت والعودة إلى المحتوى العادي الآمن (SliverToBoxAdapter)
-          // الذي يأخذ حجمه الطبيعي دائمًا ولا يفترض ارتفاعًا مسبقًا — إلى
-          // حين تطوير آلية تثبيت أكثر أمانًا (بقياس الارتفاع الفعلي وقت
-          // التشغيل بدل افتراضه).
+          // مركز المتابعة يتحرّك مع الصفحة ويختفي عند النزول لأسفل.
           SliverToBoxAdapter(
             child: ColoredBox(
-              color: const Color(0xFFF5F8FC),
+              color: AppTheme.page,
               child: Padding(
-                padding: const EdgeInsets.fromLTRB(12, 8, 12, 8),
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.stretch,
-                  children: [
-                    _buildFollowUpCenter(),
-                    const SizedBox(height: 14),
-                    _buildCategoriesBlock(),
-                  ],
-                ),
+                padding: const EdgeInsets.fromLTRB(12, 8, 12, 0),
+                child: _buildFollowUpCenter(),
+              ),
+            ),
+          ),
+          // صف "الفئات" يبقى مثبَّتًا في الأعلى عند التمرير.
+          // (الآلية السابقة كانت تفترض ارتفاعًا ثابتًا فتسبّبت في شاشة
+          // بيضاء؛ MeasuredPinnedHeader يقيس الارتفاع الفعلي وقت التشغيل
+          // ويعرض المحتوى بحجمه الطبيعي إلى أن يكتمل القياس.)
+          MeasuredPinnedHeader(
+            background: AppTheme.page,
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(12, 14, 12, 8),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  _buildCategoriesBlock(),
+                  const SizedBox(height: 10),
+                  // سطر "جميع الالتزامات" مثبَّت مع الفئات: كان ينزلق تحت
+                  // الرأس المثبَّت فيبقى المستخدم يرى الفئات بلا عنوان
+                  // القائمة ولا زر الترتيب.
+                  _buildListHeader(filtered.length),
+                ],
               ),
             ),
           ),
@@ -2184,8 +2296,6 @@ class _PersonalCommitmentsScreenState extends State<PersonalCommitmentsScreen> {
             padding: const EdgeInsets.fromLTRB(12, 12, 12, 80),
             sliver: SliverList(
               delegate: SliverChildListDelegate([
-                _buildListHeader(filtered.length),
-                const SizedBox(height: 10),
                 if (filtered.isEmpty)
                   _buildEmptyState()
                 else
@@ -2195,8 +2305,6 @@ class _PersonalCommitmentsScreenState extends State<PersonalCommitmentsScreen> {
                       child: _CommitmentCard(
                         item: item,
                         onTap: () => _openDetails(item),
-                        onEdit: () => _openDetails(item, openEdit: true),
-                        onAdd: () => _addEntryLike(item),
                       ),
                     ),
                   ),
@@ -2307,15 +2415,16 @@ class _PersonalCommitmentsScreenState extends State<PersonalCommitmentsScreen> {
     return Padding(
       padding: const EdgeInsets.only(top: 6),
       child: Container(
+        // قائمة الاقتراحات تطفو فوق القائمة خلفها، فتحتفظ بظل خفيف يفصلها
+        // عمّا تحتها — وحده الاستثناء عن قاعدة "بلا ظلال".
         decoration: BoxDecoration(
-          color: Colors.white,
-          borderRadius: BorderRadius.circular(12),
-          border: Border.all(color: const Color(0xFFE2E8F0)),
+          color: AppTheme.surface,
+          borderRadius: BorderRadius.circular(AppTheme.rField),
           boxShadow: const [
             BoxShadow(
-              color: Color(0x0D0F172A),
-              blurRadius: 10,
-              offset: Offset(0, 4),
+              color: Color(0x1416232B),
+              blurRadius: 16,
+              offset: Offset(0, 6),
             ),
           ],
         ),
@@ -2407,14 +2516,17 @@ class _PersonalCommitmentsScreenState extends State<PersonalCommitmentsScreen> {
                   // وزر المسح (X) يظهر في الطرف الآخر فقط عند وجود نص بحث،
                   // حتى لا يبقى نص بحث قديم منسيًا يُخفي التزامات موجودة فعلًا
                   // دون أن يلاحظ المستخدم السبب.
+                  // حقل ممتلئ بلا حدود بنفس نصف قطر ولون حقول التطبيق.
                   hintText: 'بحث',
                   hintStyle: const TextStyle(
-                    color: Color(0xFF94A3B8),
+                    color: AppTheme.muted,
+                    fontSize: 13,
                     fontWeight: FontWeight.w600,
                   ),
                   prefixIcon: const Icon(
                     Icons.search_rounded,
-                    color: Color(0xFF64748B),
+                    size: 21,
+                    color: AppTheme.chevron,
                   ),
                   suffixIcon: _searchController.text.isEmpty
                       ? null
@@ -2423,7 +2535,8 @@ class _PersonalCommitmentsScreenState extends State<PersonalCommitmentsScreen> {
                           tooltip: 'مسح البحث',
                           icon: const Icon(
                             Icons.close_rounded,
-                            color: Color(0xFF64748B),
+                            size: 18,
+                            color: AppTheme.muted,
                           ),
                           onPressed: () {
                             _searchController.clear();
@@ -2431,35 +2544,26 @@ class _PersonalCommitmentsScreenState extends State<PersonalCommitmentsScreen> {
                           },
                         ),
                   filled: true,
-                  fillColor: Colors.white,
+                  fillColor: AppTheme.field,
                   border: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(14),
-                    borderSide: const BorderSide(color: Color(0xFFE2E8F0)),
+                    borderRadius: BorderRadius.circular(AppTheme.rField),
+                    borderSide: BorderSide.none,
                   ),
-                  enabledBorder: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(14),
-                    borderSide: const BorderSide(color: Color(0xFFE2E8F0)),
-                  ),
-                  focusedBorder: OutlineInputBorder(
-                    borderRadius: BorderRadius.circular(14),
-                    borderSide: const BorderSide(color: Color(0xFF3B82F6), width: 1.4),
-                  ),
-                  contentPadding: const EdgeInsets.symmetric(vertical: 13),
+                  contentPadding: const EdgeInsets.symmetric(vertical: 15),
                 ),
               ),
             ),
-            const SizedBox(width: 9),
+            const SizedBox(width: AppTheme.sSm),
             InkWell(
               key: const ValueKey('personal-filter-button'),
               onTap: _openAdvancedFilterSheet,
-              borderRadius: BorderRadius.circular(14),
+              borderRadius: BorderRadius.circular(AppTheme.rField),
               child: Container(
-                width: 50,
-                height: 50,
+                width: 52,
+                height: 52,
                 decoration: BoxDecoration(
                   color: const Color(0xFF1677FF),
-                  borderRadius: BorderRadius.circular(14),
-                  boxShadow: const [BoxShadow(color: Color(0x293B82F6), blurRadius: 12, offset: Offset(0, 5))],
+                  borderRadius: BorderRadius.circular(AppTheme.rField),
                 ),
                 child: Stack(
                   clipBehavior: Clip.none,
@@ -2492,529 +2596,57 @@ class _PersonalCommitmentsScreenState extends State<PersonalCommitmentsScreen> {
     );
   }
 
-  static const List<String> _advFilterQuickRanges = [
-    'آخر 3 أيام',
-    'آخر أسبوعين',
-    'آخر شهر',
-    'آخر شهرين',
-    'آخر 3 شهور',
-  ];
-
-  static const List<String> _advFilterStatusOptions = [
-    'المستحق بعد 7 أيام',
-    'مكتمل',
-    'متأخر',
-    'مؤرشف',
-  ];
-
-  String _formatAdvDate(DateTime? date) {
-    if (date == null) return '—';
-    return '${date.day}/${date.month}/${date.year}';
-  }
-
   // يفتح شاشة "الفلتر المتقدم" الكاملة: الفئة الرئيسية/الفرعية، التاريخ
   // (مع اختصارات سريعة)، الحالة، نطاق المبلغ (مع فرز أعلى/أقل)، والبحث
   // باسم المستند أو المكان — حسب ملف المتطلبات.
   void _openAdvancedFilterSheet() {
-    // نسخ محلية (مسودة) من الفلاتر الحالية، تُطبَّق فقط عند الضغط على
-    // "تطبيق الفلتر" حتى لا تتغيّر القائمة أثناء التعديل داخل الشاشة.
-    var draftMainCategory = _selectedEntryType;
-    var draftSubType = _advFilterSubType;
-    var draftDateFrom = _advFilterDateFrom;
-    var draftDateTo = _advFilterDateTo;
-    var draftStatus = _advFilterStatus;
-    var draftAmountSort = _advFilterAmountSort;
-    final amountFromCtrl = TextEditingController(
-      text: _advFilterAmountFrom?.toStringAsFixed(0) ?? '',
-    );
-    final amountToCtrl = TextEditingController(
-      text: _advFilterAmountTo?.toStringAsFixed(0) ?? '',
-    );
-    final documentCtrl = TextEditingController(text: _advFilterDocumentName);
-    final placeCtrl = TextEditingController(text: _advFilterPlaceName);
-
-    showModalBottomSheet<void>(
+    // الفلتر الرئيسي: القالب مشترك مع الشاشات الثلاث الأخرى، والأقسام
+    // وترتيبها هنا مطابقة لملف "فلاتر فوندلي" لصفحة الالتزامات الشخصية.
+    showAppFilterSheet(
       context: context,
-      isScrollControlled: true,
-      backgroundColor: Colors.transparent,
-      builder: (sheetContext) => Directionality(
-        textDirection: TextDirection.rtl,
-        child: StatefulBuilder(
-          builder: (context, setSheetState) {
-            // فئة "مستند" ليس لها أنواع إدخال فرعية فعلية (كلها بنفس نوع
-            // الإدخال 'مستند')؛ تصنيفها الفرعي هنا هو نفس المجموعات الثلاث
-            // (وثائق شخصية / ضمانات / مستندات عامة) المستخدمة في رقاقة
-            // الفئات وفي مطابقة الفلترة، حتى تبقى الخيارات متطابقة بينهما.
-            final subTypeOptions = draftMainCategory == 'الكل'
-                ? const <String>[]
-                : draftMainCategory == 'مستند'
-                ? _documentSubtypeGroups.keys.toList()
-                : _entryCategories
-                      .firstWhere((c) => c.title == draftMainCategory)
-                      .types
-                      .map((t) => t.label)
-                      .toList();
-            if (draftSubType != null &&
-                !subTypeOptions.contains(draftSubType)) {
-              draftSubType = null;
-            }
-
-            Future<void> pickDate({required bool isFrom}) async {
-              final picked = await showDatePicker(
-                context: sheetContext,
-                initialDate:
-                    (isFrom ? draftDateFrom : draftDateTo) ?? DateTime.now(),
-                firstDate: DateTime(2000),
-                lastDate: DateTime(2100),
-              );
-              if (picked == null) return;
-              setSheetState(() {
-                if (isFrom) {
-                  draftDateFrom = picked;
-                } else {
-                  draftDateTo = picked;
-                }
-              });
-            }
-
-            void applyQuickRange(String label) {
-              final now = DateUtils.dateOnly(DateTime.now());
-              final days = switch (label) {
-                'آخر 3 أيام' => 3,
-                'آخر أسبوعين' => 14,
-                'آخر شهر' => 30,
-                'آخر شهرين' => 60,
-                'آخر 3 شهور' => 90,
-                _ => 0,
-              };
-              setSheetState(() {
-                draftDateFrom = now.subtract(Duration(days: days));
-                draftDateTo = now;
-              });
-            }
-
-            return FractionallySizedBox(
-              heightFactor: 0.92,
-              child: Container(
-                decoration: const BoxDecoration(
-                  color: Color(0xFFF8FAFC),
-                  borderRadius: BorderRadius.vertical(
-                    top: Radius.circular(24),
-                  ),
-                ),
-                child: Column(
-                  children: [
-                    Container(
-                      width: 44,
-                      height: 4,
-                      margin: const EdgeInsets.only(top: 10, bottom: 12),
-                      decoration: BoxDecoration(
-                        color: const Color(0xFFCBD5E1),
-                        borderRadius: BorderRadius.circular(4),
-                      ),
-                    ),
-                    Padding(
-                      padding: const EdgeInsets.symmetric(horizontal: 18),
-                      child: Row(
-                        children: [
-                          const Icon(
-                            Icons.tune_rounded,
-                            color: Color(0xFF2563EB),
-                          ),
-                          const SizedBox(width: 9),
-                          const Expanded(
-                            child: Text(
-                              'التزامات شخصية',
-                              style: TextStyle(
-                                fontSize: 18,
-                                fontWeight: FontWeight.w900,
-                                color: Color(0xFF0F172A),
-                              ),
-                            ),
-                          ),
-                          TextButton(
-                            onPressed: () {
-                              setSheetState(() {
-                                draftMainCategory = 'الكل';
-                                draftSubType = null;
-                                draftDateFrom = null;
-                                draftDateTo = null;
-                                draftStatus = null;
-                                draftAmountSort = 'بدون ترتيب';
-                                amountFromCtrl.clear();
-                                amountToCtrl.clear();
-                                documentCtrl.clear();
-                                placeCtrl.clear();
-                              });
-                              _clearAdvancedFilters();
-                              setState(() => _selectedEntryType = 'الكل');
-                            },
-                            child: const Text('مسح الكل'),
-                          ),
-                        ],
-                      ),
-                    ),
-                    const Divider(height: 20),
-                    Expanded(
-                      child: ListView(
-                        padding: const EdgeInsets.fromLTRB(18, 0, 18, 16),
-                        children: [
-                          _advFilterSectionLabel('الفئة الرئيسية'),
-                          Wrap(
-                            spacing: 7,
-                            runSpacing: 7,
-                            children: _personalDashboardFilters.map((filter) {
-                              final selected = draftMainCategory == filter.$1;
-                              return ChoiceChip(
-                                label: Text(filter.$1),
-                                selected: selected,
-                                onSelected: (_) => setSheetState(
-                                  () => draftMainCategory = filter.$1,
-                                ),
-                                selectedColor: filter.$3.withValues(
-                                  alpha: 0.16,
-                                ),
-                                labelStyle: TextStyle(
-                                  fontSize: 12,
-                                  fontWeight: FontWeight.w800,
-                                  color: selected
-                                      ? filter.$3
-                                      : const Color(0xFF475569),
-                                ),
-                                backgroundColor: Colors.white,
-                                side: BorderSide(
-                                  color: selected
-                                      ? filter.$3
-                                      : const Color(0xFFE2E8F0),
-                                ),
-                              );
-                            }).toList(),
-                          ),
-                          const SizedBox(height: 16),
-                          _advFilterSectionLabel('الفئة الفرعية'),
-                          DropdownButtonFormField<String>(
-                            value: draftSubType,
-                            decoration: _advFilterFieldDecoration(
-                              subTypeOptions.isEmpty
-                                  ? 'اختر الفئة الرئيسية أولاً'
-                                  : 'كل الأنواع ضمن الفئة',
-                            ),
-                            items: subTypeOptions
-                                .map(
-                                  (label) => DropdownMenuItem(
-                                    value: label,
-                                    child: Text(label),
-                                  ),
-                                )
-                                .toList(),
-                            onChanged: subTypeOptions.isEmpty
-                                ? null
-                                : (value) => setSheetState(
-                                    () => draftSubType = value,
-                                  ),
-                          ),
-                          const SizedBox(height: 16),
-                          _advFilterSectionLabel('التاريخ'),
-                          Row(
-                            children: [
-                              Expanded(
-                                child: _advFilterDateField(
-                                  label: 'من',
-                                  value: _formatAdvDate(draftDateFrom),
-                                  onTap: () => pickDate(isFrom: true),
-                                ),
-                              ),
-                              const SizedBox(width: 8),
-                              Expanded(
-                                child: _advFilterDateField(
-                                  label: 'إلى',
-                                  value: _formatAdvDate(draftDateTo),
-                                  onTap: () => pickDate(isFrom: false),
-                                ),
-                              ),
-                            ],
-                          ),
-                          const SizedBox(height: 8),
-                          PopupMenuButton<String>(
-                            onSelected: applyQuickRange,
-                            itemBuilder: (context) => _advFilterQuickRanges
-                                .map(
-                                  (label) => PopupMenuItem<String>(
-                                    value: label,
-                                    child: Text(label),
-                                  ),
-                                )
-                                .toList(),
-                            child: _advFilterMenuField(
-                              'اختصار سريع للتاريخ',
-                            ),
-                          ),
-                          const SizedBox(height: 16),
-                          _advFilterSectionLabel('الحالة'),
-                          DropdownButtonFormField<String?>(
-                            value: draftStatus,
-                            decoration: _advFilterFieldDecoration(
-                              'كل الحالات',
-                            ),
-                            items: [
-                              const DropdownMenuItem<String?>(
-                                value: null,
-                                child: Text('كل الحالات'),
-                              ),
-                              ..._advFilterStatusOptions.map(
-                                (label) => DropdownMenuItem<String?>(
-                                  value: label,
-                                  child: Text(label),
-                                ),
-                              ),
-                            ],
-                            onChanged: (value) =>
-                                setSheetState(() => draftStatus = value),
-                          ),
-                          const SizedBox(height: 16),
-                          _advFilterSectionLabel('المبلغ'),
-                          Row(
-                            children: [
-                              Expanded(
-                                child: TextField(
-                                  controller: amountFromCtrl,
-                                  keyboardType: TextInputType.number,
-                                  decoration: _advFilterFieldDecoration('من'),
-                                ),
-                              ),
-                              const SizedBox(width: 8),
-                              Expanded(
-                                child: TextField(
-                                  controller: amountToCtrl,
-                                  keyboardType: TextInputType.number,
-                                  decoration: _advFilterFieldDecoration('إلى'),
-                                ),
-                              ),
-                            ],
-                          ),
-                          const SizedBox(height: 8),
-                          PopupMenuButton<String>(
-                            onSelected: (value) => setSheetState(
-                              () => draftAmountSort = switch (value) {
-                                'أعلى مبلغاً' => 'الأعلى',
-                                'أقل مبلغاً' => 'الأقل',
-                                _ => 'بدون ترتيب',
-                              },
-                            ),
-                            itemBuilder: (context) => const [
-                              PopupMenuItem(
-                                value: 'بدون ترتيب',
-                                child: Text('بدون ترتيب'),
-                              ),
-                              PopupMenuItem(
-                                value: 'أعلى مبلغاً',
-                                child: Text('أعلى مبلغاً'),
-                              ),
-                              PopupMenuItem(
-                                value: 'أقل مبلغاً',
-                                child: Text('أقل مبلغاً'),
-                              ),
-                            ],
-                            child: _advFilterMenuField(
-                              switch (draftAmountSort) {
-                                'الأعلى' => 'أعلى مبلغاً',
-                                'الأقل' => 'أقل مبلغاً',
-                                _ => 'ترتيب حسب المبلغ',
-                              },
-                            ),
-                          ),
-                          const SizedBox(height: 16),
-                          _advFilterSectionLabel('المستند'),
-                          TextField(
-                            controller: documentCtrl,
-                            decoration: _advFilterFieldDecoration(
-                              'اكتب اسم المستند',
-                            ),
-                          ),
-                          const SizedBox(height: 16),
-                          _advFilterSectionLabel('المكان'),
-                          TextField(
-                            controller: placeCtrl,
-                            decoration: _advFilterFieldDecoration(
-                              'اكتب اسم المكان',
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                    Padding(
-                      padding: const EdgeInsets.fromLTRB(18, 0, 18, 20),
-                      child: SizedBox(
-                        width: double.infinity,
-                        height: 48,
-                        child: ElevatedButton(
-                          style: ElevatedButton.styleFrom(
-                            backgroundColor: const Color(0xFF1677FF),
-                            shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(14),
-                            ),
-                          ),
-                          onPressed: () {
-                            final amountFrom = num.tryParse(
-                              amountFromCtrl.text.trim(),
-                            );
-                            final amountTo = num.tryParse(
-                              amountToCtrl.text.trim(),
-                            );
-                            setState(() {
-                              _selectedEntryType = draftMainCategory;
-                              _advFilterSubType = draftSubType;
-                              _advFilterDateFrom = draftDateFrom;
-                              _advFilterDateTo = draftDateTo;
-                              _advFilterStatus = draftStatus;
-                              _advFilterAmountFrom = amountFrom;
-                              _advFilterAmountTo = amountTo;
-                              _advFilterAmountSort = draftAmountSort;
-                              _advFilterDocumentName = documentCtrl.text
-                                  .trim();
-                              _advFilterPlaceName = placeCtrl.text.trim();
-                            });
-                            Navigator.of(sheetContext).pop();
-                          },
-                          child: const Text(
-                            'تطبيق الفلتر',
-                            style: TextStyle(
-                              fontSize: 15,
-                              fontWeight: FontWeight.w900,
-                              color: Colors.white,
-                            ),
-                          ),
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            );
-          },
-        ),
-      ),
-    ).whenComplete(() {
-      amountFromCtrl.dispose();
-      amountToCtrl.dispose();
-      documentCtrl.dispose();
-      placeCtrl.dispose();
-    });
-  }
-
-  Widget _advFilterSectionLabel(String label) {
-    return Padding(
-      padding: const EdgeInsets.only(bottom: 8),
-      child: Text(
-        label,
-        style: const TextStyle(
-          fontSize: 12.5,
-          fontWeight: FontWeight.w900,
-          color: Color(0xFF334155),
-        ),
-      ),
-    );
-  }
-
-  InputDecoration _advFilterFieldDecoration(String hint) {
-    return InputDecoration(
-      hintText: hint,
-      hintStyle: const TextStyle(fontSize: 12, color: Color(0xFF94A3B8)),
-      filled: true,
-      fillColor: Colors.white,
-      contentPadding: const EdgeInsets.symmetric(
-        horizontal: 12,
-        vertical: 12,
-      ),
-      border: OutlineInputBorder(
-        borderRadius: BorderRadius.circular(12),
-        borderSide: const BorderSide(color: Color(0xFFE2E8F0)),
-      ),
-      enabledBorder: OutlineInputBorder(
-        borderRadius: BorderRadius.circular(12),
-        borderSide: const BorderSide(color: Color(0xFFE2E8F0)),
-      ),
-      focusedBorder: OutlineInputBorder(
-        borderRadius: BorderRadius.circular(12),
-        borderSide: const BorderSide(color: Color(0xFF3B82F6), width: 1.4),
-      ),
-    );
-  }
-
-  // حقل "زر فيه سهم" — مطابق للشكل الموصوف في ملف المتطلبات لاختصار
-  // التاريخ وترتيب المبلغ: مستطيل بحدود يعرض القيمة الحالية مع سهم للأسفل،
-  // يُستخدم كـ child لـ PopupMenuButton فيفتح قائمة عند الضغط عليه.
-  Widget _advFilterMenuField(String label) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: const Color(0xFFE2E8F0)),
-      ),
-      child: Row(
-        children: [
-          const Icon(
-            Icons.keyboard_arrow_down_rounded,
-            size: 18,
-            color: Color(0xFF64748B),
-          ),
-          const SizedBox(width: 6),
-          Expanded(
-            child: Text(
-              label,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: const TextStyle(
-                fontSize: 11.5,
-                fontWeight: FontWeight.w700,
-                color: Color(0xFF334155),
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _advFilterDateField({
-    required String label,
-    required String value,
-    required VoidCallback onTap,
-  }) {
-    return InkWell(
-      onTap: onTap,
-      borderRadius: BorderRadius.circular(12),
-      child: Container(
-        padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
-        decoration: BoxDecoration(
-          color: Colors.white,
-          borderRadius: BorderRadius.circular(12),
-          border: Border.all(color: const Color(0xFFE2E8F0)),
-        ),
-        child: Row(
-          children: [
-            const Icon(
-              Icons.calendar_today_outlined,
-              size: 15,
-              color: Color(0xFF64748B),
-            ),
-            const SizedBox(width: 7),
-            Expanded(
-              child: Text(
-                '$label: $value',
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: const TextStyle(
-                  fontSize: 11.5,
-                  fontWeight: FontWeight.w700,
-                  color: Color(0xFF334155),
-                ),
-              ),
-            ),
-          ],
-        ),
-      ),
+      title: 'الالتزامات الشخصية',
+      accent: const Color(0xFF1677FF),
+      values: _filter..mainCategory = _selectedEntryType,
+      mainCategories: _personalDashboardFilters
+          .map((filter) => filter.$1)
+          .toList(growable: false),
+      subCategoriesFor: (main) => main == 'الكل'
+          ? const <String>[]
+          : main == 'مستند'
+          ? _documentSubtypeGroups.keys.toList(growable: false)
+          : _entryCategories
+                .where((category) => category.title == main)
+                .expand((category) => category.types.map((type) => type.label))
+                .toList(growable: false),
+      sections: const [
+        AppFilterSection.mainCategory,
+        AppFilterSection.subCategory,
+        AppFilterSection.date,
+        AppFilterSection.status,
+        AppFilterSection.amount,
+        AppFilterSection.document,
+        AppFilterSection.people,
+        AppFilterSection.delegates,
+        AppFilterSection.place,
+      ],
+      onApply: (values) => setState(() {
+        _selectedEntryType = values.mainCategory;
+        _filter
+          ..mainCategory = values.mainCategory
+          ..subCategory = values.subCategory
+          ..dateFrom = values.dateFrom
+          ..dateTo = values.dateTo
+          ..status = values.status
+          ..amountFrom = values.amountFrom
+          ..amountTo = values.amountTo
+          ..amountShortcut = values.amountShortcut
+          ..documentName = values.documentName
+          ..documentState = values.documentState
+          ..personName = values.personName
+          ..personCategory = values.personCategory
+          ..delegateName = values.delegateName
+          ..placeName = values.placeName;
+      }),
     );
   }
 
@@ -3022,13 +2654,13 @@ class _PersonalCommitmentsScreenState extends State<PersonalCommitmentsScreen> {
     ('الكل', Icons.grid_view_rounded, Color(0xFF1677FF)),
     ('مالية', Icons.account_balance_wallet_rounded, Color(0xFF0EA5E9)),
     ('مستند', Icons.description_outlined, Color(0xFFD97706)),
-    ('تنظيم ومتابعة', Icons.checklist_rounded, Color(0xFF7C3AED)),
+    ('التنظيم والمتابعة', Icons.checklist_rounded, Color(0xFF7C3AED)),
     (
       'أدوية وبيانات وكلمات سر',
       Icons.medical_information_outlined,
       Color(0xFFDC2626),
     ),
-    ('نمط حياة', Icons.celebration_outlined, Color(0xFFDB2777)),
+    ('نمط الحياة', Icons.celebration_outlined, Color(0xFFDB2777)),
     ('مواقع وأماكن', Icons.location_on_outlined, Color(0xFF0F766E)),
     ('عهدة مالية', Icons.inventory_2_outlined, Color(0xFFB45309)),
   ];
@@ -3043,22 +2675,15 @@ class _PersonalCommitmentsScreenState extends State<PersonalCommitmentsScreen> {
       crossAxisAlignment: CrossAxisAlignment.stretch,
       mainAxisSize: MainAxisSize.min,
       children: [
-        const Text(
-          'الفئات',
-          textAlign: TextAlign.right,
-          style: TextStyle(
-            fontSize: 13,
-            fontWeight: FontWeight.w900,
-            color: Color(0xFF334155),
-          ),
-        ),
-        const SizedBox(height: 8),
+        // بلا عنوان "الفئات": الشرائح نفسها تقول ما هي، والعنوان يشغل
+        // سطرًا كاملًا في رأس مثبَّت مساحته ضيقة أصلًا.
         // صف الرقائق الأفقي كما كان بالتصميم السابق. أي فئة فيها أكثر من
         // نوع فرعي واحد (مثل "مالية") تحمل سهمًا صغيرًا (▾) يفتح قائمة
         // منسدلة بنمط "Posts ▾" (قائمة رأسية بعلامة ✓ أمام النوع المختار)
         // بدل توسيع صف رقائق أسفل الفئات بالكامل.
         SizedBox(
-          height: 42,
+          // نفس ارتفاع شريط الفئات في بقية الشاشات.
+          height: 46,
           child: ListView.separated(
             key: const ValueKey('personal-category-tabs'),
             scrollDirection: Axis.horizontal,
@@ -3085,7 +2710,16 @@ class _PersonalCommitmentsScreenState extends State<PersonalCommitmentsScreen> {
                           orElse: () => _entryCategories.first,
                         )
                         .types;
-              return _PersonalCategoryTab(
+              // الشريحة المنسدلة الموحَّدة نفسها المستعملة في شريحتَي
+              // "الأفراد" و"الجهات": ستة عناصر ظاهرة ثم تمرير مع مؤشّر.
+              void selectSubtype(String? value) {
+                setState(() {
+                  _selectedEntryType = filter.$1;
+                  _advFilterSubType = value;
+                });
+              }
+
+              return AppCategoryDropdownChip(
                 key: ValueKey('personal-category-tab-${filter.$1}'),
                 label: filter.$1,
                 icon: filter.$2,
@@ -3095,40 +2729,27 @@ class _PersonalCommitmentsScreenState extends State<PersonalCommitmentsScreen> {
                   _selectedEntryType = filter.$1;
                   _advFilterSubType = null;
                 }),
-                subtypes: categorySubtypes,
-                selectedSubtype: selected ? _advFilterSubType : null,
-                onSubtypeSelected: (value) => setState(() {
-                  _selectedEntryType = filter.$1;
-                  _advFilterSubType = value;
-                }),
+                items: categorySubtypes.length > 1
+                    ? [
+                        AppDropdownItem(
+                          label: 'الكل',
+                          icon: Icons.apps_rounded,
+                          selected: selected && _advFilterSubType == null,
+                          onTap: () => selectSubtype(null),
+                        ),
+                        ...categorySubtypes.map(
+                          (type) => AppDropdownItem(
+                            label: type.label,
+                            icon: type.icon,
+                            selected:
+                                selected && _advFilterSubType == type.label,
+                            onTap: () => selectSubtype(type.label),
+                          ),
+                        ),
+                      ]
+                    : const [],
               );
             },
-          ),
-        ),
-        const SizedBox(height: 8),
-        Align(
-          alignment: Alignment.centerRight,
-          child: Text.rich(
-            TextSpan(
-              children: [
-                TextSpan(
-                  text: '${_categorySummaryCount()} ',
-                  style: TextStyle(
-                    fontSize: 13,
-                    fontWeight: FontWeight.w900,
-                    color: selectedFilter.$3,
-                  ),
-                ),
-                TextSpan(
-                  text: _categorySummaryLabel(),
-                  style: const TextStyle(
-                    fontSize: 12,
-                    fontWeight: FontWeight.w800,
-                    color: Color(0xFF334155),
-                  ),
-                ),
-              ],
-            ),
           ),
         ),
       ],
@@ -3203,24 +2824,15 @@ class _PersonalCommitmentsScreenState extends State<PersonalCommitmentsScreen> {
   Widget _buildFollowUpCenter() {
     // البطاقة المصغّرة تعرض 3 مؤشرات سريعة مبنية من نفس بيانات مركز
     // المتابعة الكامل (6 مجموعات)، حتى تبقى الأرقام متطابقة بين البطاقة
-    // المصغّرة والشاشة الكاملة التي يفتحها زر السهم.
+    // المصغّرة والشاشة الكاملة التي يفتحها السهم.
     final groups = _buildFollowUpGroups();
     final duesTotal = groups[0].total; // الاستحقاقات
     final tasksTotal = groups[3].total + groups[4].total; // المهام + المواعيد
     final renewalsTotal = groups[2].total; // التجديدات والانتهاءات
+    const accent = Color(0xFF1D4ED8);
     final metrics = [
-      (
-        'مستحقات',
-        duesTotal,
-        Icons.payments_outlined,
-        const Color(0xFF2563EB),
-      ),
-      (
-        'مهام',
-        tasksTotal,
-        Icons.task_alt_rounded,
-        const Color(0xFF07835C),
-      ),
+      ('مستحقات', duesTotal, Icons.payments_outlined, const Color(0xFF2563EB)),
+      ('مهام', tasksTotal, Icons.task_alt_rounded, const Color(0xFF07835C)),
       (
         'تجديدات',
         renewalsTotal,
@@ -3229,151 +2841,54 @@ class _PersonalCommitmentsScreenState extends State<PersonalCommitmentsScreen> {
       ),
     ];
 
-    return Container(
+    // مركز المتابعة بنفس لون وحواف البطاقات الموحّدة في التطبيق. وحُذف
+    // عنوان "اختر ما تريد متابعته بسرعة" الذي كان يشغل سطرًا كاملًا
+    // ويكرّر ما تقوله المؤشرات نفسها.
+    return AppCard(
       key: const ValueKey('personal-follow-up-center'),
-      padding: const EdgeInsets.fromLTRB(11, 9, 11, 10),
-      decoration: BoxDecoration(
-        // لمسة جمالية بسيطة: تدرّج لوني ناعم بدل اللون المسطّح، وظل أعمق
-        // قليلًا وحدود أنعم — بدون أي تغيير في الهيكل أو المحتوى.
-        gradient: const LinearGradient(
-          begin: Alignment.topRight,
-          end: Alignment.bottomLeft,
-          colors: [Color(0xFFFDF9EC), Color(0xFFF6EDD6)],
-        ),
-        borderRadius: BorderRadius.circular(18),
-        border: Border.all(color: const Color(0xFFE8DCB5)),
-        boxShadow: const [
-          BoxShadow(
-            color: Color(0x1A8A6D1F),
-            blurRadius: 20,
-            offset: Offset(0, 8),
-          ),
-        ],
+      leading: const AppIconTile(
+        icon: Icons.dashboard_customize_outlined,
+        color: accent,
       ),
-      child: Column(
-        children: [
-          Row(
-            children: [
-              Container(
-                width: 36,
-                height: 36,
-                decoration: BoxDecoration(
-                  gradient: const LinearGradient(
-                    begin: Alignment.topLeft,
-                    end: Alignment.bottomRight,
-                    colors: [Color(0xFFEFE2B8), Color(0xFFE0CE97)],
-                  ),
-                  borderRadius: BorderRadius.circular(12),
-                  boxShadow: const [
-                    BoxShadow(
-                      color: Color(0x1F8A6D1F),
-                      blurRadius: 8,
-                      offset: Offset(0, 3),
-                    ),
-                  ],
-                ),
-                child: const Icon(
-                  Icons.dashboard_customize_outlined,
-                  color: Color(0xFF8A6D1F),
-                  size: 20,
-                ),
-              ),
-              const SizedBox(width: 9),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      'مركز المتابعة',
-                      style: const TextStyle(
-                        fontSize: 14.5,
-                        fontWeight: FontWeight.w900,
-                        color: Color(0xFF8A6D1F),
-                      ),
-                    ),
-                    const SizedBox(height: 2),
-                    Text(
-                      _selectedEntryType == 'الكل'
-                          ? 'الأهم والأقرب من جميع الالتزامات'
-                          : 'متابعة $_selectedEntryType',
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
-                        fontSize: 10,
-                        fontWeight: FontWeight.w600,
-                        color: Color(0xFF8A6D1F),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-              InkWell(
-                key: const ValueKey('personal-follow-up-more'),
-                onTap: _openFollowUpSheet,
-                borderRadius: BorderRadius.circular(10),
-                child: const Padding(
-                  padding: EdgeInsets.symmetric(horizontal: 6, vertical: 5),
-                  child: Row(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      Text(
-                        'المزيد',
-                        style: TextStyle(
-                          fontSize: 11,
-                          fontWeight: FontWeight.w800,
-                          color: Color(0xFF8A6D1F),
-                        ),
-                      ),
-                      SizedBox(width: 3),
-                      Icon(
-                        Icons.arrow_back_ios_new_rounded,
-                        size: 14,
-                        color: Color(0xFF8A6D1F),
-                      ),
-                    ],
-                  ),
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 12),
-          const Padding(
-            padding: EdgeInsets.only(right: 2, bottom: 6),
-            child: Text(
-              'اختر ما تريد متابعته بسرعة',
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: TextStyle(
-                fontSize: 10.5,
-                fontWeight: FontWeight.w800,
-                color: Color(0xFF8A6D1F),
-              ),
-            ),
-          ),
-          SizedBox(
-            height: 56,
-            child: ListView.separated(
+      title: 'مركز المتابعة',
+      subtitle: _selectedEntryType == 'الكل'
+          ? 'الأهم والأقرب من جميع الالتزامات'
+          : 'متابعة $_selectedEntryType',
+      onTap: _openFollowUpSheet,
+      trailing: const AppMoreAction(key: ValueKey('personal-follow-up-more')),
+      child: SizedBox(
+        height: AppMetricChip.stripHeight,
+        child: LayoutBuilder(
+          builder: (context, constraints) {
+            final spacing = AppTheme.sSm * (metrics.length - 1);
+            final chipWidth =
+                ((constraints.maxWidth - spacing) / metrics.length)
+                    .clamp(74.0, 132.0);
+            // بلا reverse: يبدأ الشريط من اليمين تلقائيًا في الاتجاه
+            // العربي، كبقية الأشرطة في الصفحة.
+            return ListView.separated(
               scrollDirection: Axis.horizontal,
-              reverse: true,
+              padding: EdgeInsets.zero,
               itemCount: metrics.length,
-              separatorBuilder: (_, __) => const SizedBox(width: 7),
+              separatorBuilder: (_, _) => const SizedBox(width: AppTheme.sSm),
               itemBuilder: (context, index) {
                 final metric = metrics[index];
                 return SizedBox(
-                  width: 112,
-                  child: _FollowUpMetric(
+                  width: chipWidth,
+                  child: AppMetricChip(
                     label: metric.$1,
                     count: metric.$2,
                     icon: metric.$3,
+                    color: metric.$4,
                     selected: _selectedFollowUpMetric == index,
                     onTap: () =>
                         setState(() => _selectedFollowUpMetric = index),
                   ),
                 );
               },
-            ),
-          ),
-        ],
+            );
+          },
+        ),
       ),
     );
   }
@@ -3382,145 +2897,55 @@ class _PersonalCommitmentsScreenState extends State<PersonalCommitmentsScreen> {
   // المتطلبات، كل مجموعة تعرض عناصرها الفرعية مع عدّاد، ويمكن فتح أي
   // عنصر فرعي لعرض الالتزامات المطابقة له والانتقال إلى تفاصيلها.
   void _openFollowUpSheet() {
-    final groups = _buildFollowUpGroups();
-    final grandTotal = groups.fold<int>(0, (sum, g) => sum + g.total);
-
-    showModalBottomSheet<void>(
+    // القالب مشترك مع بقية الوحدات؛ هذه الشاشة تمرّر بياناتها فقط.
+    showFollowUpCenterSheet(
       context: context,
-      isScrollControlled: true,
-      backgroundColor: Colors.transparent,
-      builder: (sheetContext) => Directionality(
-        textDirection: TextDirection.rtl,
-        child: FractionallySizedBox(
-          heightFactor: 0.9,
-          child: Container(
-            decoration: const BoxDecoration(
-              color: Color(0xFFF8FAFC),
-              borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
-            ),
-            child: Column(
-              children: [
-                Container(
-                  width: 44,
-                  height: 4,
-                  margin: const EdgeInsets.only(top: 10, bottom: 12),
-                  decoration: BoxDecoration(
-                    color: const Color(0xFFCBD5E1),
-                    borderRadius: BorderRadius.circular(4),
-                  ),
-                ),
-                Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 18),
-                  child: Row(
-                    children: [
-                      const Icon(
-                        Icons.dashboard_customize_outlined,
-                        color: Color(0xFF2563EB),
+      accent: const Color(0xFF2563EB),
+      title: _selectedEntryType == 'الكل'
+          ? 'مركز المتابعة'
+          : 'متابعة $_selectedEntryType',
+      groups: [
+        for (final group in _buildFollowUpGroups())
+          FollowUpGroup(
+            title: group.title,
+            icon: group.icon,
+            color: group.color,
+            metrics: [
+              for (final metric in group.metrics)
+                FollowUpMetric(
+                  label: metric.label,
+                  icon: metric.icon,
+                  entries: [
+                    for (final item in metric.items)
+                      FollowUpEntry(
+                        title: item.title,
+                        subtitle: item.dueDate.isEmpty
+                            ? (item.entryType ?? '')
+                            : '${item.entryType ?? ''} · ${item.dueDate}',
+                        icon: item.icon,
+                        color: item.iconColor,
+                        trailingText: item.totalAmount > 0
+                            ? '${item.totalAmount} ${AppSettings.currencySuffix}'
+                            : null,
+                        onTap: () => _openDetails(item),
                       ),
-                      const SizedBox(width: 9),
-                      Expanded(
-                        child: Text(
-                          _selectedEntryType == 'الكل'
-                              ? 'مركز المتابعة الشامل'
-                              : 'متابعة $_selectedEntryType',
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: const TextStyle(
-                            fontSize: 18,
-                            fontWeight: FontWeight.w900,
-                            color: Color(0xFF0F172A),
-                          ),
-                        ),
-                      ),
-                      if (grandTotal > 0)
-                        Container(
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 10,
-                            vertical: 5,
-                          ),
-                          decoration: BoxDecoration(
-                            color: const Color(0xFF2563EB).withValues(
-                              alpha: 0.1,
-                            ),
-                            borderRadius: BorderRadius.circular(20),
-                          ),
-                          child: Text(
-                            '$grandTotal',
-                            style: const TextStyle(
-                              fontSize: 12.5,
-                              fontWeight: FontWeight.w900,
-                              color: Color(0xFF2563EB),
-                            ),
-                          ),
-                        ),
-                    ],
-                  ),
+                  ],
                 ),
-                const SizedBox(height: 12),
-                Expanded(
-                  child: grandTotal == 0
-                      ? const Center(
-                          child: Text(
-                            'لا توجد عناصر تحتاج إلى متابعة حالياً',
-                            style: TextStyle(
-                              fontWeight: FontWeight.w700,
-                              color: Color(0xFF64748B),
-                            ),
-                          ),
-                        )
-                      // شبكة من عمودين (بطاقتين جنب بعض) بدل عمود واحد
-                      // تتكدس فيه كل البطاقات فوق بعض، حسب الطلب.
-                      : ListView.separated(
-                          key: const ValueKey('personal-follow-up-groups'),
-                          padding: const EdgeInsets.fromLTRB(14, 0, 14, 24),
-                          itemCount: (groups.length / 2).ceil(),
-                          separatorBuilder: (_, __) =>
-                              const SizedBox(height: 10),
-                          itemBuilder: (context, rowIndex) {
-                            final firstIndex = rowIndex * 2;
-                            final secondIndex = firstIndex + 1;
-                            Widget cardFor(_FollowUpGroupData group) {
-                              return _FollowUpGroupCard(
-                                group: group,
-                                onItemTap: (item) {
-                                  Navigator.of(sheetContext).pop();
-                                  Future<void>.delayed(
-                                    Duration.zero,
-                                    () => _openDetails(item),
-                                  );
-                                },
-                              );
-                            }
-
-                            return Row(
-                              crossAxisAlignment: CrossAxisAlignment.start,
-                              children: [
-                                Expanded(child: cardFor(groups[firstIndex])),
-                                const SizedBox(width: 10),
-                                Expanded(
-                                  child: secondIndex < groups.length
-                                      ? cardFor(groups[secondIndex])
-                                      : const SizedBox.shrink(),
-                                ),
-                              ],
-                            );
-                          },
-                        ),
-                ),
-              ],
-            ),
+            ],
           ),
-        ),
-      ),
+      ],
     );
   }
 
+  // الفلتر الصغير (بجانب عنوان القائمة) — القائمة كما في ملف "فلاتر فوندلي".
   static const List<(String, IconData)> _sortOptions = [
     ('الأحدث أولاً', Icons.schedule_rounded),
-    ('متأخرة', Icons.error_outline_rounded),
-    ('قريبة الاستحقاق', Icons.hourglass_bottom_rounded),
-    ('مكتملة', Icons.check_circle_outline_rounded),
-    ('نشطة', Icons.play_circle_outline_rounded),
+    ('نشط', Icons.play_circle_outline_rounded),
+    ('قريب الإستحقاق', Icons.hourglass_bottom_rounded),
+    ('مستندات قريبة الإنتهاء', Icons.event_busy_outlined),
+    ('مستندات منتهية', Icons.assignment_late_outlined),
+    ('مكتمل', Icons.check_circle_outline_rounded),
+    ('ملغاة', Icons.cancel_outlined),
   ];
 
   // زر ترتيب القائمة، بنفس شكل زر قائمة الفئات المنسدلة (حدود واضحة +
@@ -3532,7 +2957,9 @@ class _PersonalCommitmentsScreenState extends State<PersonalCommitmentsScreen> {
       key: const ValueKey('personal-sort-button'),
       tooltip: 'ترتيب الالتزامات',
       offset: const Offset(0, 8),
-      shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(14)),
+      shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(AppTheme.rField),
+        ),
       onSelected: (value) => setState(() => _selectedSort = value),
       itemBuilder: (context) => _sortOptions.map((option) {
         final selected = _selectedSort == option.$1;
@@ -3636,9 +3063,7 @@ class _PersonalCommitmentsScreenState extends State<PersonalCommitmentsScreen> {
             const SizedBox(width: 9),
             Expanded(
               child: Text(
-                _selectedEntryType == 'الكل'
-                    ? 'جميع الالتزامات'
-                    : _selectedEntryType,
+                _categorySummaryLabel(),
                 maxLines: 1,
                 overflow: TextOverflow.ellipsis,
                 style: const TextStyle(
@@ -3659,10 +3084,9 @@ class _PersonalCommitmentsScreenState extends State<PersonalCommitmentsScreen> {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 32),
       decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: const Color(0xFFE2E8F0)),
-      ),
+            color: AppTheme.surface,
+            borderRadius: BorderRadius.circular(AppTheme.rField),
+          ),
       child: Column(
         children: [
           Container(
@@ -3750,9 +3174,10 @@ class _PersonalCommitmentDetailsScreenState
     return fallback;
   }
 
-  // زر "+ إضافة" في شاشة التفاصيل: يعرض 3 مستطيلات بجانب بعض (دفعة، مستند،
-  // صورة)، وتحتهم قسم "تنظيم ومتابعة" القابل للفتح ويحوي 3+3 مستطيلات
-  // أخرى (مهمة، موعد، عادة، ملاحظات، تجديد، تفويض) — حسب ملف المتطلبات.
+  // زر "+ إضافة" في شاشة التفاصيل، حسب ملف الإدخالات المعتمد: مستطيلات
+  // خاصة بنوع الالتزام (سداد وزيادة للدين والقسط، صرف وعهدة جديدة للعهدة،
+  // جرعات للأدوية) ثم "مستند"، وتحتها قسم "تنظيم ومتابعة" وفيه ملاحظات
+  // وتذكير و"+ إضافة أخرى" فقط.
   Future<void> _openAddAttachmentMenu() async {
     var orgExpanded = true;
     final action = await showModalBottomSheet<String>(
@@ -3771,7 +3196,7 @@ class _PersonalCommitmentDetailsScreenState
               padding: const EdgeInsets.fromLTRB(16, 12, 16, 18),
               decoration: const BoxDecoration(
                 color: Colors.white,
-                borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+                borderRadius: BorderRadius.vertical(top: Radius.circular(AppTheme.rCard)),
               ),
               child: SingleChildScrollView(
                 child: Column(
@@ -3807,54 +3232,14 @@ class _PersonalCommitmentDetailsScreenState
                       ),
                     ),
                     const SizedBox(height: 14),
-                    Row(
-                      children: [
-                        // زر "دفعة" مخصص لتسجيل دفعة تُخصم من رصيد متبقٍ
-                        // (اشتراك، قسط، دين...). لا يظهر للعهدة المالية لأن
-                        // لها زرها المخصص "تسجيل صرف من العهدة" بالأسفل —
-                        // إظهار الاثنين معًا يسجّل المبلغ في سجل منفصل لا
-                        // يظهر ضمن "المصروف/المتبقي" الخاص بالعهدة.
-                        if (widget.item.entryType != 'عهدة مالية')
-                          Expanded(
-                            child: _QuickAddTile(
-                              key: const ValueKey('add-payment-option'),
-                              label: 'دفعة',
-                              icon: Icons.payments_outlined,
-                              onTap: () => Navigator.pop(sheetContext, 'دفعة'),
-                            ),
-                          ),
-                        if (widget.item.entryType != 'عهدة مالية')
-                          const SizedBox(width: 8),
-                        Expanded(
-                          child: _QuickAddTile(
-                            key: const ValueKey('add-document-option'),
-                            label: 'مستند',
-                            icon: Icons.description_outlined,
-                            onTap: () => Navigator.pop(sheetContext, 'مستند'),
-                          ),
-                        ),
-                        const SizedBox(width: 8),
-                        Expanded(
-                          child: _QuickAddTile(
-                            key: const ValueKey('add-photo-option'),
-                            label: 'صورة',
-                            icon: Icons.photo_outlined,
-                            onTap: () => Navigator.pop(sheetContext, 'صورة'),
-                          ),
-                        ),
-                      ],
-                    ),
-                    // زر خاص بالعهد المالية فقط: يظهر عند فتح "+ إضافة" من
-                    // داخل التزام من نوع "عهدة مالية"، ويسمح بتسجيل مبلغ
-                    // مصروف من العهدة (يُخصم من رصيدها المتبقي تلقائيًا).
-                    if (widget.item.entryType == 'عهدة مالية') ...[
-                      const SizedBox(height: 8),
-                      _QuickAddTile(
-                        key: const ValueKey('add-custody-spend-option'),
-                        label: 'تسجيل صرف من العهدة',
-                        icon: Icons.remove_circle_outline_rounded,
-                        onTap: () => Navigator.pop(sheetContext, 'صرف من عهدة'),
-                      ),
+                    // القائمة مختصرة على ما نصّ عليه ملف الإدخالات: مستند
+                    // وتنظيم ومتابعة فقط، وتُضاف إليها إجراءات نوع الالتزام
+                    // نفسه (سداد وزيادة للدين والقسط، صرف وعهدة جديدة
+                    // للعهدة، جرعات للأدوية). حُذفت "صورة" و"دفعة" العامة.
+                    for (final (index, row)
+                        in _quickAddRows(widget.item.entryType).indexed) ...[
+                      if (index > 0) const SizedBox(height: 8),
+                      _buildOrgRow(sheetContext, row),
                     ],
                     const SizedBox(height: 14),
                     InkWell(
@@ -3874,7 +3259,7 @@ class _PersonalCommitmentDetailsScreenState
                             const SizedBox(width: 8),
                             const Expanded(
                               child: Text(
-                                'تنظيم ومتابعة',
+                                'التنظيم والمتابعة',
                                 style: TextStyle(
                                   fontSize: 13,
                                   fontWeight: FontWeight.w900,
@@ -3894,20 +3279,10 @@ class _PersonalCommitmentDetailsScreenState
                     ),
                     if (orgExpanded) ...[
                       const SizedBox(height: 6),
-                      _buildOrgRow(sheetContext, [
-                        ('مهمة', Icons.task_alt_outlined),
-                        ('موعد', Icons.event_outlined),
-                        ('عادة', Icons.repeat_rounded),
-                      ]),
-                      const SizedBox(height: 8),
-                      _buildOrgRow(sheetContext, [
+                      _buildOrgRow(sheetContext, const [
                         ('ملاحظات', Icons.sticky_note_2_outlined),
-                        ('تجديد', Icons.autorenew_rounded),
-                        ('تفويض', Icons.assignment_ind_outlined),
-                      ]),
-                      const SizedBox(height: 8),
-                      _buildOrgRow(sheetContext, [
                         ('تذكير', Icons.notifications_active_outlined),
+                        ('+ إضافة أخرى', Icons.add_rounded),
                       ]),
                     ],
                   ],
@@ -3920,15 +3295,37 @@ class _PersonalCommitmentDetailsScreenState
     );
     if (action == null || !mounted) return;
 
-    if (action == 'دفعة') {
+    if (action == 'تسجيل سداد / سداد جزئي') {
       _openSubscriptionPaymentForm();
       return;
     }
-    if (action == 'صرف من عهدة') {
+    if (action == 'صرف من العهدة') {
       _openCustodySpendForm();
       return;
     }
-    if (action != 'مستند' && action != 'صورة') {
+    if (action == 'زيادة على الدين السابق') {
+      await _openDebtIncreaseForm();
+      return;
+    }
+    if (action == 'بدء عهدة مالية جديدة') {
+      _openQuickOrganizationForm('عهدة مالية');
+      return;
+    }
+    if (action == 'بدء كورس جديد') {
+      _openQuickOrganizationForm('أدوية');
+      return;
+    }
+    if (_medicationLogActions.contains(action)) {
+      await _logMedicationAction(action);
+      return;
+    }
+    if (action == '+ إضافة أخرى') {
+      final name = await _askAdditionName();
+      if (name == null || !mounted) return;
+      _openQuickOrganizationForm(name);
+      return;
+    }
+    if (action != 'مستند') {
       _openQuickOrganizationForm(action);
       return;
     }
@@ -3940,6 +3337,227 @@ class _PersonalCommitmentDetailsScreenState
     );
     if (attachment == null || !mounted) return;
     await _saveAddedAttachment(attachmentType, attachment);
+  }
+
+  /// إجراءات الأدوية التي تُسجَّل في سجل الجرعات بلا نموذج.
+  static const _medicationLogActions = {
+    'تسجيل التناول',
+    'تأجيل',
+    'تخطي',
+  };
+
+  /// مفتاح سجل الجرعات داخل تفاصيل الالتزام.
+  static const _medicationLogKey = 'سجل الجرعات';
+
+  /// مستطيلات "+ إضافة" الخاصة بنوع الالتزام، ثلاثة في كل صف.
+  List<List<(String, IconData)>> _quickAddRows(String? entryType) {
+    final tiles = <(String, IconData)>[];
+    switch (entryType) {
+      case 'دين / قرض / سلفة':
+      case 'قسط':
+        tiles.addAll(const [
+          ('تسجيل سداد / سداد جزئي', Icons.payments_outlined),
+          ('زيادة على الدين السابق', Icons.add_card_outlined),
+        ]);
+      case 'عهدة مالية':
+        tiles.addAll(const [
+          ('صرف من العهدة', Icons.remove_circle_outline_rounded),
+          ('بدء عهدة مالية جديدة', Icons.add_business_outlined),
+        ]);
+      case 'أدوية':
+      case 'أدوية وبياناتها':
+        tiles.addAll(const [
+          ('تسجيل التناول', Icons.check_circle_outline_rounded),
+          ('تأجيل', Icons.snooze_rounded),
+          ('تخطي', Icons.skip_next_rounded),
+          ('بدء كورس جديد', Icons.restart_alt_rounded),
+        ]);
+      case 'اشتراك':
+      case 'اشتراكات':
+        tiles.add(('تسجيل سداد / سداد جزئي', Icons.payments_outlined));
+    }
+    tiles.add(('مستند', Icons.description_outlined));
+    return [
+      for (var i = 0; i < tiles.length; i += 3)
+        tiles.sublist(i, i + 3 > tiles.length ? tiles.length : i + 3),
+    ];
+  }
+
+  /// اسم الإضافة المخصّصة عند اختيار "+ إضافة أخرى".
+  Future<String?> _askAdditionName() async {
+    final controller = TextEditingController();
+    final name = await showDialog<String>(
+      context: context,
+      builder: (dialogContext) => Directionality(
+        textDirection: TextDirection.rtl,
+        child: AlertDialog(
+          title: const Text('إضافة أخرى'),
+          content: TextField(
+            controller: controller,
+            autofocus: true,
+            decoration: const InputDecoration(labelText: 'اسم الإضافة'),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext),
+              child: const Text('إلغاء'),
+            ),
+            ElevatedButton(
+              onPressed: () =>
+                  Navigator.pop(dialogContext, controller.text.trim()),
+              child: const Text('متابعة'),
+            ),
+          ],
+        ),
+      ),
+    );
+    controller.dispose();
+    return (name == null || name.isEmpty) ? null : name;
+  }
+
+  /// تسجيل تناول/تأجيل/تخطي جرعة في سجل الدواء نفسه.
+  Future<void> _logMedicationAction(String action) async {
+    final item = widget.item;
+    final now = DateTime.now();
+    final stamp =
+        '${now.year}/${now.month.toString().padLeft(2, '0')}/'
+        '${now.day.toString().padLeft(2, '0')} '
+        '${now.hour.toString().padLeft(2, '0')}:'
+        '${now.minute.toString().padLeft(2, '0')}';
+    final previous = item.details[_medicationLogKey] ?? '';
+    final line = '$action — $stamp';
+    final details = Map<String, String>.of(item.details)
+      ..[_medicationLogKey] = previous.isEmpty ? line : '$previous\n$line';
+    try {
+      final updated = await widget.repository.update(
+        PersonalEntryRecord(
+          id: item.id,
+          category: item.category,
+          entryType: item.entryType ?? '',
+          title: item.title,
+          amount: item.totalAmount,
+          dueDate: item.dueDate,
+          status: item.status,
+          details: details,
+          attachmentUrl: item.attachmentPath,
+        ),
+      );
+      if (!mounted) return;
+      setState(() {
+        item.details = updated.details;
+        item.lastUpdate = 'الآن';
+      });
+      ScaffoldMessenger.of(
+        context,
+      ).showSnackBar(SnackBar(content: Text('تم تسجيل: $action')));
+    } catch (_) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('تعذر الحفظ. حاول مرة أخرى.')),
+      );
+    }
+  }
+
+  /// زيادة على الدين السابق: تُضاف إلى المبلغ الإجمالي وتُسجَّل في سجل
+  /// الزيادات، فيبقى أصل الدين وتاريخ كل زيادة ظاهرين لا مجرد رقم جديد.
+  Future<void> _openDebtIncreaseForm() async {
+    final item = widget.item;
+    final amountController = TextEditingController();
+    final noteController = TextEditingController();
+    final added = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => Directionality(
+        textDirection: TextDirection.rtl,
+        child: AlertDialog(
+          title: const Text('زيادة على الدين السابق'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              TextField(
+                controller: amountController,
+                autofocus: true,
+                keyboardType: const TextInputType.numberWithOptions(
+                  decimal: true,
+                ),
+                decoration: InputDecoration(
+                  labelText: 'مبلغ الزيادة',
+                  suffixText: AppSettings.currencySuffix,
+                ),
+              ),
+              const SizedBox(height: 10),
+              TextField(
+                controller: noteController,
+                decoration: const InputDecoration(labelText: 'سبب الزيادة'),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext, false),
+              child: const Text('إلغاء'),
+            ),
+            ElevatedButton(
+              onPressed: () => Navigator.pop(dialogContext, true),
+              child: const Text('حفظ'),
+            ),
+          ],
+        ),
+      ),
+    );
+    final amount = double.tryParse(amountController.text.trim());
+    final note = noteController.text.trim();
+    amountController.dispose();
+    noteController.dispose();
+    if (added != true || !mounted) return;
+    if (amount == null || amount <= 0) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('أدخل مبلغ زيادة صحيحًا')),
+      );
+      return;
+    }
+    final now = DateTime.now();
+    final stamp = '${now.year}/${now.month}/${now.day}';
+    final previous = item.details['سجل الزيادات'] ?? '';
+    final line =
+        '${amount.round()} ${AppSettings.currencySuffix} — $stamp'
+        '${note.isEmpty ? '' : ' — $note'}';
+    final details = Map<String, String>.of(item.details)
+      ..['سجل الزيادات'] = previous.isEmpty ? line : '$previous\n$line';
+    final newTotal = item.totalAmount + amount.round();
+    try {
+      final updated = await widget.repository.update(
+        PersonalEntryRecord(
+          id: item.id,
+          category: item.category,
+          entryType: item.entryType ?? '',
+          title: item.title,
+          amount: newTotal,
+          dueDate: item.dueDate,
+          status: item.status,
+          details: details,
+          attachmentUrl: item.attachmentPath,
+        ),
+      );
+      if (!mounted) return;
+      setState(() {
+        item.details = updated.details;
+        item.totalAmount = newTotal;
+        item.lastUpdate = 'الآن';
+      });
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            'تمت إضافة الزيادة — الإجمالي الآن '
+            '$newTotal ${AppSettings.currencySuffix}',
+          ),
+        ),
+      );
+    } catch (_) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('تعذر الحفظ. حاول مرة أخرى.')),
+      );
+    }
   }
 
   Widget _buildOrgRow(
@@ -3985,7 +3603,7 @@ class _PersonalCommitmentDetailsScreenState
         text: [
           item.title,
           'النوع: ${item.entryType ?? 'التزام شخصي'}',
-          'المبلغ: ${item.totalAmount} درهم',
+          'المبلغ: ${item.totalAmount} ${AppSettings.currencySuffix}',
           'الاستحقاق: ${item.dueDate.isEmpty ? 'غير محدد' : item.dueDate}',
           'الحالة: ${item.status}',
         ].join('\n'),
@@ -4129,14 +3747,14 @@ class _PersonalCommitmentDetailsScreenState
       labelText: label,
       prefixIcon: Icon(icon, color: color, size: 20),
       filled: true,
-      fillColor: const Color(0xFFF8FAFC),
+      fillColor: AppTheme.field,
       border: OutlineInputBorder(
-        borderRadius: BorderRadius.circular(12),
-        borderSide: const BorderSide(color: Color(0xFFE2E8F0)),
+        borderRadius: BorderRadius.circular(AppTheme.rField),
+        borderSide: BorderSide.none,
       ),
       enabledBorder: OutlineInputBorder(
-        borderRadius: BorderRadius.circular(12),
-        borderSide: const BorderSide(color: Color(0xFFE2E8F0)),
+        borderRadius: BorderRadius.circular(AppTheme.rField),
+        borderSide: BorderSide.none,
       ),
       focusedBorder: OutlineInputBorder(
         borderRadius: BorderRadius.circular(12),
@@ -4219,7 +3837,7 @@ class _PersonalCommitmentDetailsScreenState
                     content: Text(
                       newRemaining <= 0
                           ? 'تم تسجيل الصرف — تمت تسوية العهدة بالكامل'
-                          : 'تم تسجيل الصرف، الرصيد المتبقي: $newRemaining درهم',
+                          : 'تم تسجيل الصرف، الرصيد المتبقي: $newRemaining ${AppSettings.currencySuffix}',
                     ),
                   ),
                 );
@@ -4248,7 +3866,7 @@ class _PersonalCommitmentDetailsScreenState
                 ),
                 decoration: const BoxDecoration(
                   color: Colors.white,
-                  borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+                  borderRadius: BorderRadius.vertical(top: Radius.circular(AppTheme.rCard)),
                 ),
                 child: Directionality(
                   textDirection: TextDirection.rtl,
@@ -4297,7 +3915,7 @@ class _PersonalCommitmentDetailsScreenState
                                       ),
                                     ),
                                     Text(
-                                      'الرصيد المتبقي حاليًا: $currentRemaining درهم من أصل ${item.totalAmount} درهم',
+                                      'الرصيد المتبقي حاليًا: $currentRemaining ${AppSettings.currencySuffix} من أصل ${item.totalAmount} ${AppSettings.currencySuffix}',
                                       style: const TextStyle(
                                         fontSize: 12,
                                         color: Color(0xFF64748B),
@@ -4381,8 +3999,8 @@ class _PersonalCommitmentDetailsScreenState
                                 backgroundColor: color,
                                 foregroundColor: Colors.white,
                                 shape: RoundedRectangleBorder(
-                                  borderRadius: BorderRadius.circular(13),
-                                ),
+          borderRadius: BorderRadius.circular(AppTheme.rField),
+        ),
                               ),
                               child: isSaving
                                   ? const SizedBox(
@@ -4414,15 +4032,30 @@ class _PersonalCommitmentDetailsScreenState
     );
   }
 
-  // إنشاء سريع لأحد أنواع "تنظيم ومتابعة" (مهمة، موعد، عادة، ملاحظات، تجديد،
-  // تفويض) من داخل شاشة تفاصيل الالتزام، مبني على نفس تعريف الحقول في
+  // إنشاء سريع لأحد أنواع "تنظيم ومتابعة" (ملاحظات، تذكير، أو اسم يكتبه
+  // المستخدم) من داخل شاشة تفاصيل الالتزام، مبني على نفس تعريف الحقول في
   // _financialEntryForms لكن بنموذج مبسّط بدون الحقول الإضافية القابلة للطي.
   Future<void> _openQuickOrganizationForm(String entryType) async {
-    final form = _financialEntryForms[entryType];
-    if (form == null) return;
+    // إضافة باسم كتبه المستخدم ("+ إضافة أخرى"): تأخذ جدول التنظيم
+    // والمتابعة نفسه بدل أن تُغلق الشاشة بلا شيء.
+    final form =
+        _financialEntryForms[entryType] ??
+        _FinancialEntryForm(
+          label: entryType,
+          subtitle: 'إضافة إلى الالتزام',
+          icon: Icons.add_task_rounded,
+          color: const Color(0xFF7C3AED),
+          fields: _organizationFields,
+        );
     final formKey = GlobalKey<FormState>();
     final controllers = <String, TextEditingController>{
       for (final field in form.fields) field.label: TextEditingController(),
+      // حقل نصّي مرافق لكل قائمة اختيار، يظهر عند اختيار "+ إضافة أخرى".
+      // بدونه كان الخيار يُحفظ حرفيًا كنص "+ إضافة أخرى" في طريقة الدفع
+      // والتكرار بلا أي وسيلة لكتابة القيمة الحقيقية.
+      for (final field in form.fields)
+        if (field.kind == _FinancialFieldKind.select)
+          '${field.label} (مخصص)': TextEditingController(),
     };
     var isSaving = false;
     final isDelegateForm = entryType == 'تفويض';
@@ -4507,7 +4140,7 @@ class _PersonalCommitmentDetailsScreenState
                 ),
                 decoration: const BoxDecoration(
                   color: Colors.white,
-                  borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+                  borderRadius: BorderRadius.vertical(top: Radius.circular(AppTheme.rCard)),
                 ),
                 child: Directionality(
                   textDirection: TextDirection.rtl,
@@ -4570,7 +4203,11 @@ class _PersonalCommitmentDetailsScreenState
                             ],
                           ),
                           const SizedBox(height: 18),
-                          for (final field in form.fields) ...[
+                          for (final field in form.fields.where(
+                            (field) =>
+                                _PersonalCommitmentsScreenState
+                                    ._isFieldVisible(field, controllers),
+                          )) ...[
                             if (isDelegateForm && field.label == 'اسم المفوَّض')
                               _buildDelegateNameField(
                                 field,
@@ -4597,8 +4234,8 @@ class _PersonalCommitmentDetailsScreenState
                                 backgroundColor: form.color,
                                 foregroundColor: Colors.white,
                                 shape: RoundedRectangleBorder(
-                                  borderRadius: BorderRadius.circular(13),
-                                ),
+          borderRadius: BorderRadius.circular(AppTheme.rField),
+        ),
                               ),
                               child: isSaving
                                   ? const SizedBox(
@@ -4642,14 +4279,14 @@ class _PersonalCommitmentDetailsScreenState
       labelText: field.label + (field.required ? ' *' : ''),
       prefixIcon: Icon(field.icon, color: color, size: 20),
       filled: true,
-      fillColor: const Color(0xFFF8FAFC),
+      fillColor: AppTheme.field,
       border: OutlineInputBorder(
-        borderRadius: BorderRadius.circular(12),
-        borderSide: const BorderSide(color: Color(0xFFE2E8F0)),
+        borderRadius: BorderRadius.circular(AppTheme.rField),
+        borderSide: BorderSide.none,
       ),
       enabledBorder: OutlineInputBorder(
-        borderRadius: BorderRadius.circular(12),
-        borderSide: const BorderSide(color: Color(0xFFE2E8F0)),
+        borderRadius: BorderRadius.circular(AppTheme.rField),
+        borderSide: BorderSide.none,
       ),
       focusedBorder: OutlineInputBorder(
         borderRadius: BorderRadius.circular(12),
@@ -4691,6 +4328,26 @@ class _PersonalCommitmentDetailsScreenState
               setModalState(
                 () => controller.text =
                     '${picked.day}/${picked.month}/${picked.year}',
+              );
+            }
+          },
+        );
+      case _FinancialFieldKind.time:
+        return TextFormField(
+          controller: controller,
+          readOnly: true,
+          decoration: decoration,
+          validator: validator,
+          onTap: () async {
+            final picked = await showTimePicker(
+              context: context,
+              initialTime: TimeOfDay.now(),
+            );
+            if (picked != null) {
+              setModalState(
+                () => controller.text =
+                    '${picked.hour.toString().padLeft(2, '0')}:'
+                    '${picked.minute.toString().padLeft(2, '0')}',
               );
             }
           },
@@ -4747,8 +4404,8 @@ class _PersonalCommitmentDetailsScreenState
                 tooltip: 'اختر من الأسماء المحفوظة',
                 icon: Icon(Icons.arrow_drop_down_circle_outlined, color: color),
                 shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(14),
-                ),
+          borderRadius: BorderRadius.circular(AppTheme.rField),
+        ),
                 onSelected: (value) =>
                     setModalState(() => controller.text = value),
                 itemBuilder: (context) => [
@@ -4797,14 +4454,14 @@ class _PersonalCommitmentDetailsScreenState
               ),
             ),
       filled: true,
-      fillColor: const Color(0xFFF8FAFC),
+      fillColor: AppTheme.field,
       border: OutlineInputBorder(
-        borderRadius: BorderRadius.circular(12),
-        borderSide: const BorderSide(color: Color(0xFFE2E8F0)),
+        borderRadius: BorderRadius.circular(AppTheme.rField),
+        borderSide: BorderSide.none,
       ),
       enabledBorder: OutlineInputBorder(
-        borderRadius: BorderRadius.circular(12),
-        borderSide: const BorderSide(color: Color(0xFFE2E8F0)),
+        borderRadius: BorderRadius.circular(AppTheme.rField),
+        borderSide: BorderSide.none,
       ),
       focusedBorder: OutlineInputBorder(
         borderRadius: BorderRadius.circular(12),
@@ -4851,7 +4508,7 @@ class _PersonalCommitmentDetailsScreenState
                 ),
                 decoration: const BoxDecoration(
                   color: Colors.white,
-                  borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+                  borderRadius: BorderRadius.vertical(top: Radius.circular(AppTheme.rCard)),
                 ),
                 child: Directionality(
                   textDirection: TextDirection.rtl,
@@ -4902,7 +4559,7 @@ class _PersonalCommitmentDetailsScreenState
                                       ),
                                     ),
                                     Text(
-                                      'المتبقي ${widget.item.amount} درهم',
+                                      'المتبقي ${widget.item.amount} ${AppSettings.currencySuffix}',
                                       style: const TextStyle(
                                         fontSize: 12,
                                         color: Color(0xFF64748B),
@@ -4941,7 +4598,7 @@ class _PersonalCommitmentDetailsScreenState
                             decoration: _paymentInputDecoration(
                               'مبلغ الدفعة',
                               Icons.payments_outlined,
-                              suffixText: 'درهم',
+                              suffixText: AppSettings.currencySuffix,
                             ),
                             validator: (value) {
                               final amount = double.tryParse(
@@ -5217,8 +4874,8 @@ class _PersonalCommitmentDetailsScreenState
                                 backgroundColor: const Color(0xFF0EA5E9),
                                 foregroundColor: Colors.white,
                                 shape: RoundedRectangleBorder(
-                                  borderRadius: BorderRadius.circular(13),
-                                ),
+          borderRadius: BorderRadius.circular(AppTheme.rField),
+        ),
                               ),
                             ),
                           ),
@@ -5250,11 +4907,11 @@ class _PersonalCommitmentDetailsScreenState
       prefixIcon: Icon(icon, color: const Color(0xFF0EA5E9)),
       suffixText: suffixText,
       filled: true,
-      fillColor: const Color(0xFFF8FAFC),
+      fillColor: AppTheme.field,
       border: OutlineInputBorder(borderRadius: BorderRadius.circular(13)),
       enabledBorder: OutlineInputBorder(
-        borderRadius: BorderRadius.circular(13),
-        borderSide: const BorderSide(color: Color(0xFFE2E8F0)),
+        borderRadius: BorderRadius.circular(AppTheme.rField),
+        borderSide: BorderSide.none,
       ),
       focusedBorder: OutlineInputBorder(
         borderRadius: BorderRadius.circular(13),
@@ -5303,7 +4960,7 @@ class _PersonalCommitmentDetailsScreenState
             ),
             decoration: const BoxDecoration(
               color: Colors.white,
-              borderRadius: BorderRadius.vertical(top: Radius.circular(22)),
+              borderRadius: BorderRadius.vertical(top: Radius.circular(AppTheme.rCard)),
             ),
             child: Directionality(
               textDirection: TextDirection.rtl,
@@ -5386,7 +5043,7 @@ class _PersonalCommitmentDetailsScreenState
                         decoration: _editInputDecoration(
                           'المبلغ',
                           Icons.payments_outlined,
-                          suffixText: 'درهم',
+                          suffixText: AppSettings.currencySuffix,
                         ),
                         validator: (value) {
                           final amount = double.tryParse(value?.trim() ?? '');
@@ -5564,8 +5221,8 @@ class _PersonalCommitmentDetailsScreenState
                           backgroundColor: const Color(0xFF2563EB),
                           foregroundColor: Colors.white,
                           shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(12),
-                          ),
+          borderRadius: BorderRadius.circular(AppTheme.rField),
+        ),
                         ),
                       ),
                     ],
@@ -5597,11 +5254,11 @@ class _PersonalCommitmentDetailsScreenState
       prefixIcon: Icon(icon, color: const Color(0xFF2563EB)),
       suffixText: suffixText,
       filled: true,
-      fillColor: const Color(0xFFF8FAFC),
+      fillColor: AppTheme.field,
       border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
       enabledBorder: OutlineInputBorder(
-        borderRadius: BorderRadius.circular(12),
-        borderSide: const BorderSide(color: Color(0xFFE2E8F0)),
+        borderRadius: BorderRadius.circular(AppTheme.rField),
+        borderSide: BorderSide.none,
       ),
       focusedBorder: OutlineInputBorder(
         borderRadius: BorderRadius.circular(12),
@@ -5624,7 +5281,7 @@ class _PersonalCommitmentDetailsScreenState
     final color = _pageColor;
 
     return Scaffold(
-      backgroundColor: const Color(0xFFF5F7FA),
+      backgroundColor: AppTheme.page,
       // نفس شكل زر "+ إضافة" في صفحة الالتزامات الشخصية (مستطيل مدوّر
       // بأيقونة ونص)، لكن بلون مختلف وبدون خاصية السحب/التحول من مكانه —
       // زر ثابت في مكانه دائمًا، حسب الطلب.
@@ -5636,7 +5293,9 @@ class _PersonalCommitmentDetailsScreenState
         backgroundColor: const Color(0xFFE5B22E),
         foregroundColor: const Color(0xFF3D2E08),
         elevation: 7,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(16)),
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(AppTheme.rField),
+        ),
         icon: const Icon(Icons.add_rounded),
         label: const Text(
           '+ إضافة',
@@ -5677,17 +5336,9 @@ class _PersonalCommitmentDetailsScreenState
             Container(
               key: const ValueKey('compact-details-header'),
               decoration: BoxDecoration(
-                color: Colors.white,
-                borderRadius: BorderRadius.circular(8),
-                border: Border.all(color: const Color(0xFFE1E7EF)),
-                boxShadow: const [
-                  BoxShadow(
-                    color: Color(0x0A0F172A),
-                    blurRadius: 12,
-                    offset: Offset(0, 4),
-                  ),
-                ],
-              ),
+            color: AppTheme.surface,
+            borderRadius: BorderRadius.circular(AppTheme.rField),
+          ),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
@@ -5923,10 +5574,9 @@ class _QuickAddTile extends StatelessWidget {
         height: 76,
         padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 8),
         decoration: BoxDecoration(
-          color: const Color(0xFFF8FAFC),
-          borderRadius: BorderRadius.circular(14),
-          border: Border.all(color: const Color(0xFFE2E8F0)),
-        ),
+            color: AppTheme.surface,
+            borderRadius: BorderRadius.circular(AppTheme.rField),
+          ),
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
@@ -5965,61 +5615,21 @@ class _InlineDetailsTabs extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Container(
+    // كانت هنا نسخة يدوية مطابقة لشريط التبويبات المشترك، فتخلّفت عنه عند
+    // أي تعديل (آخرها: السماح بسطرين للعناوين الطويلة). الآن تستدعيه.
+    return DetailPageTabs(
       key: const ValueKey('inline-details-tabs'),
-      height: 58,
-      padding: const EdgeInsets.symmetric(horizontal: 4),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: const Color(0xFFE1E7EF)),
-      ),
-      child: Row(
-        children: List.generate(sections.length, (index) {
-          final section = sections[index];
-          final selected = index == selectedIndex;
-          return Expanded(
-            child: InkWell(
-              key: ValueKey('inline-details-tab-$index'),
-              onTap: () => onSelected(index),
-              child: Column(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  Icon(
-                    section.icon,
-                    size: 18,
-                    color: selected ? color : const Color(0xFF94A3B8),
-                  ),
-                  const SizedBox(height: 4),
-                  Text(
-                    section.label,
-                    maxLines: 1,
-                    style: TextStyle(
-                      fontSize: 9.5,
-                      fontWeight: selected ? FontWeight.w900 : FontWeight.w700,
-                      color: selected ? color : const Color(0xFF64748B),
-                    ),
-                  ),
-                  const SizedBox(height: 4),
-                  AnimatedContainer(
-                    duration: const Duration(milliseconds: 160),
-                    width: selected ? 28 : 0,
-                    height: 2,
-                    color: selected ? color : Colors.transparent,
-                  ),
-                ],
-              ),
-            ),
-          );
-        }),
-      ),
+      sections: [
+        for (final section in sections)
+          DetailSectionTab(label: section.label, icon: section.icon),
+      ],
+      selectedIndex: selectedIndex,
+      color: color,
+      onSelected: onSelected,
     );
   }
 }
 
-// شريط تمييز أعلى شاشة التفاصيل، يعرض 2-3 حقول مختلفة حسب فئة الالتزام،
-// مطابقًا لجدول "المستطيل الأول" في ملف المتطلبات (مالية: المبلغ/التاريخ/
-// جهة الصرف، مستند: تاريخ الانتهاء/اسم المستند/الملاحظات... إلخ).
 class _CategoryHighlightBar extends StatelessWidget {
   const _CategoryHighlightBar({required this.item, required this.color});
 
@@ -6039,17 +5649,17 @@ class _CategoryHighlightBar extends StatelessWidget {
     if (item.isSubscription) {
       if (item.paidAmount > 0) {
         return [
-          ('المبلغ الكلي', '${item.totalAmount} درهم', Icons.payments_outlined),
-          ('المدفوع', '${item.paidAmount} درهم', Icons.trending_down_rounded),
+          ('المبلغ الكلي', '${item.totalAmount} ${AppSettings.currencySuffix}', Icons.payments_outlined),
+          ('المدفوع', '${item.paidAmount} ${AppSettings.currencySuffix}', Icons.trending_down_rounded),
           (
             'المتبقي',
-            '${item.amount} درهم',
+            '${item.amount} ${AppSettings.currencySuffix}',
             Icons.account_balance_wallet_outlined,
           ),
         ];
       }
       return [
-        ('قيمة الاشتراك', '${item.totalAmount} درهم', Icons.payments_outlined),
+        ('قيمة الاشتراك', '${item.totalAmount} ${AppSettings.currencySuffix}', Icons.payments_outlined),
         ('تاريخ الاستحقاق', due, Icons.event_outlined),
         (
           'عدد الأفراد',
@@ -6062,17 +5672,17 @@ class _CategoryHighlightBar extends StatelessWidget {
       case 'financial':
         if (item.paidAmount > 0) {
           return [
-            ('المبلغ الكلي', '${item.totalAmount} درهم', Icons.payments_outlined),
-            ('المدفوع', '${item.paidAmount} درهم', Icons.trending_down_rounded),
+            ('المبلغ الكلي', '${item.totalAmount} ${AppSettings.currencySuffix}', Icons.payments_outlined),
+            ('المدفوع', '${item.paidAmount} ${AppSettings.currencySuffix}', Icons.trending_down_rounded),
             (
               'المتبقي',
-              '${item.amount} درهم',
+              '${item.amount} ${AppSettings.currencySuffix}',
               Icons.account_balance_wallet_outlined,
             ),
           ];
         }
         return [
-          ('المبلغ', '${item.totalAmount} درهم', Icons.payments_outlined),
+          ('المبلغ', '${item.totalAmount} ${AppSettings.currencySuffix}', Icons.payments_outlined),
           ('التاريخ', due, Icons.event_outlined),
           (
             'جهة الصرف',
@@ -6136,9 +5746,9 @@ class _CategoryHighlightBar extends StatelessWidget {
         final spent = _custodyTotalSpent(item.details);
         final remaining = item.totalAmount - spent;
         return [
-          ('قيمة العهدة', '${item.totalAmount} درهم', Icons.inventory_2_outlined),
-          ('المصروف', '$spent درهم', Icons.trending_down_rounded),
-          ('المتبقي', '$remaining درهم', Icons.account_balance_wallet_outlined),
+          ('قيمة العهدة', '${item.totalAmount} ${AppSettings.currencySuffix}', Icons.inventory_2_outlined),
+          ('المصروف', '$spent ${AppSettings.currencySuffix}', Icons.trending_down_rounded),
+          ('المتبقي', '$remaining ${AppSettings.currencySuffix}', Icons.account_balance_wallet_outlined),
         ];
       default:
         return [('التاريخ', due, Icons.event_outlined)];
@@ -6283,8 +5893,8 @@ class _SummaryDetailsCard extends StatelessWidget {
                 foregroundColor: color,
                 backgroundColor: color.withValues(alpha: 0.07),
                 shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(8),
-                ),
+          borderRadius: BorderRadius.circular(AppTheme.rField),
+        ),
               ),
             ),
           ),
@@ -6327,7 +5937,7 @@ class _HistoryDetailsCard extends StatelessWidget {
         ),
         ...item.payments.map(
           (payment) => _TimelineEntry(
-            title: 'دفعة بقيمة ${payment.amount} درهم',
+            title: 'دفعة بقيمة ${payment.amount} ${AppSettings.currencySuffix}',
             subtitle: payment.invoiceImagePath == null
                 ? '${payment.payerName} • ${payment.date}'
                 : '${payment.payerName} • ${payment.date} • اضغط لعرض الفاتورة',
@@ -6344,13 +5954,13 @@ class _HistoryDetailsCard extends StatelessWidget {
           _TimelineEntry(
             title: 'الرصيد المتبقي من العهدة',
             subtitle:
-                '$custodyRemaining درهم من أصل ${item.totalAmount} درهم',
+                '$custodyRemaining ${AppSettings.currencySuffix} من أصل ${item.totalAmount} ${AppSettings.currencySuffix}',
             icon: Icons.account_balance_wallet_outlined,
             color: color,
           ),
           ...custodyTransactions.reversed.map(
             (transaction) => _TimelineEntry(
-              title: 'صرف ${transaction['المبلغ'] ?? '0'} درهم',
+              title: 'صرف ${transaction['المبلغ'] ?? '0'} ${AppSettings.currencySuffix}',
               subtitle:
                   '${(transaction['الغرض'] ?? '').isNotEmpty ? transaction['الغرض'] : 'بدون سبب محدد'} • ${transaction['التاريخ'] ?? ''}',
               icon: Icons.remove_circle_outline_rounded,
@@ -6382,9 +5992,8 @@ class _DocumentsDetailsCard extends StatelessWidget {
         Container(
           padding: const EdgeInsets.all(16),
           decoration: BoxDecoration(
-            color: const Color(0xFFF8FAFC),
-            borderRadius: BorderRadius.circular(8),
-            border: Border.all(color: const Color(0xFFE2E8F0)),
+            color: AppTheme.surfaceInner,
+            borderRadius: BorderRadius.circular(AppTheme.rInner),
           ),
           child: Row(
             children: [
@@ -6474,6 +6083,8 @@ class _FollowupDetailsCard extends StatelessWidget {
   }
 }
 
+// غلافان رفيعان فوق مكوّني نظام التصميم: الشكل نفسه صار مشتركًا مع صفحات
+// تفاصيل الأشخاص والجهات والعقارات، فلا يتفرّق مرة أخرى.
 class _UnifiedDetailsCard extends StatelessWidget {
   final String title;
   final IconData icon;
@@ -6488,45 +6099,12 @@ class _UnifiedDetailsCard extends StatelessWidget {
   });
 
   @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(8),
-        border: Border.all(color: const Color(0xFFE2E8F0)),
-        boxShadow: const [
-          BoxShadow(
-            color: Color(0x0C0F172A),
-            blurRadius: 12,
-            offset: Offset(0, 4),
-          ),
-        ],
-      ),
-      child: Column(
-        children: [
-          Row(
-            children: [
-              Icon(icon, color: color, size: 22),
-              const SizedBox(width: 8),
-              Expanded(
-                child: Text(
-                  title,
-                  style: const TextStyle(
-                    color: Color(0xFF0F172A),
-                    fontSize: 15,
-                    fontWeight: FontWeight.w900,
-                  ),
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 12),
-          ...children,
-        ],
-      ),
-    );
-  }
+  Widget build(BuildContext context) => AppDetailsCard(
+    title: title,
+    icon: icon,
+    color: color,
+    children: children,
+  );
 }
 
 class _UnifiedInfoRow extends StatelessWidget {
@@ -6543,42 +6121,12 @@ class _UnifiedInfoRow extends StatelessWidget {
   });
 
   @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.symmetric(vertical: 12),
-      decoration: const BoxDecoration(
-        border: Border(bottom: BorderSide(color: Color(0xFFF1F5F9))),
-      ),
-      child: Row(
-        children: [
-          Icon(icon, size: 19, color: const Color(0xFF94A3B8)),
-          const SizedBox(width: 9),
-          Expanded(
-            child: Text(
-              label,
-              style: const TextStyle(
-                color: Color(0xFF64748B),
-                fontSize: 12,
-                fontWeight: FontWeight.w600,
-              ),
-            ),
-          ),
-          const SizedBox(width: 10),
-          Flexible(
-            child: Text(
-              value,
-              textAlign: TextAlign.end,
-              style: TextStyle(
-                color: valueColor ?? const Color(0xFF1E293B),
-                fontSize: 12,
-                fontWeight: FontWeight.w900,
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
+  Widget build(BuildContext context) => AppDetailRow(
+    label: label,
+    value: value,
+    icon: icon,
+    valueColor: valueColor,
+  );
 }
 
 class _TimelineEntry extends StatelessWidget {
@@ -6675,7 +6223,7 @@ class _SubscriptionAmountTile extends StatelessWidget {
         ),
         const SizedBox(height: 3),
         Text(
-          '$amount درهم',
+          '$amount ${AppSettings.currencySuffix}',
           textAlign: TextAlign.center,
           style: TextStyle(
             fontSize: 12,
@@ -6688,397 +6236,6 @@ class _SubscriptionAmountTile extends StatelessWidget {
   }
 }
 
-class _PersonalCategoryTab extends StatefulWidget {
-  const _PersonalCategoryTab({
-    super.key,
-    required this.label,
-    required this.icon,
-    required this.color,
-    required this.selected,
-    required this.onTap,
-    this.subtypes = const [],
-    this.selectedSubtype,
-    this.onSubtypeSelected,
-  });
-
-  final String label;
-  final IconData icon;
-  final Color color;
-  final bool selected;
-  final VoidCallback onTap;
-  // فئات فرعية اختيارية: إن وُجد أكثر من نوع فرعي واحد يظهر سهم صغير (▾)
-  // يفتح قائمة منسدلة بنمط "Posts ▾" (قائمة رأسية بعلامة ✓ أمام النوع
-  // المختار حاليًا)، بدل توسيع صف كامل من الرقائق أسفل الفئات.
-  final List<_EntryType> subtypes;
-  final String? selectedSubtype;
-  final ValueChanged<String?>? onSubtypeSelected;
-
-  @override
-  State<_PersonalCategoryTab> createState() => _PersonalCategoryTabState();
-}
-
-class _PersonalCategoryTabState extends State<_PersonalCategoryTab> {
-  // نستخدم OverlayEntry + CompositedTransformTarget/Follower بدل
-  // PopupMenuButton: قائمة PopupMenuButton تعتمد على خوارزمية Flutter
-  // الداخلية لتفادي خروج القائمة عن حدود الشاشة، وهذه الخوارزمية تُزيح
-  // القائمة أفقيًا كلما اقترب الزر من حافة الشاشة (وهذا ما كان يحصل مع
-  // "المالية" فتظهر القائمة بعيدة عن السهم بدل أن تكون تحته مباشرة، بينما
-  // "تنظيم ومتابعة" أبعد عن الحافة فلا يحتاج إزاحة). بهذا الأسلوب اليدوي
-  // تبقى القائمة دائمًا مرتبطة بموضع السهم مباشرة تحته، بلا إزاحة.
-  final LayerLink _link = LayerLink();
-  OverlayEntry? _menuEntry;
-  bool _menuOpen = false;
-
-  @override
-  void dispose() {
-    _closeMenu();
-    super.dispose();
-  }
-
-  void _closeMenu() {
-    _menuEntry?.remove();
-    _menuEntry = null;
-    _menuOpen = false;
-  }
-
-  void _toggleMenu() {
-    if (_menuOpen) {
-      setState(_closeMenu);
-      return;
-    }
-    final overlay = Overlay.of(context);
-    _menuEntry = OverlayEntry(builder: (context) => _buildMenuOverlay());
-    overlay.insert(_menuEntry!);
-    setState(() => _menuOpen = true);
-  }
-
-  void _selectSubtype(String? value) {
-    widget.onSubtypeSelected?.call(value);
-    if (mounted) setState(_closeMenu);
-  }
-
-  Widget _buildMenuOverlay() {
-    final entries = <MapEntry<String?, _EntryType?>>[
-      const MapEntry(null, null),
-      ...widget.subtypes.map((t) => MapEntry<String?, _EntryType?>(t.label, t)),
-    ];
-    return Positioned.fill(
-      child: Stack(
-        children: [
-          // طبقة شفافة لإغلاق القائمة عند الضغط خارجها.
-          Positioned.fill(
-            child: GestureDetector(
-              behavior: HitTestBehavior.translucent,
-              onTap: () {
-                if (mounted) setState(_closeMenu);
-              },
-            ),
-          ),
-          CompositedTransformFollower(
-            link: _link,
-            showWhenUnlinked: false,
-            targetAnchor: Alignment.bottomCenter,
-            followerAnchor: Alignment.topCenter,
-            offset: const Offset(0, 6),
-            child: Directionality(
-              textDirection: TextDirection.rtl,
-              child: Align(
-                alignment: Alignment.topCenter,
-                child: Material(
-                  color: Colors.transparent,
-                  child: Container(
-                    width: 200,
-                    constraints: const BoxConstraints(maxHeight: 320),
-                    decoration: BoxDecoration(
-                      // لون فاتح بدل الأبيض الصرف حتى تتضح حدود القائمة.
-                      color: const Color(0xFFF8FAFC),
-                      borderRadius: BorderRadius.circular(14),
-                      border: Border.all(color: const Color(0xFFE2E8F0)),
-                      boxShadow: const [
-                        BoxShadow(
-                          color: Color(0x260F172A),
-                          blurRadius: 20,
-                          offset: Offset(0, 10),
-                        ),
-                      ],
-                    ),
-                    clipBehavior: Clip.antiAlias,
-                    child: SingleChildScrollView(
-                      child: Column(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          for (var i = 0; i < entries.length; i++) ...[
-                            if (i > 0)
-                              const Divider(
-                                height: 1,
-                                thickness: 1,
-                                color: Color(0xFFE7ECF2),
-                              ),
-                            _subtypeMenuTile(
-                              value: entries[i].key,
-                              label: entries[i].value?.label ?? 'الكل',
-                              icon: entries[i].value?.icon ?? Icons.apps_rounded,
-                              selectedNow: widget.selectedSubtype == entries[i].key,
-                            ),
-                          ],
-                        ],
-                      ),
-                    ),
-                  ),
-                ),
-              ),
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _subtypeMenuTile({
-    required String? value,
-    required String label,
-    required IconData icon,
-    required bool selectedNow,
-  }) {
-    return InkWell(
-      onTap: () => _selectSubtype(value),
-      child: Container(
-        width: double.infinity,
-        padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 11),
-        color: selectedNow ? widget.color.withValues(alpha: 0.08) : null,
-        child: Row(
-          children: [
-            Icon(
-              icon,
-              size: 17,
-              color: selectedNow ? widget.color : const Color(0xFF64748B),
-            ),
-            const SizedBox(width: 10),
-            Expanded(
-              child: Text(
-                label,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                softWrap: false,
-                style: TextStyle(
-                  fontSize: 12.5,
-                  fontWeight: selectedNow ? FontWeight.w900 : FontWeight.w600,
-                  color: selectedNow ? widget.color : const Color(0xFF334155),
-                ),
-              ),
-            ),
-            if (selectedNow)
-              Icon(Icons.check_rounded, size: 17, color: widget.color),
-          ],
-        ),
-      ),
-    );
-  }
-
-  @override
-  Widget build(BuildContext context) {
-    final hasSubtypes = widget.subtypes.length > 1;
-    final fg = widget.selected ? Colors.white : widget.color;
-    return CompositedTransformTarget(
-      link: _link,
-      child: Material(
-        color: widget.selected ? widget.color : Colors.white,
-        shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(11),
-          side: BorderSide(
-            color: widget.selected ? widget.color : const Color(0xFFDCE5EF),
-            width: widget.selected ? 1.4 : 1,
-          ),
-        ),
-        clipBehavior: Clip.antiAlias,
-        child: Row(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            InkWell(
-              onTap: widget.onTap,
-              child: Padding(
-                padding: EdgeInsets.only(
-                  right: 11,
-                  left: hasSubtypes ? 2 : 11,
-                ),
-                child: Row(
-                  mainAxisSize: MainAxisSize.min,
-                  children: [
-                    Icon(widget.icon, size: 16, color: fg),
-                    const SizedBox(width: 6),
-                    Text(
-                      widget.label,
-                      style: TextStyle(
-                        fontSize: 11,
-                        fontWeight: FontWeight.w800,
-                        color: widget.selected
-                            ? Colors.white
-                            : const Color(0xFF334155),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-            ),
-            if (hasSubtypes)
-              InkWell(
-                onTap: _toggleMenu,
-                child: Padding(
-                  padding: const EdgeInsets.only(left: 8, right: 2),
-                  child: Icon(
-                    _menuOpen
-                        ? Icons.keyboard_arrow_up_rounded
-                        : Icons.keyboard_arrow_down_rounded,
-                    size: 17,
-                    color: fg,
-                  ),
-                ),
-              )
-            else
-              const SizedBox(width: 11),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-class _FollowUpMetric extends StatelessWidget {
-  const _FollowUpMetric({
-    required this.label,
-    required this.count,
-    required this.icon,
-    required this.selected,
-    required this.onTap,
-  });
-
-  final String label;
-  final int count;
-  final IconData icon;
-  final bool selected;
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    const followUpColor = Color(0xFF8A6D1F);
-    return InkWell(
-      onTap: onTap,
-      child: AnimatedContainer(
-        duration: const Duration(milliseconds: 180),
-        padding: const EdgeInsets.fromLTRB(7, 3, 7, 0),
-        decoration: const BoxDecoration(),
-        child: Column(
-          mainAxisAlignment: MainAxisAlignment.center,
-          children: [
-            Row(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                Icon(icon, color: followUpColor, size: 17),
-                const SizedBox(width: 5),
-                Text(
-                  '$count',
-                  style: const TextStyle(
-                    fontSize: 16,
-                    fontWeight: FontWeight.w900,
-                    color: followUpColor,
-                  ),
-                ),
-              ],
-            ),
-            const SizedBox(height: 2),
-            Text(
-              label,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: TextStyle(
-                fontSize: 9,
-                fontWeight: selected ? FontWeight.w900 : FontWeight.w700,
-                color: followUpColor,
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-class _FollowUpListItem extends StatelessWidget {
-  const _FollowUpListItem({required this.item, required this.onTap});
-
-  final _CommitmentItem item;
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    return Material(
-      color: Colors.white,
-      borderRadius: BorderRadius.circular(13),
-      child: InkWell(
-        onTap: onTap,
-        borderRadius: BorderRadius.circular(13),
-        child: Padding(
-          padding: const EdgeInsets.all(9),
-          child: Row(
-            children: [
-              Container(
-                width: 34,
-                height: 34,
-                decoration: BoxDecoration(
-                  color: item.iconBackground,
-                  borderRadius: BorderRadius.circular(9),
-                ),
-                child: Icon(item.icon, color: item.iconColor, size: 17),
-              ),
-              const SizedBox(width: 8),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      item.title,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
-                        fontSize: 12.5,
-                        fontWeight: FontWeight.w900,
-                        color: Color(0xFF0F172A),
-                      ),
-                    ),
-                    const SizedBox(height: 4),
-                    Text(
-                      '${item.entryType ?? 'التزام'} · ${item.dueDate.isEmpty ? 'بلا تاريخ' : item.dueDate}',
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      softWrap: false,
-                      style: const TextStyle(
-                        fontSize: 10.5,
-                        fontWeight: FontWeight.w600,
-                        color: Color(0xFF64748B),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-              const SizedBox(width: 6),
-              _CommitmentStatusBadge(
-                status: item.status,
-                color: item.statusColor,
-              ),
-              const Icon(
-                Icons.chevron_left_rounded,
-                color: Color(0xFF94A3B8),
-                size: 20,
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-}
-
-// عنصر فرعي واحد داخل مجموعة مركز المتابعة (مثال: "متأخر"، "مستحق اليوم")
 class _FollowUpSubMetric {
   const _FollowUpSubMetric({
     required this.label,
@@ -7108,253 +6265,6 @@ class _FollowUpGroupData {
   final List<_FollowUpSubMetric> metrics;
 
   int get total => metrics.fold(0, (sum, m) => sum + m.count);
-}
-
-// بطاقة قابلة للطي تعرض مجموعة من مركز المتابعة مع عناصرها الفرعية،
-// وتفتح كل عنصر فرعي عند الضغط عليه لعرض العناصر المطابقة له.
-class _FollowUpGroupCard extends StatefulWidget {
-  const _FollowUpGroupCard({required this.group, required this.onItemTap});
-
-  final _FollowUpGroupData group;
-  final ValueChanged<_CommitmentItem> onItemTap;
-
-  @override
-  State<_FollowUpGroupCard> createState() => _FollowUpGroupCardState();
-}
-
-class _FollowUpGroupCardState extends State<_FollowUpGroupCard> {
-  @override
-  Widget build(BuildContext context) {
-    final group = widget.group;
-    final hasItems = group.total > 0;
-    return Container(
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: const Color(0xFFE2E8F0)),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          Padding(
-            padding: EdgeInsets.fromLTRB(13, 12, 13, hasItems ? 4 : 12),
-            child: Row(
-              children: [
-                Container(
-                  width: 34,
-                  height: 34,
-                  decoration: BoxDecoration(
-                    color: group.color.withValues(alpha: 0.12),
-                    borderRadius: BorderRadius.circular(10),
-                  ),
-                  child: Icon(group.icon, color: group.color, size: 18),
-                ),
-                const SizedBox(width: 9),
-                Expanded(
-                  child: Text(
-                    group.title,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    softWrap: false,
-                    style: const TextStyle(
-                      fontSize: 13.5,
-                      fontWeight: FontWeight.w900,
-                      color: Color(0xFF0F172A),
-                    ),
-                  ),
-                ),
-                Container(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 9,
-                    vertical: 4,
-                  ),
-                  decoration: BoxDecoration(
-                    color: group.color.withValues(alpha: 0.1),
-                    borderRadius: BorderRadius.circular(20),
-                  ),
-                  child: Text(
-                    '${group.total}',
-                    style: TextStyle(
-                      fontSize: 12,
-                      fontWeight: FontWeight.w900,
-                      color: group.color,
-                    ),
-                  ),
-                ),
-              ],
-            ),
-          ),
-          if (hasItems)
-            Padding(
-              padding: const EdgeInsets.fromLTRB(13, 0, 13, 10),
-              child: Column(
-                children: [
-                  for (var i = 0; i < group.metrics.length; i++)
-                    _buildSubMetricRow(group.metrics[i], i),
-                ],
-              ),
-            ),
-        ],
-      ),
-    );
-  }
-
-  // بدل توسيع عنصر داخل البطاقة نفسها (كان يسبب اختلاف ارتفاع البطاقتين
-  // المتجاورتين في شبكة العمودين ومساحات فارغة غير متناسقة)، يفتح الضغط
-  // على أي بند فرعي صفحة منبثقة صغيرة ومرتّبة تعرض عناصره فقط، فتبقى
-  // البطاقات في الشبكة بارتفاع ثابت ومرتّب دائمًا.
-  Widget _buildSubMetricRow(_FollowUpSubMetric metric, int index) {
-    final enabled = metric.count > 0;
-    return InkWell(
-      onTap: enabled ? () => _openSubMetricSheet(metric) : null,
-      borderRadius: BorderRadius.circular(10),
-      child: Padding(
-        padding: const EdgeInsets.symmetric(vertical: 7),
-        child: Row(
-          children: [
-            Icon(
-              metric.icon,
-              size: 16,
-              color: enabled
-                  ? const Color(0xFF475569)
-                  : const Color(0xFFCBD5E1),
-            ),
-            const SizedBox(width: 8),
-            Expanded(
-              child: Text(
-                metric.label,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                softWrap: false,
-                style: TextStyle(
-                  fontSize: 12,
-                  fontWeight: FontWeight.w700,
-                  color: enabled
-                      ? const Color(0xFF334155)
-                      : const Color(0xFF94A3B8),
-                ),
-              ),
-            ),
-            Text(
-              '${metric.count}',
-              style: TextStyle(
-                fontSize: 12,
-                fontWeight: FontWeight.w900,
-                color: enabled
-                    ? const Color(0xFF0F172A)
-                    : const Color(0xFFCBD5E1),
-              ),
-            ),
-            if (enabled) ...[
-              const SizedBox(width: 4),
-              const Icon(
-                Icons.chevron_left_rounded,
-                size: 18,
-                color: Color(0xFF94A3B8),
-              ),
-            ],
-          ],
-        ),
-      ),
-    );
-  }
-
-  // الصفحة المنبثقة الصغيرة الخاصة ببند فرعي واحد: عنوان واضح + عدّاد،
-  // وقائمة مرتّبة بمسافات ثابتة بين عناصرها (بلا مساحات فارغة عشوائية)،
-  // بارتفاع محدود حتى لا تُغطّي الشاشة كاملة.
-  void _openSubMetricSheet(_FollowUpSubMetric metric) {
-    showModalBottomSheet<void>(
-      context: context,
-      isScrollControlled: true,
-      backgroundColor: Colors.transparent,
-      builder: (sheetContext) => Directionality(
-        textDirection: TextDirection.rtl,
-        child: ConstrainedBox(
-          constraints: BoxConstraints(
-            maxHeight: MediaQuery.of(sheetContext).size.height * 0.62,
-          ),
-          child: Container(
-            decoration: const BoxDecoration(
-              color: Color(0xFFF8FAFC),
-              borderRadius: BorderRadius.vertical(top: Radius.circular(22)),
-            ),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              children: [
-                Container(
-                  width: 40,
-                  height: 4,
-                  margin: const EdgeInsets.only(top: 10, bottom: 10),
-                  decoration: BoxDecoration(
-                    color: const Color(0xFFCBD5E1),
-                    borderRadius: BorderRadius.circular(4),
-                  ),
-                ),
-                Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 16),
-                  child: Row(
-                    children: [
-                      Icon(metric.icon, size: 18, color: widget.group.color),
-                      const SizedBox(width: 8),
-                      Expanded(
-                        child: Text(
-                          metric.label,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: const TextStyle(
-                            fontSize: 15,
-                            fontWeight: FontWeight.w900,
-                            color: Color(0xFF0F172A),
-                          ),
-                        ),
-                      ),
-                      Container(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 9,
-                          vertical: 4,
-                        ),
-                        decoration: BoxDecoration(
-                          color: widget.group.color.withValues(alpha: 0.1),
-                          borderRadius: BorderRadius.circular(20),
-                        ),
-                        child: Text(
-                          '${metric.count}',
-                          style: TextStyle(
-                            fontSize: 12,
-                            fontWeight: FontWeight.w900,
-                            color: widget.group.color,
-                          ),
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-                const SizedBox(height: 10),
-                Flexible(
-                  child: ListView.separated(
-                    padding: const EdgeInsets.fromLTRB(16, 0, 16, 20),
-                    shrinkWrap: true,
-                    itemCount: metric.items.length,
-                    separatorBuilder: (_, __) => const SizedBox(height: 8),
-                    itemBuilder: (context, i) {
-                      final item = metric.items[i];
-                      return _FollowUpListItem(
-                        item: item,
-                        onTap: () {
-                          Navigator.of(sheetContext).pop();
-                          widget.onItemTap(item);
-                        },
-                      );
-                    },
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ),
-      ),
-    );
-  }
 }
 
 class _CommitmentStatusBadge extends StatelessWidget {
@@ -7395,217 +6305,50 @@ class _CommitmentStatusBadge extends StatelessWidget {
 class _CommitmentCard extends StatelessWidget {
   final _CommitmentItem item;
   final VoidCallback onTap;
-  final VoidCallback onEdit;
-  final VoidCallback onAdd;
 
   const _CommitmentCard({
     required this.item,
     required this.onTap,
-    required this.onEdit,
-    required this.onAdd,
   });
 
-  @override
-  Widget build(BuildContext context) {
-    return Material(
-      color: Colors.transparent,
-      borderRadius: BorderRadius.circular(15),
-      child: InkWell(
-        onTap: onTap,
-        borderRadius: BorderRadius.circular(15),
-        child: Container(
-          height: 94,
-          padding: const EdgeInsetsDirectional.fromSTEB(11, 10, 4, 10),
-          decoration: BoxDecoration(
-            color: Colors.white,
-            borderRadius: BorderRadius.circular(15),
-            border: Border.all(color: const Color(0xFFE6ECF3)),
-            boxShadow: const [
-              BoxShadow(
-                color: Color(0x0D0F172A),
-                blurRadius: 10,
-                offset: Offset(0, 3),
-              ),
-            ],
-          ),
-          child: Row(
-            textDirection: TextDirection.rtl,
-            children: [
-              Container(
-                width: 46,
-                height: 46,
-                decoration: BoxDecoration(
-                  color: item.iconBackground,
-                  borderRadius: BorderRadius.circular(12),
-                ),
-                child: Icon(item.icon, color: item.iconColor, size: 23),
-              ),
-              const SizedBox(width: 10),
-              // نفس ترتيب صندوق الالتزام المشترك تمامًا: اسم الالتزام أعلى
-              // اليمين (مع نقطة حالة صغيرة) ونوعه تحته، ثم المبلغ أعلى
-              // اليسار والتاريخ تحته، ثم سهم تصفّح عند الحافة القائدة.
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    Row(
-                      children: [
-                        Expanded(
-                          child: Text(
-                            item.title,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: const TextStyle(
-                              fontSize: 13.5,
-                              fontWeight: FontWeight.w900,
-                              color: Color(0xFF0F172A),
-                            ),
-                          ),
-                        ),
-                        Container(
-                          width: 7,
-                          height: 7,
-                          margin: const EdgeInsets.only(left: 6),
-                          decoration: BoxDecoration(color: item.statusColor, shape: BoxShape.circle),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 5),
-                    Text(
-                      item.entryType ?? 'التزام شخصي',
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(
-                        fontSize: 10,
-                        fontWeight: FontWeight.w700,
-                        color: item.iconColor,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-              const SizedBox(width: 6),
-              SizedBox(
-                width: 108,
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    Text(
-                      item.paidAmount > 0
-                          ? 'المتبقي : ${item.amount.toStringAsFixed(2)} درهم'
-                          : 'المبلغ : ${item.totalAmount.toStringAsFixed(2)} درهم',
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
-                        fontSize: 10.5,
-                        fontWeight: FontWeight.w900,
-                        color: Color(0xFF0F172A),
-                      ),
-                    ),
-                    const SizedBox(height: 6),
-                    Text(
-                      'التاريخ : ${item.dueDate.isEmpty ? '—' : item.dueDate}',
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
-                        fontSize: 9.5,
-                        fontWeight: FontWeight.w700,
-                        color: Color(0xFF64748B),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-              const SizedBox(width: 4),
-              const Icon(Icons.chevron_right_rounded, color: Color(0xFF94A3B8), size: 22),
-              PopupMenuButton<String>(
-                tooltip: 'خيارات الالتزام',
-                padding: const EdgeInsets.all(8),
-                icon: const Icon(
-                  Icons.more_vert_rounded,
-                  size: 20,
-                  color: Color(0xFF64748B),
-                ),
-                onSelected: (value) {
-                  if (value == 'edit') {
-                    onEdit();
-                  } else if (value == 'add') {
-                    onAdd();
-                  }
-                },
-                itemBuilder: (context) => [
-                  const PopupMenuItem(
-                    value: 'edit',
-                    child: Directionality(
-                      textDirection: TextDirection.rtl,
-                      child: Row(
-                        children: [
-                          Icon(Icons.edit_outlined, size: 19),
-                          SizedBox(width: 8),
-                          Text('تعديل'),
-                        ],
-                      ),
-                    ),
-                  ),
-                  const PopupMenuItem(
-                    value: 'add',
-                    child: Directionality(
-                      textDirection: TextDirection.rtl,
-                      child: Row(
-                        children: [
-                          Icon(Icons.add_circle_outline_rounded, size: 19),
-                          SizedBox(width: 8),
-                          Text('إضافة'),
-                        ],
-                      ),
-                    ),
-                  ),
-                ],
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
+  /// سطر المبلغ — أو نص فارغ للبنود التي لا مبلغ لها أصلًا.
+  ///
+  /// كانت المناسبة والمهمة والمستند والدواء تعرض "المبلغ : 0.00 درهم"،
+  /// وهي قيمة بلا معنى لبنود ليست مالية.
+  String get _amountLine {
+    // المدفوع بالكامل يعطي متبقيًا صفرًا — وهو نفس الصفر بلا معنى الذي
+    // نتخلص منه هنا.
+    if (item.paidAmount > 0 && item.amount > 0) {
+      return 'المتبقي : ${item.amount.toStringAsFixed(2)} ${AppSettings.currencySuffix}';
+    }
+    if (item.totalAmount > 0) {
+      return 'المبلغ : ${item.totalAmount.toStringAsFixed(2)} ${AppSettings.currencySuffix}';
+    }
+    if (item.amount > 0) {
+      return 'المبلغ : ${item.amount.toStringAsFixed(2)} ${AppSettings.currencySuffix}';
+    }
+    return '';
   }
-}
-
-class _MetricTile extends StatelessWidget {
-  final String text;
-  final IconData icon;
-
-  const _MetricTile({required this.text, required this.icon});
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      decoration: BoxDecoration(
-        color: const Color(0xFFF8FAFC),
-        borderRadius: BorderRadius.circular(10),
-        border: Border.all(color: const Color(0xFFD6C9B8)),
-      ),
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.center,
-        textDirection: TextDirection.rtl,
-        children: [
-          Flexible(
-            child: Text(
-              text,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: const TextStyle(
-                fontSize: 10,
-                fontWeight: FontWeight.w700,
-                color: Color(0xFF4B3621),
-              ),
-            ),
-          ),
-          const SizedBox(width: 4),
-          Icon(icon, size: 12, color: const Color(0xFF6B4C2A)),
-        ],
-      ),
+    // بطاقة القائمة الموحَّدة نفسها المستعملة في الالتزامات المشتركة
+    // وإدارة الأشخاص.
+    return AppEntityCard(
+      icon: item.icon,
+      iconColor: item.iconColor,
+      iconBackground: item.iconBackground,
+      title: item.title,
+      subtitle: item.entryType ?? 'التزام شخصي',
+      statusColor: item.statusColor,
+      stats: [
+        _amountLine,
+        if (item.dueDate.isNotEmpty) 'التاريخ : ${item.dueDate}',
+      ],
+      onTap: onTap,
+      // بلا زر "خيارات الالتزام" (النقاط الثلاث): التعديل والإضافة
+      // متاحان داخل صفحة التفاصيل نفسها، وزر ثانٍ داخل البطاقة يزاحم
+      // البيانات ويعطي طريقين لنفس الشيء.
     );
   }
 }
@@ -7617,7 +6360,7 @@ class _EntryType {
   const _EntryType(this.label, this.icon);
 }
 
-enum _FinancialFieldKind { text, number, date, multiline, secret, select }
+enum _FinancialFieldKind { text, number, date, time, multiline, secret, select }
 
 class _FinancialField {
   final String label;
@@ -7629,6 +6372,13 @@ class _FinancialField {
   final bool isAmount;
   final List<String> options;
 
+  /// هل تقبل هذه القائمة قيمة جديدة من المستخدم ("+ إضافة أخرى")؟
+  ///
+  /// كان الخيار يُضاف إلى **كل** قائمة اختيار بلا استثناء، فيظهر
+  /// "+ إضافة أخرى" تحت "نعم / لا" وتحت التكرار وحالة العهدة. الملف
+  /// المعتمد يضعه في قوائم التصنيف وطريقة الدفع فقط.
+  final bool allowCustom;
+
   const _FinancialField(
     this.label,
     this.icon, {
@@ -7638,6 +6388,7 @@ class _FinancialField {
     this.isTitle = false,
     this.isAmount = false,
     this.options = const [],
+    this.allowCustom = false,
   });
 }
 
@@ -7685,6 +6436,99 @@ const _notesField = _FinancialField(
   kind: _FinancialFieldKind.multiline,
 );
 
+// حقول متكرّرة في أكثر من نموذج، معرَّفة مرة واحدة حتى لا تتفرّق مسمياتها.
+const _repeatToggleField = _FinancialField(
+  'تفعيل عملية متكررة',
+  Icons.autorenew_rounded,
+  kind: _FinancialFieldKind.select,
+  options: ['نعم', 'لا'],
+);
+
+const _repeatCycleField = _FinancialField(
+  'التكرار',
+  Icons.repeat_rounded,
+  kind: _FinancialFieldKind.select,
+  options: ['يومي', 'أسبوعي', 'شهري', 'سنوي'],
+);
+
+// بلا "أخرى" مجرّدة: الملف المعتمد ينص على حذفها وإبقاء "+ إضافة أخرى".
+const _paymentMethodField = _FinancialField(
+  'طريقة الدفع',
+  Icons.wallet_outlined,
+  kind: _FinancialFieldKind.select,
+  options: ['نقداً', 'بطاقة بنكية', 'تحويل بنكي', 'محفظة إلكترونية'],
+  allowCustom: true,
+);
+
+// حقول "التنظيم والمتابعة" الموحّدة (مهمة/موعد/عادة/تذكير/ملاحظات):
+// جدول واحد في الملف المعتمد، فلا يصح أن يختلف نموذج المهمة عن الموعد.
+const List<_FinancialField> _organizationFields = [
+  _FinancialField(
+    'العنوان',
+    Icons.title_rounded,
+    required: true,
+    isPrimary: true,
+    isTitle: true,
+  ),
+  _FinancialField(
+    'الوصف',
+    Icons.description_outlined,
+    kind: _FinancialFieldKind.multiline,
+    isPrimary: true,
+  ),
+  _FinancialField(
+    'تاريخ الاستحقاق',
+    Icons.event_outlined,
+    kind: _FinancialFieldKind.date,
+    required: true,
+    isPrimary: true,
+  ),
+  _FinancialField(
+    'وقت الاستحقاق',
+    Icons.schedule_rounded,
+    kind: _FinancialFieldKind.time,
+    isPrimary: true,
+  ),
+  _FinancialField(
+    'التكرار',
+    Icons.repeat_rounded,
+    kind: _FinancialFieldKind.select,
+    options: ['بدون تكرار', 'يومي', 'أسبوعي', 'شهري'],
+  ),
+  _FinancialField(
+    'تفعيل تذكير',
+    Icons.notifications_outlined,
+    kind: _FinancialFieldKind.select,
+    options: ['بدون تذكير', 'قبل يوم', 'نفس اليوم'],
+  ),
+  // وقت التذكير حقل مستقل حتى يستطيع المستخدم تغيير الساعة 08:00
+  // الافتراضية، كما نصّ الملف المعتمد.
+  _FinancialField(
+    'وقت التذكير',
+    Icons.alarm_rounded,
+    kind: _FinancialFieldKind.time,
+  ),
+  _notesField,
+];
+
+const _currencyField = _FinancialField(
+  'العملة',
+  Icons.currency_exchange_rounded,
+  isPrimary: true,
+);
+
+const _phoneField = _FinancialField(
+  'رقم الهاتف',
+  Icons.phone_outlined,
+  isPrimary: true,
+);
+
+const _emailField = _FinancialField(
+  'البريد الإلكتروني',
+  Icons.email_outlined,
+  isPrimary: true,
+);
+
 // جداول التصنيف الرئيسي/الفرعي — مطابقة لملف متطلبات "هيكل وادخال التزامات شخصية"
 const Map<String, List<String>> _expenseSubcategoriesByMainCategory = {
   'طعام ومشروبات': [
@@ -7696,6 +6540,7 @@ const Map<String, List<String>> _expenseSubcategoriesByMainCategory = {
     'مخبوزات ومعجنات',
   ],
   'مواصلات': ['تطبيقات توصيل', 'نقل عام وتاكسي'],
+  'إيجار': [],
   'دفع فواتير': ['إنترنت واتصالات', 'تأمينات', 'رسوم دراسية'],
   'صحة': ['أدوية وصيدلية', 'أطباء وأشعة', 'تحاليل وفحوصات'],
   'تعليم': ['مصروفات مدرسية', 'دروس خصوصية', 'دورات تدريبية', 'كتب ومراجع'],
@@ -7708,6 +6553,8 @@ const Map<String, List<String>> _expenseSubcategoriesByMainCategory = {
   ],
   'مغسلة وكوي (مصبغة)': ['عادي', 'مستعجل'],
   'ترفيه': ['رياضة وجيم', 'ألعاب', 'سينما'],
+  // سفر: كان غائبًا تمامًا عن التطبيق وهو في الملف المعتمد.
+  'سفر': ['فنادق وإقامة', 'تذاكر ورسوم سفر'],
   'سيارة': [
     'وقود',
     'مواقف ورسوم طرق',
@@ -7717,8 +6564,7 @@ const Map<String, List<String>> _expenseSubcategoriesByMainCategory = {
     'غسيل وتلميع',
     'مخالفات',
   ],
-  // الفئات التالية بلا تصنيف فرعي محدد في المصدر (اختر "أخرى" أو أضف تصنيفاً مخصصاً)
-  'إيجار': [],
+  // الفئات التالية بلا تصنيف فرعي في الملف المعتمد (تُترك بلا قائمة فرعية).
   'غرامات (عام)': [],
   'رسوم بنكية': [],
   'سداد قروض': [],
@@ -7737,21 +6583,21 @@ const Map<String, List<String>> _fineSubcategoriesByMainCategory = {
   'غرامات': ['مرور', 'حكومية', 'مالية', 'تعاقدية', 'خدمات'],
 };
 
+// بلا خيار "أخرى" المجرّد: الملف المعتمد يذكر "+ إضافة أخرى" وحدها، وخيار
+// "أخرى" كان يُنتج بندًا بلا معنى في التقارير لأن كل ما تحته يندرج تحت اسم
+// واحد لا يفرّق بين شيء وآخر.
 List<String> _expenseSubcategories(String mainCategory) => [
   ...?_expenseSubcategoriesByMainCategory[mainCategory],
-  'أخرى',
   '+ إضافة أخرى',
 ];
 
 List<String> _incomeSubcategories(String mainCategory) => [
   ...?_incomeSubcategoriesByMainCategory[mainCategory],
-  'أخرى',
   '+ إضافة أخرى',
 ];
 
 List<String> _fineSubcategories(String mainCategory) => [
   ...?_fineSubcategoriesByMainCategory[mainCategory],
-  'أخرى',
   '+ إضافة أخرى',
 ];
 
@@ -7766,8 +6612,12 @@ List<String> _subcategoriesForEntry(String entryLabel, String mainCategory) {
 }
 
 const Map<String, _FinancialEntryForm> _financialEntryForms = {
-  'مصروف': _FinancialEntryForm(
-    label: 'مصروف',
+  // الحقول والترتيب مطابقان لملف "إدخالات الالتزام الشخصي" المعتمد:
+  // المبلغ، التصنيف، التاريخ، الوقت، العنوان، الملاحظات، ثم المعلومات
+  // الإضافية (تفعيل عملية متكررة والتكرار، جهة الصرف، طريقة الدفع، الموقع،
+  // إرفاق مستند).
+  'المصروفات الشخصية': _FinancialEntryForm(
+    label: 'المصروفات الشخصية',
     subtitle: 'تسجيل المصروف وتصنيفه وتفاصيل الدفع',
     icon: Icons.trending_down,
     color: Color(0xFFDC2626),
@@ -7779,7 +6629,6 @@ const Map<String, _FinancialEntryForm> _financialEntryForms = {
         kind: _FinancialFieldKind.select,
         required: true,
         isPrimary: true,
-        isTitle: true,
         options: [
           'طعام ومشروبات',
           'مواصلات',
@@ -7790,6 +6639,7 @@ const Map<String, _FinancialEntryForm> _financialEntryForms = {
           'تسوق',
           'مغسلة وكوي (مصبغة)',
           'ترفيه',
+          'سفر',
           'سيارة',
           'غرامات (عام)',
           'رسوم بنكية',
@@ -7798,30 +6648,41 @@ const Map<String, _FinancialEntryForm> _financialEntryForms = {
           'خدمات حكومية',
           'مصروفات أخرى',
         ],
+        allowCustom: true,
       ),
+      // غير إلزامي: تصنيفات مثل "إيجار" و"رسوم بنكية" بلا تصنيف فرعي في
+      // الملف المعتمد، وإلزامه كان يجبر المستخدم على اختراع تصنيف.
       _FinancialField(
         'التصنيف الفرعي',
         Icons.subdirectory_arrow_left_rounded,
         kind: _FinancialFieldKind.select,
-        required: true,
         isPrimary: true,
+        allowCustom: true,
       ),
       _primaryDate,
-      _FinancialField('جهة الصرف', Icons.storefront_outlined),
       _FinancialField(
-        'طريقة الدفع',
-        Icons.wallet_outlined,
-        kind: _FinancialFieldKind.select,
-        options: [
-          'نقداً',
-          'بطاقة بنكية',
-          'تحويل بنكي',
-          'محفظة إلكترونية',
-          'أخرى',
-        ],
+        'الوقت',
+        Icons.schedule_rounded,
+        kind: _FinancialFieldKind.time,
+        isPrimary: true,
       ),
+      _FinancialField(
+        'العنوان',
+        Icons.title_rounded,
+        isPrimary: true,
+        isTitle: true,
+      ),
+      _FinancialField(
+        'الملاحظات',
+        Icons.notes_rounded,
+        kind: _FinancialFieldKind.multiline,
+        isPrimary: true,
+      ),
+      _repeatToggleField,
+      _repeatCycleField,
+      _FinancialField('جهة الصرف', Icons.storefront_outlined),
+      _paymentMethodField,
       _FinancialField('الموقع', Icons.location_on_outlined),
-      _notesField,
     ],
   ),
   'إيراد': _FinancialEntryForm(
@@ -7837,64 +6698,82 @@ const Map<String, _FinancialEntryForm> _financialEntryForms = {
         kind: _FinancialFieldKind.select,
         required: true,
         isPrimary: true,
-        isTitle: true,
         options: ['الراتب/معاش', 'تعويض واسترجاع مصروف', 'كاش باك'],
+        allowCustom: true,
       ),
       _FinancialField(
         'التصنيف الفرعي',
         Icons.subdirectory_arrow_left_rounded,
         kind: _FinancialFieldKind.select,
-        required: true,
         isPrimary: true,
+        allowCustom: true,
       ),
       _primaryDate,
-      _FinancialField('جهة الصرف', Icons.storefront_outlined),
       _FinancialField(
-        'طريقة الدفع',
-        Icons.wallet_outlined,
-        kind: _FinancialFieldKind.select,
-        options: [
-          'نقداً',
-          'بطاقة بنكية',
-          'تحويل بنكي',
-          'محفظة إلكترونية',
-          'أخرى',
-        ],
+        'الوقت',
+        Icons.schedule_rounded,
+        kind: _FinancialFieldKind.time,
+        isPrimary: true,
       ),
+      _FinancialField(
+        'العنوان',
+        Icons.title_rounded,
+        isPrimary: true,
+        isTitle: true,
+      ),
+      _FinancialField(
+        'الملاحظات',
+        Icons.notes_rounded,
+        kind: _FinancialFieldKind.multiline,
+        isPrimary: true,
+      ),
+      _repeatToggleField,
+      _repeatCycleField,
+      _FinancialField('جهة الصرف', Icons.storefront_outlined),
+      _paymentMethodField,
       _FinancialField('الموقع', Icons.location_on_outlined),
-      _notesField,
     ],
   ),
   'تحويل مالي': _FinancialEntryForm(
     label: 'تحويل مالي',
-    subtitle: 'تحويل بين الحسابات أو الأشخاص',
+    subtitle: 'تحتاج محفظة أخرى نشطة بنفس العملة لإجراء التحويل',
     icon: Icons.swap_horiz,
     color: Color(0xFF2563EB),
     fields: [
+      _primaryAmount,
+      // "تحويل من" هو عنوان العملية في القوائم: الملف المعتمد لا يذكر حقل
+      // عنوان مستقل للتحويل.
       _FinancialField(
-        'العنوان',
-        Icons.title_rounded,
+        'تحويل من',
+        Icons.logout_rounded,
         required: true,
         isPrimary: true,
         isTitle: true,
       ),
-      _primaryAmount,
+      _FinancialField(
+        'إلى',
+        Icons.login_rounded,
+        required: true,
+        isPrimary: true,
+      ),
       _primaryDate,
-      _FinancialField('تحويل من', Icons.logout_rounded, isPrimary: true),
-      _FinancialField('إلى', Icons.login_rounded, isPrimary: true),
       _FinancialField(
-        'تفعيل عملية متكررة',
-        Icons.autorenew_rounded,
-        kind: _FinancialFieldKind.select,
-        options: ['نعم', 'لا'],
+        'الوقت',
+        Icons.schedule_rounded,
+        kind: _FinancialFieldKind.time,
+        isPrimary: true,
       ),
       _FinancialField(
-        'طريقة الدفع',
-        Icons.wallet_outlined,
-        kind: _FinancialFieldKind.select,
-        options: ['تحويل بنكي', 'محفظة إلكترونية', 'نقداً', 'أخرى'],
+        'الملاحظات',
+        Icons.notes_rounded,
+        kind: _FinancialFieldKind.multiline,
+        isPrimary: true,
       ),
-      _notesField,
+      _repeatToggleField,
+      _repeatCycleField,
+      _FinancialField('رقم الإيصال', Icons.receipt_long_outlined),
+      _FinancialField('اسم البنك', Icons.account_balance_outlined),
+      _paymentMethodField,
     ],
   ),
   'دين / قرض / سلفة': _FinancialEntryForm(
@@ -7903,13 +6782,40 @@ const Map<String, _FinancialEntryForm> _financialEntryForms = {
     icon: Icons.handshake_outlined,
     color: Color(0xFF7C3AED),
     fields: [
-      _FinancialField('اسم الجهة', Icons.business_outlined, required: true, isPrimary: true, isTitle: true),
-      _FinancialField('العملة', Icons.currency_exchange_rounded, isPrimary: true),
-      _FinancialField('رقم الهاتف', Icons.phone_outlined, isPrimary: true),
-      _FinancialField('البريد الإلكتروني', Icons.email_outlined, isPrimary: true),
+      // "لي / له" أول ما يُسأل عنه في الملف المعتمد، وبقية الحقول واحدة
+      // في الحالتين. بدونه لا يعرف التطبيق أهو دين لك أم عليك.
+      _FinancialField(
+        'نوع الدين',
+        Icons.swap_vert_rounded,
+        kind: _FinancialFieldKind.select,
+        required: true,
+        isPrimary: true,
+        options: ['لي — يدين لك', 'له — تدين له'],
+      ),
+      _FinancialField(
+        'اسم الجهة',
+        Icons.business_outlined,
+        required: true,
+        isPrimary: true,
+        isTitle: true,
+      ),
+      _phoneField,
+      _emailField,
+      _FinancialField('العنوان', Icons.label_outline_rounded, isPrimary: true),
+      _FinancialField(
+        'تفاصيل الدين',
+        Icons.info_outline_rounded,
+        isPrimary: true,
+      ),
       _primaryAmount,
-      _FinancialField('تفاصيل الدين', Icons.info_outline_rounded, isPrimary: true),
-      _FinancialField('تاريخ الدين', Icons.event_outlined, kind: _FinancialFieldKind.date, required: true, isPrimary: true),
+      _currencyField,
+      _FinancialField(
+        'تاريخ الدين',
+        Icons.event_outlined,
+        kind: _FinancialFieldKind.date,
+        required: true,
+        isPrimary: true,
+      ),
       _FinancialField(
         'تاريخ الاستحقاق',
         Icons.event_available_outlined,
@@ -7917,7 +6823,22 @@ const Map<String, _FinancialEntryForm> _financialEntryForms = {
         required: true,
         isPrimary: true,
       ),
-      _FinancialField('تقسيم المبلغ إلى (عدد الأقساط)', Icons.format_list_numbered_rounded),
+      _FinancialField(
+        'عدد الأقساط',
+        Icons.format_list_numbered_rounded,
+        kind: _FinancialFieldKind.number,
+      ),
+      _FinancialField(
+        'تكرار الأقساط',
+        Icons.repeat_rounded,
+        kind: _FinancialFieldKind.select,
+        options: ['شهري', 'ربع سنوي', 'سنوي'],
+      ),
+      _FinancialField(
+        'إجمالي الأقساط',
+        Icons.summarize_outlined,
+        kind: _FinancialFieldKind.number,
+      ),
       _notesField,
     ],
   ),
@@ -7927,7 +6848,15 @@ const Map<String, _FinancialEntryForm> _financialEntryForms = {
     icon: Icons.calendar_month_outlined,
     color: Color(0xFFD97706),
     fields: [
-      _primaryTitle,
+      _FinancialField(
+        'الجهة',
+        Icons.business_outlined,
+        required: true,
+        isPrimary: true,
+        isTitle: true,
+      ),
+      _phoneField,
+      _emailField,
       _FinancialField(
         'قيمة القسط',
         Icons.payments_outlined,
@@ -7936,69 +6865,26 @@ const Map<String, _FinancialEntryForm> _financialEntryForms = {
         isPrimary: true,
         isAmount: true,
       ),
-      _FinancialField(
-        'تاريخ الاستحقاق',
-        Icons.event_outlined,
-        kind: _FinancialFieldKind.date,
-        required: true,
-        isPrimary: true,
-      ),
+      _currencyField,
       _FinancialField(
         'عدد الأقساط',
         Icons.format_list_numbered_rounded,
         kind: _FinancialFieldKind.number,
         isPrimary: true,
       ),
-      _FinancialField('القسط الحالي', Icons.low_priority_rounded),
       _FinancialField(
-        'تاريخ البداية',
+        'تاريخ القسط الأول',
         Icons.first_page_rounded,
         kind: _FinancialFieldKind.date,
+        required: true,
+        isPrimary: true,
       ),
       _FinancialField(
-        'تاريخ النهاية',
+        'تاريخ آخر قسط',
         Icons.last_page_rounded,
         kind: _FinancialFieldKind.date,
-      ),
-      _notesField,
-    ],
-  ),
-  'اشتراك': _FinancialEntryForm(
-    label: 'اشتراك',
-    subtitle: 'اشتراك دوري أو خدمة متكررة',
-    icon: Icons.autorenew_rounded,
-    color: Color(0xFF0891B2),
-    fields: [
-      _FinancialField(
-        'اسم الاشتراك',
-        Icons.subscriptions_outlined,
-        required: true,
-        isPrimary: true,
-        isTitle: true,
-      ),
-      _FinancialField(
-        'قيمة الاشتراك',
-        Icons.payments_outlined,
-        kind: _FinancialFieldKind.number,
-        required: true,
-        isPrimary: true,
-        isAmount: true,
-      ),
-      _FinancialField(
-        'تاريخ البداية',
-        Icons.event_outlined,
-        kind: _FinancialFieldKind.date,
-        required: true,
         isPrimary: true,
       ),
-      _FinancialField(
-        'تاريخ النهاية',
-        Icons.event_available_outlined,
-        kind: _FinancialFieldKind.date,
-        isPrimary: true,
-      ),
-      _FinancialField('دورة التكرار', Icons.repeat_rounded),
-      _FinancialField('طريقة الدفع', Icons.wallet_outlined),
       _notesField,
     ],
   ),
@@ -8008,7 +6894,14 @@ const Map<String, _FinancialEntryForm> _financialEntryForms = {
     icon: Icons.gavel_outlined,
     color: Color(0xFFB91C1C),
     fields: [
-      _primaryAmount,
+      _FinancialField(
+        'مبلغ الغرامة',
+        Icons.payments_outlined,
+        kind: _FinancialFieldKind.number,
+        required: true,
+        isPrimary: true,
+        isAmount: true,
+      ),
       _FinancialField(
         'التصنيف الرئيسي',
         Icons.category_outlined,
@@ -8016,6 +6909,7 @@ const Map<String, _FinancialEntryForm> _financialEntryForms = {
         required: true,
         isPrimary: true,
         options: ['غرامات'],
+        allowCustom: true,
       ),
       _FinancialField(
         'التصنيف الفرعي',
@@ -8023,26 +6917,28 @@ const Map<String, _FinancialEntryForm> _financialEntryForms = {
         kind: _FinancialFieldKind.select,
         required: true,
         isPrimary: true,
+        isTitle: true,
+        allowCustom: true,
       ),
       _FinancialField('الجهة', Icons.business_outlined, isPrimary: true),
       _FinancialField(
-        'تاريخ الاستحقاق',
-        Icons.event_available_outlined,
+        'تاريخ الغرامة',
+        Icons.event_outlined,
         kind: _FinancialFieldKind.date,
         required: true,
         isPrimary: true,
       ),
       _FinancialField(
-        'نوع الغرامة',
-        Icons.info_outline_rounded,
-        required: true,
+        'الملاحظات',
+        Icons.notes_rounded,
+        kind: _FinancialFieldKind.multiline,
         isPrimary: true,
-        isTitle: true,
       ),
       _FinancialField('رقم المخالفة', Icons.numbers_rounded),
-      _notesField,
     ],
   ),
+  // مناسبة وهدية بنفس الجدول في الملف المعتمد: صورة، عنوان، نوع من
+  // التصنيف الفرعي، أهمية، تاريخ، هاتف، تكرار، تذكيرات.
   'مناسبة': _FinancialEntryForm(
     label: 'مناسبة',
     subtitle: 'تسجيل مناسبة وما يرتبط بها',
@@ -8050,7 +6946,7 @@ const Map<String, _FinancialEntryForm> _financialEntryForms = {
     color: Color(0xFFDB2777),
     fields: [
       _FinancialField(
-        'نوع المناسبة',
+        'النوع',
         Icons.category_outlined,
         kind: _FinancialFieldKind.select,
         required: true,
@@ -8063,13 +6959,21 @@ const Map<String, _FinancialEntryForm> _financialEntryForms = {
           'مناسبة عائلية',
           'مناسبة دينية',
         ],
+        allowCustom: true,
       ),
       _FinancialField(
-        'عنوان المناسبة',
+        'العنوان',
         Icons.title_rounded,
         required: true,
         isPrimary: true,
         isTitle: true,
+      ),
+      _FinancialField(
+        'أهمية المناسبة',
+        Icons.priority_high_rounded,
+        kind: _FinancialFieldKind.select,
+        isPrimary: true,
+        options: ['عادية', 'مهمة', 'مهمة جداً'],
       ),
       _FinancialField(
         'تاريخ المناسبة',
@@ -8078,46 +6982,78 @@ const Map<String, _FinancialEntryForm> _financialEntryForms = {
         required: true,
         isPrimary: true,
       ),
-      _FinancialField(
-        'اهمية المناسبة',
-        Icons.priority_high_rounded,
-        kind: _FinancialFieldKind.select,
-        isPrimary: true,
-        options: ['عادية', 'مهمة', 'مهمة جداً'],
-      ),
-      _FinancialField('رقم الهاتف', Icons.phone_outlined),
+      _FinancialField('رقم الهاتف', Icons.phone_outlined, isPrimary: true),
       _FinancialField(
         'تكرار',
         Icons.repeat_rounded,
         kind: _FinancialFieldKind.select,
-        options: ['بدون تكرار', 'سنوي', 'شهري', 'أسبوعي', 'مخصص'],
+        options: ['بدون تكرار', 'سنوي', 'شهري', 'أسبوعي'],
       ),
       _FinancialField(
         'تذكيرات',
         Icons.notifications_outlined,
         kind: _FinancialFieldKind.select,
-        options: ['بدون تذكير', 'قبل يوم', 'قبل 3 أيام', 'قبل أسبوع', 'مخصص'],
+        options: ['بدون تذكير', 'قبل يوم', 'قبل 3 أيام', 'قبل أسبوع'],
       ),
       _notesField,
     ],
   ),
   'هدية': _FinancialEntryForm(
     label: 'هدية',
-    subtitle: 'هدية، تبرع أو زكاة',
+    subtitle: 'هدية مرتبطة بمناسبة',
     icon: Icons.volunteer_activism_outlined,
     color: Color(0xFF0D9488),
     fields: [
-      _primaryTitle,
       _FinancialField(
         'النوع',
         Icons.category_outlined,
+        kind: _FinancialFieldKind.select,
+        required: true,
+        isPrimary: true,
+        options: [
+          'عيد ميلاد',
+          'ذكرى زواج / خطوبة',
+          'تخرج',
+          'وظيفة جديدة',
+          'مناسبة عائلية',
+          'مناسبة دينية',
+        ],
+        allowCustom: true,
+      ),
+      _FinancialField(
+        'العنوان',
+        Icons.title_rounded,
+        required: true,
+        isPrimary: true,
+        isTitle: true,
+      ),
+      _FinancialField(
+        'أهمية المناسبة',
+        Icons.priority_high_rounded,
+        kind: _FinancialFieldKind.select,
+        isPrimary: true,
+        options: ['عادية', 'مهمة', 'مهمة جداً'],
+      ),
+      _FinancialField(
+        'تاريخ المناسبة',
+        Icons.event_outlined,
+        kind: _FinancialFieldKind.date,
         required: true,
         isPrimary: true,
       ),
-      _primaryAmount,
-      _primaryDate,
-      _FinancialField('الجهة', Icons.groups_outlined, isPrimary: true),
-      _FinancialField('المناسبة', Icons.celebration_outlined),
+      _FinancialField('رقم الهاتف', Icons.phone_outlined, isPrimary: true),
+      _FinancialField(
+        'تكرار',
+        Icons.repeat_rounded,
+        kind: _FinancialFieldKind.select,
+        options: ['بدون تكرار', 'سنوي', 'شهري', 'أسبوعي'],
+      ),
+      _FinancialField(
+        'تذكيرات',
+        Icons.notifications_outlined,
+        kind: _FinancialFieldKind.select,
+        options: ['بدون تذكير', 'قبل يوم', 'قبل 3 أيام', 'قبل أسبوع'],
+      ),
       _notesField,
     ],
   ),
@@ -8157,30 +7093,23 @@ const Map<String, _FinancialEntryForm> _financialEntryForms = {
         options: ['مؤقتة', 'مستديمة'],
       ),
       _FinancialField(
-        'تاريخ الاستحقاق والإرجاع',
-        Icons.event_repeat_outlined,
+        'تاريخ الاستلام',
+        Icons.event_outlined,
         kind: _FinancialFieldKind.date,
         required: true,
         isPrimary: true,
       ),
+      // حقول إضافية (تظهر تحت "معلومات إضافية") كما في الملف المعتمد.
       _FinancialField(
         'تاريخ التسليم',
         Icons.event_available_outlined,
         kind: _FinancialFieldKind.date,
-        required: true,
       ),
-      _FinancialField(
-        'تاريخ الاستلام',
-        Icons.event_repeat_outlined,
-        kind: _FinancialFieldKind.date,
-      ),
-      _FinancialField('الجهة أو القسم', Icons.apartment_outlined),
-      _FinancialField('الغرض من العهدة', Icons.flag_outlined, required: true),
+      _FinancialField('الغرض من العهدة', Icons.flag_outlined),
       _FinancialField(
         'حالة العهدة',
         Icons.fact_check_outlined,
         kind: _FinancialFieldKind.select,
-        required: true,
         options: ['مستلمة', 'قيد الاستخدام', 'تمت التسوية', 'معادة', 'متأخرة'],
       ),
       _FinancialField('رقم المرجع أو المستند', Icons.numbers_rounded),
@@ -8220,34 +7149,41 @@ const Map<String, _FinancialEntryForm> _financialEntryForms = {
       _notesField,
     ],
   ),
-  'اشتراكات': _FinancialEntryForm(
-    label: 'اشتراكات',
-    subtitle: 'خدمة دورية أو اشتراك متكرر',
-    icon: Icons.autorenew_rounded,
-    color: Color(0xFF7C3AED),
+  'اشتراك': _FinancialEntryForm(
+    label: 'اشتراك',
+    subtitle: 'اشتراك دوري أو خدمة متكررة',
+    icon: Icons.autorenew,
+    color: Color(0xFF0891B2),
     fields: [
       _FinancialField(
-        'نوع الاشتراك',
-        Icons.category_outlined,
-        kind: _FinancialFieldKind.select,
-        required: true,
-        isPrimary: true,
-        options: ['قنوات تلفزيونية', 'الهاتف والانترنت', 'التطبيقات', 'خصومات'],
-      ),
-      _FinancialField(
-        'اسم الاشتراك',
+        'الاسم',
         Icons.subscriptions_outlined,
         required: true,
         isPrimary: true,
         isTitle: true,
       ),
       _FinancialField(
-        'قيمة الاشتراك',
-        Icons.payments_outlined,
-        kind: _FinancialFieldKind.number,
+        'النوع',
+        Icons.category_outlined,
+        kind: _FinancialFieldKind.select,
         required: true,
         isPrimary: true,
-        isAmount: true,
+        options: [
+          'قنوات تلفزيونية',
+          'الهاتف والإنترنت',
+          'التطبيقات',
+          'خصومات',
+        ],
+        allowCustom: true,
+      ),
+      _primaryAmount,
+      _FinancialField(
+        'التكرار',
+        Icons.repeat_rounded,
+        kind: _FinancialFieldKind.select,
+        required: true,
+        isPrimary: true,
+        options: ['شهري', 'ربع سنوي', 'نصف سنوي', 'سنوي'],
       ),
       _FinancialField(
         'تاريخ الاستحقاق',
@@ -8257,28 +7193,10 @@ const Map<String, _FinancialEntryForm> _financialEntryForms = {
         isPrimary: true,
       ),
       _FinancialField(
-        'التكرار',
-        Icons.repeat_rounded,
-        kind: _FinancialFieldKind.select,
-        isPrimary: true,
-        options: ['شهري', 'سنوي', 'أسبوعي', 'ربع سنوي', 'مخصص'],
-      ),
-      _FinancialField(
         'تذكيرات',
         Icons.notifications_outlined,
         kind: _FinancialFieldKind.select,
-        options: ['بدون تذكير', 'قبل يوم', 'قبل 3 أيام', 'قبل أسبوع', 'مخصص'],
-      ),
-      _FinancialField(
-        'عدد الأفراد',
-        Icons.groups_outlined,
-        kind: _FinancialFieldKind.number,
-      ),
-      _FinancialField(
-        'طريقة الدفع',
-        Icons.wallet_outlined,
-        kind: _FinancialFieldKind.select,
-        options: ['نقداً', 'بطاقة بنكية', 'تحويل بنكي', 'محفظة إلكترونية', 'خصم تلقائي'],
+        options: ['بدون تذكير', 'قبل يوم', 'قبل 3 أيام', 'قبل أسبوع'],
       ),
       _notesField,
     ],
@@ -8367,8 +7285,14 @@ const Map<String, _FinancialEntryForm> _financialEntryForms = {
           'فواتير',
           'ايصالات',
         ],
+        allowCustom: true,
       ),
       _FinancialField('رقم المستند', Icons.numbers_rounded, isPrimary: true),
+      _FinancialField(
+        'الجهة المصدرة',
+        Icons.account_balance_outlined,
+        isPrimary: true,
+      ),
       _FinancialField(
         'تاريخ الإصدار',
         Icons.event_outlined,
@@ -8379,8 +7303,16 @@ const Map<String, _FinancialEntryForm> _financialEntryForms = {
         'تاريخ الانتهاء',
         Icons.event_busy_outlined,
         kind: _FinancialFieldKind.date,
+        isPrimary: true,
       ),
-      _FinancialField('الجهة المصدرة', Icons.account_balance_outlined),
+      // تذكير قبل انتهاء المستند — كان غائبًا رغم أنه سبب تسجيل المستند.
+      _FinancialField(
+        'تذكير',
+        Icons.notifications_outlined,
+        kind: _FinancialFieldKind.select,
+        isPrimary: true,
+        options: ['بدون تذكير', 'قبل أسبوع', 'قبل شهر', 'قبل شهرين'],
+      ),
       _notesField,
     ],
   ),
@@ -8552,174 +7484,31 @@ const Map<String, _FinancialEntryForm> _financialEntryForms = {
     subtitle: 'متابعة وتخطيط مهمة شخصية',
     icon: Icons.task_alt_outlined,
     color: Color(0xFF0D9488),
-    fields: [
-      _FinancialField(
-        'العنوان',
-        Icons.title_rounded,
-        required: true,
-        isPrimary: true,
-        isTitle: true,
-      ),
-      _FinancialField(
-        'تاريخ الاستحقاق',
-        Icons.event_outlined,
-        kind: _FinancialFieldKind.date,
-        required: true,
-        isPrimary: true,
-      ),
-      _FinancialField(
-        'وقت الاستحقاق',
-        Icons.schedule_outlined,
-        isPrimary: true,
-      ),
-      _FinancialField(
-        'الأولوية',
-        Icons.priority_high_rounded,
-        kind: _FinancialFieldKind.select,
-        isPrimary: true,
-        options: ['منخفضة', 'متوسطة', 'عالية', 'عاجلة'],
-      ),
-      _FinancialField(
-        'التكرار',
-        Icons.repeat_rounded,
-        kind: _FinancialFieldKind.select,
-        options: ['بدون تكرار', 'يومي', 'أسبوعي', 'شهري', 'سنوي', 'مخصص'],
-      ),
-      _FinancialField(
-        'الوصف',
-        Icons.description_outlined,
-        kind: _FinancialFieldKind.multiline,
-      ),
-      _notesField,
-    ],
+    fields: _organizationFields,
   ),
   'موعد': _FinancialEntryForm(
     label: 'موعد',
     subtitle: 'موعد شخصي مع تكرار وتذكيرات',
     icon: Icons.event_outlined,
     color: Color(0xFF2563EB),
-    fields: [
-      _FinancialField(
-        'العنوان',
-        Icons.title_rounded,
-        required: true,
-        isPrimary: true,
-        isTitle: true,
-      ),
-      _FinancialField(
-        'التاريخ',
-        Icons.event_outlined,
-        kind: _FinancialFieldKind.date,
-        required: true,
-        isPrimary: true,
-      ),
-      _FinancialField('الوقت', Icons.schedule_outlined, isPrimary: true),
-      _FinancialField('الموقع', Icons.location_on_outlined, isPrimary: true),
-      _FinancialField(
-        'التكرار',
-        Icons.repeat_rounded,
-        kind: _FinancialFieldKind.select,
-        options: ['بدون تكرار', 'يومي', 'أسبوعي', 'شهري', 'سنوي', 'مخصص'],
-      ),
-      _FinancialField(
-        'التذكيرات',
-        Icons.notifications_outlined,
-        kind: _FinancialFieldKind.select,
-        options: ['بدون تذكير', 'قبل 15 دقيقة', 'قبل ساعة', 'قبل يوم', 'مخصص'],
-      ),
-      _notesField,
-    ],
+    fields: _organizationFields,
   ),
   'عادة': _FinancialEntryForm(
     label: 'عادة',
     subtitle: 'عادة متكررة للمتابعة اليومية أو الأسبوعية',
     icon: Icons.repeat_rounded,
     color: Color(0xFF0891B2),
-    fields: [
-      _FinancialField(
-        'اسم العادة',
-        Icons.title_rounded,
-        required: true,
-        isPrimary: true,
-        isTitle: true,
-      ),
-      _FinancialField(
-        'تاريخ البداية',
-        Icons.event_outlined,
-        kind: _FinancialFieldKind.date,
-        required: true,
-        isPrimary: true,
-      ),
-      _FinancialField(
-        'التكرار',
-        Icons.repeat_rounded,
-        kind: _FinancialFieldKind.select,
-        required: true,
-        isPrimary: true,
-        options: ['يومي', 'أيام محددة أسبوعياً', 'أسبوعي', 'شهري', 'مخصص'],
-      ),
-      _FinancialField('وقت التذكير', Icons.schedule_outlined, isPrimary: true),
-      _FinancialField(
-        'تفعيل التذكيرات',
-        Icons.notifications_outlined,
-        kind: _FinancialFieldKind.select,
-        options: ['نعم', 'لا'],
-      ),
-      _notesField,
-    ],
+    fields: _organizationFields,
   ),
   'ملاحظات': _FinancialEntryForm(
     label: 'ملاحظات',
-    subtitle: 'ملاحظة أو تذكير شخصي للمتابعة',
+    subtitle: 'ملاحظة أو فكرة تحتاج متابعة',
     icon: Icons.sticky_note_2_outlined,
-    color: Color(0xFF7C3AED),
-    fields: [
-      _FinancialField(
-        'العنوان',
-        Icons.title_rounded,
-        required: true,
-        isPrimary: true,
-        isTitle: true,
-      ),
-      _FinancialField(
-        'تاريخ الاستحقاق',
-        Icons.event_outlined,
-        kind: _FinancialFieldKind.date,
-        isPrimary: true,
-      ),
-      _FinancialField(
-        'وقت الاستحقاق',
-        Icons.schedule_outlined,
-        isPrimary: true,
-      ),
-      _FinancialField(
-        'الأولوية',
-        Icons.priority_high_rounded,
-        kind: _FinancialFieldKind.select,
-        isPrimary: true,
-        options: ['منخفضة', 'متوسطة', 'عالية', 'عاجلة'],
-      ),
-      _FinancialField(
-        'التكرار',
-        Icons.repeat_rounded,
-        kind: _FinancialFieldKind.select,
-        options: ['بدون تكرار', 'يومي', 'أسبوعي', 'شهري', 'سنوي', 'مخصص'],
-      ),
-      _FinancialField(
-        'الوصف',
-        Icons.description_outlined,
-        kind: _FinancialFieldKind.multiline,
-      ),
-      _FinancialField(
-        'تفعيل تذكيرات',
-        Icons.notifications_outlined,
-        kind: _FinancialFieldKind.select,
-        options: ['نعم', 'لا'],
-      ),
-    ],
+    color: Color(0xFF64748B),
+    fields: _organizationFields,
   ),
-  'حسابات': _FinancialEntryForm(
-    label: 'حسابات',
+  'كلمات سر': _FinancialEntryForm(
+    label: 'كلمات سر',
     subtitle: 'حفظ بيانات الحسابات وكلمات السر',
     icon: Icons.password_rounded,
     color: Color(0xFF475569),
@@ -8732,17 +7521,13 @@ const Map<String, _FinancialEntryForm> _financialEntryForms = {
         isTitle: true,
       ),
       _FinancialField(
-        'التصنيف',
+        'نوع الحساب',
         Icons.category_outlined,
         kind: _FinancialFieldKind.select,
         required: true,
         isPrimary: true,
-        options: [
-          'إيميلات وكلمات سر',
-          'حسابات بنكية',
-          'تطبيقات',
-          'كلمات سر أخرى',
-        ],
+        options: ['إيميلات', 'حسابات بنكية', 'تطبيقات'],
+        allowCustom: true,
       ),
       _FinancialField(
         'اسم المستخدم',
@@ -8755,12 +7540,12 @@ const Map<String, _FinancialEntryForm> _financialEntryForms = {
         kind: _FinancialFieldKind.secret,
         isPrimary: true,
       ),
-      _FinancialField('الرابط', Icons.link_rounded),
+      _FinancialField('الرابط', Icons.link_rounded, isPrimary: true),
       _notesField,
     ],
   ),
-  'أدوية وبياناتها': _FinancialEntryForm(
-    label: 'أدوية وبياناتها',
+  'أدوية': _FinancialEntryForm(
+    label: 'أدوية',
     subtitle: 'بيانات الدواء والجرعات والتذكيرات',
     icon: Icons.medication_outlined,
     color: Color(0xFFDC2626),
@@ -8772,11 +7557,16 @@ const Map<String, _FinancialEntryForm> _financialEntryForms = {
         isPrimary: true,
         isTitle: true,
       ),
+      // "لمن هذا الدواء" صار قائمة كما في الملف المعتمد بدل نص حر، حتى
+      // يمكن تصفية أدويتي عن أدوية غيري.
       _FinancialField(
         'لمن هذا الدواء',
         Icons.person_outline_rounded,
+        kind: _FinancialFieldKind.select,
         required: true,
         isPrimary: true,
+        options: ['أدوية لي', 'أدوية لشخص آخر'],
+        allowCustom: true,
       ),
       _FinancialField(
         'من تاريخ',
@@ -8801,7 +7591,7 @@ const Map<String, _FinancialEntryForm> _financialEntryForms = {
         'شكل الدواء',
         Icons.category_outlined,
         kind: _FinancialFieldKind.select,
-        options: ['قرص', 'كبسولة', 'شراب', 'حقنة', 'مرهم', 'قطرة', 'أخرى'],
+        options: ['قرص', 'كبسولة', 'شراب', 'حقنة', 'مرهم', 'قطرة'],
       ),
       _FinancialField('التركيز', Icons.speed_outlined),
       _FinancialField('الجرعة', Icons.medical_information_outlined),
@@ -8828,6 +7618,13 @@ const Map<String, _FinancialEntryForm> _financialEntryForms = {
         isTitle: true,
       ),
       _FinancialField(
+        'الموقع أو الرابط',
+        Icons.link_rounded,
+        required: true,
+        isPrimary: true,
+      ),
+      _FinancialField('العنوان', Icons.signpost_outlined, isPrimary: true),
+      _FinancialField(
         'التصنيف',
         Icons.category_outlined,
         kind: _FinancialFieldKind.select,
@@ -8843,17 +7640,6 @@ const Map<String, _FinancialEntryForm> _financialEntryForms = {
           'مهم',
           'مخصص',
         ],
-      ),
-      _FinancialField(
-        'الموقع أو الرابط',
-        Icons.link_rounded,
-        required: true,
-        isPrimary: true,
-      ),
-      _FinancialField(
-        'الوصف',
-        Icons.description_outlined,
-        kind: _FinancialFieldKind.multiline,
       ),
       _notesField,
     ],
@@ -8896,33 +7682,10 @@ const Map<String, _FinancialEntryForm> _financialEntryForms = {
   ),
   'تذكير': _FinancialEntryForm(
     label: 'تذكير',
-    subtitle: 'تذكير مرتبط بهذا الالتزام في تاريخ محدد',
+    subtitle: 'تذكير بموعد أو التزام',
     icon: Icons.notifications_active_outlined,
-    color: Color(0xFFEA580C),
-    fields: [
-      _FinancialField(
-        'عنوان التذكير',
-        Icons.title_rounded,
-        required: true,
-        isPrimary: true,
-        isTitle: true,
-      ),
-      _FinancialField(
-        'تاريخ ووقت التذكير',
-        Icons.event_outlined,
-        kind: _FinancialFieldKind.date,
-        required: true,
-        isPrimary: true,
-      ),
-      _FinancialField(
-        'التكرار',
-        Icons.repeat_rounded,
-        kind: _FinancialFieldKind.select,
-        isPrimary: true,
-        options: ['بدون تكرار', 'يومي', 'أسبوعي', 'شهري', 'سنوي'],
-      ),
-      _notesField,
-    ],
+    color: Color(0xFF7C3AED),
+    fields: _organizationFields,
   ),
   'تفويض': _FinancialEntryForm(
     label: 'تفويض',
@@ -8997,10 +7760,9 @@ class _EntryCategoryCard extends StatelessWidget {
       child: Container(
         padding: const EdgeInsets.all(8),
         decoration: BoxDecoration(
-          color: Colors.white,
-          borderRadius: BorderRadius.circular(10),
-          border: Border.all(color: const Color(0xFFDDE2E7)),
-        ),
+            color: AppTheme.surfaceInner,
+            borderRadius: BorderRadius.circular(AppTheme.rInner),
+          ),
         child: FittedBox(
           fit: BoxFit.scaleDown,
           child: Column(
@@ -9100,10 +7862,9 @@ class _EntryTypeCard extends StatelessWidget {
       child: Container(
         padding: const EdgeInsets.all(6),
         decoration: BoxDecoration(
-          color: Colors.white,
-          borderRadius: BorderRadius.circular(9),
-          border: Border.all(color: const Color(0xFFDDE2E7)),
-        ),
+            color: AppTheme.surfaceInner,
+            borderRadius: BorderRadius.circular(AppTheme.rInner),
+          ),
         child: FittedBox(
           fit: BoxFit.scaleDown,
           child: Column(

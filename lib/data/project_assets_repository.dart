@@ -1,5 +1,7 @@
 import 'package:supabase_flutter/supabase_flutter.dart';
 
+import 'app_session.dart';
+
 /// Repository for the "Projects & Business Activities" screen.
 ///
 /// Persists both the asset itself (a real-estate / project / business item)
@@ -512,9 +514,7 @@ abstract class ProjectAssetsRepository {
   );
   Future<void> deleteUnitContract(String contractId);
 
-  Future<List<PropertyUnitPaymentRecord>> fetchUnitPayments(
-    String contractId,
-  );
+  Future<List<PropertyUnitPaymentRecord>> fetchUnitPayments(String contractId);
   Future<PropertyUnitPaymentRecord> upsertUnitPayment(
     PropertyUnitPaymentRecord payment,
   );
@@ -545,19 +545,10 @@ class SupabaseProjectAssetsRepository implements ProjectAssetsRepository {
   SupabaseProjectAssetsRepository({SupabaseClient? client})
     : _client = client ?? Supabase.instance.client;
 
-  Future<User> _authenticatedUser() async {
-    final currentUser = _client.auth.currentUser;
-    if (currentUser != null) return currentUser;
-
-    final response = await _client.auth.signInAnonymously().timeout(
-      _requestTimeout,
-    );
-    final user = response.user;
-    if (user == null) {
-      throw const AuthException('تعذر إنشاء جلسة لحفظ بيانات النشاط');
-    }
-    return user;
-  }
+  /// يدخل بحساب التطبيق الثابت عبر [AppSession]. كان يستدعي
+  /// signInAnonymously() فيُنشئ مستخدمًا جديدًا عند كل إعادة تثبيت،
+  /// فتصبح كل البيانات السابقة غير مرئية.
+  Future<User> _authenticatedUser() => AppSession.ensureSignedIn();
 
   @override
   Future<List<ProjectAssetRecord>> fetchAssets() async {
@@ -717,9 +708,7 @@ class SupabaseProjectAssetsRepository implements ProjectAssetsRepository {
         .eq('contract_id', contractId)
         .order('due_date', ascending: true)
         .timeout(_requestTimeout);
-    return rows
-        .map(PropertyUnitPaymentRecord.fromJson)
-        .toList(growable: false);
+    return rows.map(PropertyUnitPaymentRecord.fromJson).toList(growable: false);
   }
 
   @override
@@ -767,9 +756,7 @@ class SupabaseProjectAssetsRepository implements ProjectAssetsRepository {
         .from(_unitTransactionsTable)
         .select()
         .eq('asset_id', assetId);
-    final rows = await (unitKey == null
-            ? query
-            : query.eq('unit_key', unitKey))
+    final rows = await (unitKey == null ? query : query.eq('unit_key', unitKey))
         .order('occurred_on', ascending: false)
         .timeout(_requestTimeout);
     return rows

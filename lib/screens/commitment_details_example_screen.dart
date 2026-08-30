@@ -4,6 +4,7 @@ import '../widgets/commitment_additions_menu.dart';
 import '../config/commitment_additions_config.dart';
 import '../data/commitment_additions_models.dart';
 import '../data/commitment_additions_repository.dart';
+import '../widgets/shared/app_design.dart';
 
 /// Example screen showing how to use the additions menu
 /// Replace this with your actual commitment details screen
@@ -39,10 +40,9 @@ class _CommitmentDetailsExampleScreenState
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      appBar: AppBar(
-        title: const Text('تفاصيل الالتزام'),
-        backgroundColor: Colors.blue,
-      ),
+      // ترويسة بيضاء كبقية ترويسات التطبيق؛ الخلفية الزرقاء مع لون
+      // النص الداكن الموحّد كانت ستجعل العنوان غير مقروء.
+      appBar: AppBar(title: const Text('تفاصيل الالتزام')),
       body: SingleChildScrollView(
         padding: const EdgeInsets.all(16),
         child: Column(
@@ -185,7 +185,9 @@ class _CommitmentDetailsExampleScreenState
         padding: const EdgeInsets.symmetric(vertical: 16),
         backgroundColor: Colors.blue,
         foregroundColor: Colors.white,
-        shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(12)),
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(AppTheme.rField),
+        ),
       ),
     );
   }

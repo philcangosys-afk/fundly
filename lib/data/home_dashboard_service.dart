@@ -93,7 +93,11 @@ class HomeCalendarItem {
     required this.module,
     required this.date,
     required this.sourceId,
-    this.remindBeforeDays = 7,
+    // القيمة السالبة تعني "لم تُحدَّد مدة تذكير لهذا العنصر" فتُستعمل
+    // المدة الافتراضية من الإعدادات. كانت القيمة 7 ثابتة، فيبقى إعداد
+    // "وقت التذكير الافتراضي" بلا أثر مهما غيّره المستخدم. ولا تصلح 0
+    // للتمييز لأنها اختيار حقيقي متاح للمستخدم: "في نفس اليوم".
+    this.remindBeforeDays = -1,
     this.type = 'موعد',
     this.status = 'قادمة',
     this.priority = 'متوسطة',
@@ -101,6 +105,7 @@ class HomeCalendarItem {
     this.description = '',
     this.notes = '',
     this.isUserCreated = false,
+    this.isExpiry = false,
   });
 
   final int remindBeforeDays;
@@ -111,6 +116,10 @@ class HomeCalendarItem {
   final String description;
   final String notes;
   final bool isUserCreated;
+
+  /// تنبيه انتهاء صلاحية (مستند، ضمان، عقد، رخصة) — يميّزه مفتاح
+  /// "تنبيهات انتهاء المستندات والعقود" في الإعدادات.
+  final bool isExpiry;
 }
 
 class HomeDashboardService {
@@ -199,7 +208,9 @@ class HomeDashboardService {
       if (entry.entryType == 'إيراد' || entry.entryType == 'دخل') {
         totalIncome += amount;
       }
-      if (entry.entryType == 'مصروف' ||
+      // 'مصروف' اسم قديم لنفس النوع قبل توحيد المسميات مع ملف الإدخالات.
+      if (entry.entryType == 'المصروفات الشخصية' ||
+          entry.entryType == 'مصروف' ||
           entry.entryType == 'غرامة' ||
           entry.entryType == 'قسط') {
         totalExpenses += amount;
@@ -237,9 +248,11 @@ class HomeDashboardService {
             module: 'الالتزامات الشخصية',
             date: due,
             sourceId: entry.id ?? '',
+            isExpiry:
+                entry.entryType == 'مستند' || entry.entryType == 'ضمانات',
             remindBeforeDays:
                 (entry.details['التذكير قبل الانتهاء'] ?? '').isEmpty
-                ? 7
+                ? -1
                 : AppRemindersStore.reminderDaysFromLabel(
                     entry.details['التذكير قبل الانتهاء']!,
                   ),
@@ -274,6 +287,8 @@ class HomeDashboardService {
             module: 'العقارات والأنشطة التجارية',
             date: due,
             sourceId: asset.id ?? '',
+            // تاريخ نهاية العقد/الرخصة = تنبيه انتهاء صلاحية.
+            isExpiry: true,
           ),
         );
       }

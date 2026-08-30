@@ -15,13 +15,13 @@ class CommitmentPayment {
   final String id;
   final String commitmentId;
   final String userId;
-  
+
   final double amount;
   final DateTime paymentDate;
   final String? paymentMethod; // نقدي، بنكي، بطاقة، تحويل، شيك، أخرى
   final String? referenceNumber;
   final String? notes;
-  
+
   final DateTime createdAt;
   final DateTime updatedAt;
 
@@ -115,16 +115,16 @@ class CommitmentAttachment {
   final String id;
   final String commitmentId;
   final String userId;
-  
+
   final String attachmentType; // فاتورة، مستند، إيصال، عقد، صورة، مرفق آخر
   final String fileName;
   final String fileUrl;
   final int? fileSizeKb;
   final String? mimeType;
-  
+
   final String title;
   final String? description;
-  
+
   final DateTime uploadedAt;
 
   const CommitmentAttachment({
@@ -196,23 +196,24 @@ class CommitmentAppointment {
   final String id;
   final String commitmentId;
   final String userId;
-  
-  final String appointmentType; // موعد، تذكير، موعد دفع، موعد تجديد، موعد متابعة، أخرى
+
+  final String
+  appointmentType; // موعد، تذكير، موعد دفع، موعد تجديد، موعد متابعة، أخرى
   final String title;
   final String? description;
-  
+
   final DateTime appointmentDate;
   final TimeOfDay? appointmentTime;
   final int? durationMinutes;
-  
+
   final String? location;
-  
+
   final String status; // قادم، تم، ملغي، مؤجل
   final DateTime? completedAt;
-  
+
   final bool reminderEnabled;
   final int? reminderMinutesBefore;
-  
+
   final DateTime createdAt;
   final DateTime updatedAt;
 
@@ -239,10 +240,7 @@ class CommitmentAppointment {
     TimeOfDay? time;
     if (json['appointment_time'] != null) {
       final parts = (json['appointment_time'] as String).split(':');
-      time = TimeOfDay(
-        hour: int.parse(parts[0]),
-        minute: int.parse(parts[1]),
-      );
+      time = TimeOfDay(hour: int.parse(parts[0]), minute: int.parse(parts[1]));
     }
 
     return CommitmentAppointment(
@@ -319,17 +317,17 @@ class CommitmentNote {
   final String id;
   final String commitmentId;
   final String userId;
-  
+
   final String noteType; // ملاحظة، تسوية، تجديد، بيانات إدارية، تحديث، أخرى
   final String title;
   final String content;
-  
+
   final bool impactsAmount;
   final double? amountChange;
-  
+
   final bool impactsDate;
   final DateTime? newDueDate;
-  
+
   final DateTime createdAt;
 
   const CommitmentNote({
@@ -406,15 +404,15 @@ class CommitmentPerson {
   final String id;
   final String commitmentId;
   final String userId;
-  
+
   final String personName;
   final String? roleOrRelationship; // دائن، مدين، شاهد، طرف ثاني، وكيل، محامي
   final String? phoneNumber;
   final String? email;
   final String? nationalId;
-  
+
   final String? notes;
-  
+
   final DateTime createdAt;
 
   const CommitmentPerson({
@@ -465,7 +463,8 @@ class CommitmentPerson {
       'commitment_id': commitmentId,
       'user_id': userId,
       'person_name': personName,
-      if (roleOrRelationship != null) 'role_or_relationship': roleOrRelationship,
+      if (roleOrRelationship != null)
+        'role_or_relationship': roleOrRelationship,
       if (phoneNumber != null) 'phone_number': phoneNumber,
       if (email != null) 'email': email,
       if (nationalId != null) 'national_id': nationalId,
@@ -482,18 +481,18 @@ class CommitmentLocation {
   final String id;
   final String commitmentId;
   final String userId;
-  
+
   final String locationType; // عنوان، موقع حدث، مكتب، فرع، أخرى
   final String address;
   final String? city;
   final String? district;
   final String? postalCode;
-  
+
   final double? latitude;
   final double? longitude;
-  
+
   final String? notes;
-  
+
   final DateTime createdAt;
 
   const CommitmentLocation({
@@ -622,20 +621,20 @@ class CommitmentFullSummary {
   final String status;
   final DateTime createdAt;
   final DateTime updatedAt;
-  
+
   // Payment summary
   final double paidAmount;
   final double remainingAmount;
   final String paymentStatus;
   final int paymentCount;
-  
+
   // Counts
   final int attachmentsCount;
   final int upcomingAppointmentsCount;
   final int notesCount;
   final int relatedPeopleCount;
   final int locationsCount;
-  
+
   // Next appointment
   final DateTime? nextAppointmentDate;
 
@@ -691,4 +690,3 @@ class CommitmentFullSummary {
     );
   }
 }
-

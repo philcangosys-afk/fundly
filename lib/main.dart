@@ -7,10 +7,16 @@ import 'package:share_plus/share_plus.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'config/supabase_config.dart';
+import 'data/app_settings.dart';
 import 'data/home_dashboard_service.dart';
+import 'data/read_notifications_store.dart';
 import 'data/home_pin_items_service.dart';
 import 'data/home_pinned_shortcuts_store.dart';
+import 'data/delegations_repository.dart';
+import 'data/wallets_repository.dart';
 import 'l10n/home_strings.dart';
+import 'screens/app_lock_screen.dart';
+import 'screens/data_status_screen.dart';
 import 'screens/notifications_center_screen.dart';
 import 'screens/document_templates_screen.dart';
 import 'screens/people_management_screen.dart';
@@ -21,6 +27,7 @@ import 'screens/projects_activities_screen.dart';
 import 'screens/raffle_screen.dart';
 import 'screens/shared_commitments_screen.dart';
 import 'screens/smart_calendar_screen.dart';
+import 'widgets/shared/app_design.dart';
 import 'widgets/shared/search_matching.dart';
 
 Future<void> main() async {
@@ -29,6 +36,9 @@ Future<void> main() async {
     url: SupabaseConfig.url,
     publishableKey: SupabaseConfig.publishableKey,
   );
+  // تُحمَّل الإعدادات قبل بناء الواجهة، فيبدأ التطبيق بحجم النص والعملة
+  // وحالة القفل الصحيحة من أول إطار بلا ومضة قيم افتراضية.
+  await AppSettings.instance.load();
   runApp(const MyApp());
 }
 
@@ -37,19 +47,29 @@ class MyApp extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return MaterialApp(
-      title: HomeStrings.appTitle,
-      theme: ThemeData(
-        colorScheme: ColorScheme.fromSeed(seedColor: Color(0xFF1E3A8A)),
-        useMaterial3: true,
+    return ListenableBuilder(
+      listenable: AppSettings.instance,
+      builder: (context, _) => MaterialApp(
+        title: HomeStrings.appTitle,
+        // سِمة واحدة تُوحّد الحقول والأزرار والنوافذ والشيتات في كل
+        // التطبيق، بما فيها الشاشات التي لم نمرّ عليها يدويًا.
+        theme: buildAppTheme(),
+        // ملاحظة مهمة: لا تفرض Directionality.rtl عامًا هنا. شاشات هذا التطبيق
+        // مكتوبة على افتراض اتجاه افتراضي LTR مع تحديد rtl صراحةً داخل كل Row
+        // يحتاجه، واستخدام CrossAxisAlignment.end بمعنى "المحاذاة لليمين".
+        // فرض rtl عامًا يعكس كل هذه المحاذاة ويبعثر عناصر الشاشات بالكامل.
+        //
+        // أما builder هنا فيطبّق حجم النص المختار في الإعدادات على التطبيق
+        // كله؛ كان هذا الإعداد يُحفظ ولا يقرأه أحد.
+        builder: (context, child) => MediaQuery.withClampedTextScaling(
+          minScaleFactor: AppSettings.instance.textScale,
+          maxScaleFactor: AppSettings.instance.textScale,
+          child: child ?? const SizedBox.shrink(),
+        ),
+        home: const AppLockGate(child: HomePage()),
+        routes: {'/home': (context) => const HomePage()},
+        debugShowCheckedModeBanner: false,
       ),
-      // ملاحظة مهمة: لا تفرض Directionality.rtl عامًا هنا. شاشات هذا التطبيق
-      // مكتوبة على افتراض اتجاه افتراضي LTR مع تحديد rtl صراحةً داخل كل Row
-      // يحتاجه، واستخدام CrossAxisAlignment.end بمعنى "المحاذاة لليمين".
-      // فرض rtl عامًا يعكس كل هذه المحاذاة ويبعثر عناصر الشاشات بالكامل.
-      home: const HomePage(),
-      routes: {'/home': (context) => const HomePage()},
-      debugShowCheckedModeBanner: false,
     );
   }
 }
@@ -70,6 +90,9 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
   int _selectedIndex = 0;
   bool _showCategoriesInTwoColumns = true;
   bool _isLoadingMetrics = true;
+
+  /// رسالة فشل تحميل الأرقام من الخادم (null = نجح التحميل).
+  String? _metricsError;
   String _selectedHomeFilter = HomeStrings.filterAll;
   HomeDashboardMetrics _metrics = const HomeDashboardMetrics.empty();
   List<HomePinnedShortcut> _pinnedShortcuts = const [];
@@ -84,9 +107,43 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
     (_) => GlobalKey(),
   );
 
+  /// الصورة الشخصية المحفوظة في الإعدادات (null = لا صورة).
+  Uint8List? get _profilePhoto => AppSettings.instance.photo;
+
+  /// عدد التنبيهات المستحقة فعلًا الآن — نفس منطق مركز التنبيهات:
+  /// عنصر دخل نافذة تذكيره ولم يمرّ تاريخه بعد. يحترم إعدادات التنبيهات،
+  /// فإن أوقفها المستخدم لم تظهر أي نقطة حمراء.
+  /// عدد التنبيهات **غير المقروءة** فقط: النقطة الحمراء كانت تبقى مضاءة
+  /// حتى بعد أن يقرأ المستخدم كل شيء في مركز التنبيهات.
+  int get _alertsCount {
+    final settings = AppSettings.instance;
+    if (!settings.notificationsEnabled) return 0;
+    final now = DateUtils.dateOnly(DateTime.now());
+    final due = _metrics.calendarItems.where((item) {
+      if (!settings.expiryNotifications && item.isExpiry) return false;
+      final dueDate = DateUtils.dateOnly(item.date);
+      final lead = item.remindBeforeDays >= 0
+          ? item.remindBeforeDays
+          : settings.leadTimeDays;
+      final from = dueDate.subtract(Duration(days: lead));
+      return !now.isBefore(from) && !now.isAfter(dueDate);
+    });
+    return ReadNotificationsStore.instance.unreadCount(due);
+  }
+
+  void _onSettingsChanged() {
+    if (mounted) setState(() {});
+  }
+
   @override
   void initState() {
     super.initState();
+    // الاسم والصورة وحالة إخفاء المبالغ تظهر في ترويسة الرئيسية وملخصها،
+    // فأي تعديل في الإعدادات يجب أن ينعكس هنا فورًا.
+    AppSettings.instance.addListener(_onSettingsChanged);
+    // قراءة تنبيه في مركز التنبيهات تُطفئ النقطة الحمراء فورًا.
+    ReadNotificationsStore.instance.addListener(_onSettingsChanged);
+    ReadNotificationsStore.instance.load();
     _categoryFlashController = AnimationController(
       duration: const Duration(milliseconds: 700),
       vsync: this,
@@ -113,17 +170,25 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
     final persistedLayout = prefs.getBool(_layoutPrefsKey);
     final shortcuts = await HomePinnedShortcutsStore.load();
     HomeDashboardMetrics metrics = const HomeDashboardMetrics.empty();
+    String? loadError;
     try {
       final dashboardService = HomeDashboardService();
       metrics = await dashboardService.loadMetrics();
-    } catch (_) {
+    } catch (error) {
+      // كان الخطأ يُبتلع هنا صامتًا، فتظهر أصفار في كل مكان بلا أي إشارة
+      // إلى أن التحميل فشل أصلًا — وهو ما جعل عطل الجلسة يبدو كأن البيانات
+      // حُذفت. الآن يُحفظ الخطأ ويُعرض للمستخدم.
       metrics = const HomeDashboardMetrics.empty();
+      loadError = error.toString();
     }
     if (!mounted) return;
     setState(() {
-      _showCategoriesInTwoColumns = persistedLayout ?? true;
+      // العرض الافتراضي: أربعة مستطيلات تحت بعضها. عرض المربعين جنبًا
+      // إلى جنب يبقى خيارًا يختاره المستخدم من زر التبديل ويُحفظ.
+      _showCategoriesInTwoColumns = persistedLayout ?? false;
       _pinnedShortcuts = shortcuts;
       _metrics = metrics;
+      _metricsError = loadError;
       _isLoadingMetrics = false;
     });
   }
@@ -134,9 +199,14 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
       final dashboardService = HomeDashboardService();
       final metrics = await dashboardService.loadMetrics();
       if (!mounted) return;
-      setState(() => _metrics = metrics);
-    } catch (_) {
-      // Keep the previously loaded metrics if the refresh fails.
+      setState(() {
+        _metrics = metrics;
+        _metricsError = null;
+      });
+    } catch (error) {
+      // تبقى الأرقام السابقة كما هي، لكن يُعلَن الفشل بدل إخفائه.
+      if (!mounted) return;
+      setState(() => _metricsError = error.toString());
     }
   }
 
@@ -164,6 +234,8 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
 
   @override
   void dispose() {
+    AppSettings.instance.removeListener(_onSettingsChanged);
+    ReadNotificationsStore.instance.removeListener(_onSettingsChanged);
     _searchController.dispose();
     _homeScrollController.dispose();
     _categoryFlashController.dispose();
@@ -171,192 +243,186 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
     super.dispose();
   }
 
-  Widget _buildSummaryAndPinnedRow() {
-    final pinButton = Tooltip(
-      message: 'إدارة العناصر المثبتة',
-      child: InkWell(
-        key: const ValueKey('home-pin-picker'),
-        onTap: () {
-          HapticFeedback.selectionClick();
-          _openPinPicker();
-        },
-        borderRadius: BorderRadius.circular(12),
-        child: Container(
-          width: 40,
-          height: 40,
-          decoration: BoxDecoration(
-            color: const Color(0xFF2E7BFF),
-            borderRadius: BorderRadius.circular(12),
-            boxShadow: const [
-              BoxShadow(
-                color: Color(0x1A2E7BFF),
-                blurRadius: 10,
-                offset: Offset(0, 4),
-              ),
-            ],
-          ),
-          child: const Icon(
-            Icons.push_pin_outlined,
-            color: Colors.white,
-            size: 18,
-          ),
-        ),
-      ),
-    );
-
-    return SizedBox(
-      key: const ValueKey('home-summary-pin-panel'),
-      // ارتفاع محسوب بدقة على المحتوى الفعلي: حشوة (24) + الصف العلوي
-      // (74 = العنوان 20 + زر التثبيت 40 + المسافات) + فاصل (10) + سطر
-      // العناصر المثبتة (70، وبطاقتها 50 فقط). هذا يرفع البطاقة للأعلى
-      // ويزيل الفراغ الزائد الذي كان أسفل صندوق "الملخص الشامل".
-      height: 178,
-      child: Container(
-        padding: const EdgeInsets.all(12),
-        decoration: BoxDecoration(
-          color: Colors.white,
-          borderRadius: BorderRadius.circular(18),
-          border: Border.all(color: const Color(0xFFE2E8F0)),
-          boxShadow: const [
-            BoxShadow(
-              color: Color(0x120F172A),
-              blurRadius: 18,
-              offset: Offset(0, 5),
-            ),
-          ],
-        ),
-        child: Directionality(
-          textDirection: TextDirection.rtl,
-          child: Column(
-            crossAxisAlignment: CrossAxisAlignment.stretch,
-            children: [
-              // الصف العلوي: صندوق "الملخص الشامل" بحجم محتواه فقط (لم يعد
-              // يمتد لكامل ارتفاع البطاقة) بجانبه العنوان وزر التثبيت.
-              Row(
-                crossAxisAlignment: CrossAxisAlignment.start,
-                children: [
-              Container(
-                width: 96,
-                padding: const EdgeInsets.symmetric(vertical: 8),
-                decoration: BoxDecoration(
-                  color: const Color(0xFFF7F9FC),
-                  borderRadius: BorderRadius.circular(16),
-                  border: Border.all(color: const Color(0xFFE2E8F0)),
-                ),
-                child: Column(
-                  mainAxisAlignment: MainAxisAlignment.center,
+  /// شريحة الفلتر النشط: تُظهر اسم الفلتر وتلغيه بضغطة واحدة.
+  Widget _buildActiveFilterChip() {
+    return Row(
+      children: [
+        Flexible(
+          child: Material(
+            color: AppTheme.accentSoft,
+            borderRadius: BorderRadius.circular(AppTheme.rPill),
+            clipBehavior: Clip.antiAlias,
+            child: InkWell(
+              key: const ValueKey('home-active-filter-clear'),
+              onTap: () {
+                HapticFeedback.selectionClick();
+                setState(
+                  () => _selectedHomeFilter = HomeStrings.filterAll,
+                );
+              },
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(12, 8, 10, 8),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
                   children: [
-                    const Text(
-                      'الملخص',
-                      textAlign: TextAlign.center,
-                      style: TextStyle(
-                        fontSize: 15,
-                        fontWeight: FontWeight.w900,
-                        color: Color(0xFF0F172A),
+                    const Icon(
+                      Icons.filter_alt_rounded,
+                      size: 16,
+                      color: AppTheme.accentDark,
+                    ),
+                    const SizedBox(width: AppTheme.sSm),
+                    Flexible(
+                      child: Text(
+                        'الفلتر: $_selectedHomeFilter',
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          fontSize: 12.5,
+                          fontWeight: FontWeight.w800,
+                          color: AppTheme.accentDark,
+                        ),
                       ),
                     ),
-                    const SizedBox(height: 2),
-                    const Text(
-                      'الشامل',
-                      textAlign: TextAlign.center,
-                      style: TextStyle(
-                        fontSize: 15,
-                        fontWeight: FontWeight.w900,
-                        color: Color(0xFF64748B),
-                      ),
+                    const SizedBox(width: AppTheme.sSm),
+                    const Icon(
+                      Icons.close_rounded,
+                      size: 16,
+                      color: AppTheme.accentDark,
                     ),
                   ],
                 ),
               ),
-              const SizedBox(width: 12),
-              Expanded(
-                child: Padding(
-                  padding: const EdgeInsets.symmetric(horizontal: 4),
-                  child: Column(
-                    crossAxisAlignment: CrossAxisAlignment.stretch,
-                    children: [
-                      const SizedBox(height: 6),
-                      const Text(
-                        'اختر ما تريد متابعته بسرعة',
-                        textAlign: TextAlign.center,
-                        style: TextStyle(
-                          fontSize: 15,
-                          fontWeight: FontWeight.w900,
-                          color: Color(0xFF173F63),
-                        ),
-                      ),
-                      const SizedBox(height: 8),
-                      // زر إدارة العناصر المثبتة — نُقل إلى هنا ليكون مباشرةً
-                      // تحت عنوان "اختر ما تريد متابعته بسرعة" بدل موضعه
-                      // السابق داخل صندوق "الملخص الشامل".
-                      Center(child: pinButton),
-                    ],
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  /// شريط فشل التحميل: يظهر فقط حين يفشل جلب الأرقام فعلًا، ويفتح شاشة
+  /// "حالة البيانات والاتصال" التي تفصل بين عطل الجلسة وعطل الشبكة وغياب
+  /// السجلات.
+  Widget _buildMetricsErrorBanner() {
+    return Material(
+      color: AppTheme.warning.withValues(alpha: 0.12),
+      borderRadius: BorderRadius.circular(AppTheme.rField),
+      clipBehavior: Clip.antiAlias,
+      child: InkWell(
+        key: const ValueKey('home-metrics-error-banner'),
+        onTap: () {
+          HapticFeedback.selectionClick();
+          Navigator.of(context).push(
+            MaterialPageRoute(builder: (_) => const DataStatusScreen()),
+          );
+        },
+        child: Padding(
+          padding: const EdgeInsets.all(AppTheme.sLg),
+          child: Row(
+            children: [
+              const Icon(
+                Icons.cloud_off_rounded,
+                size: 20,
+                color: AppTheme.warning,
+              ),
+              const SizedBox(width: AppTheme.sSm),
+              const Expanded(
+                child: Text(
+                  'تعذّر تحميل البيانات من الخادم، والأرقام أدناه غير '
+                  'محدَّثة. اضغط لمعرفة السبب.',
+                  style: TextStyle(
+                    fontSize: 12.5,
+                    height: 1.5,
+                    fontWeight: FontWeight.w700,
+                    color: AppTheme.warning,
                   ),
                 ),
               ),
-                ],
-              ),
-              const SizedBox(height: 10),
-              // سطر العناصر المثبتة يمتد الآن على كامل عرض المستطيل بدل
-              // انحصاره في العمود المجاور لصندوق الملخص.
-              Expanded(
-                child: _pinnedShortcuts.isEmpty
-                            ? Container(
-                                decoration: BoxDecoration(
-                                  color: const Color(0xFFF8FAFC),
-                                  borderRadius: BorderRadius.circular(12),
-                                  border: Border.all(
-                                    color: const Color(0xFFE8EEF3),
-                                  ),
-                                ),
-                                child: const Row(
-                                  mainAxisAlignment: MainAxisAlignment.center,
-                                  children: [
-                                    Icon(
-                                      Icons.push_pin_outlined,
-                                      size: 13,
-                                      color: Color(0xFF94A3B8),
-                                    ),
-                                    SizedBox(width: 6),
-                                    Text(
-                                      'ابدأ بتثبيت العناصر المهمة',
-                                      textAlign: TextAlign.right,
-                                      style: TextStyle(
-                                        fontSize: 10,
-                                        fontWeight: FontWeight.w700,
-                                        color: Color(0xFF64748B),
-                                      ),
-                                    ),
-                                  ],
-                                ),
-                              )
-                            : ListView.separated(
-                                scrollDirection: Axis.horizontal,
-                                reverse: true,
-                                padding: EdgeInsets.zero,
-                                itemCount: _pinnedShortcuts.length,
-                                separatorBuilder: (_, _) =>
-                                    const SizedBox(width: 8),
-                                itemBuilder: (context, index) {
-                                  final shortcut = _pinnedShortcuts[index];
-                                  return SizedBox(
-                                    width: 118,
-                                    child: _HomePinnedCard(
-                                      key: ValueKey(
-                                        'home-pinned-${shortcut.id}',
-                                      ),
-                                      shortcut: shortcut,
-                                      onOpen: () => _openShortcut(shortcut),
-                                      onRemove: () =>
-                                          _removePinnedShortcut(shortcut.id),
-                                    ),
-                                  );
-                                },
-                              ),
-              ),
+              const AppChevron(),
             ],
           ),
         ),
+      ),
+    );
+  }
+
+  Widget _buildSummaryAndPinnedRow() {
+    // بطاقة واحدة بلون وحواف البطاقات الموحّدة في التطبيق: رمادي ناعم،
+    // نصف قطر كبير، بلا حدود ولا ظل. العنوان أقصى اليمين، وأزرار العمل
+    // أقصى اليسار — وهو ترتيب كل بطاقة أخرى في التطبيق.
+    //
+    // حُذف عنوان "اختر ما تريد متابعته بسرعة" الذي كان يشغل منتصف البطاقة
+    // ويكرّر ما يقوله سطر العناصر المثبتة نفسه.
+    return AppCard(
+      key: const ValueKey('home-summary-pin-panel'),
+      title: HomeStrings.summaryTitle,
+      subtitle: HomeStrings.summarySubtitle,
+      // فتح الملخص الشامل. كان هذا الصندوق يعرض العنوان ولا يستجيب للمس
+      // إطلاقًا، وشيت الملخص مكتوب في الشيفرة بلا أي زر يفتحه.
+      onTap: () {
+        HapticFeedback.selectionClick();
+        _openGlobalSummarySheet();
+      },
+      trailing: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          AppIconButton(
+            key: const ValueKey('home-pin-picker'),
+            icon: Icons.push_pin_outlined,
+            tooltip: 'إدارة العناصر المثبتة',
+            onTap: () {
+              HapticFeedback.selectionClick();
+              _openPinPicker();
+            },
+          ),
+          const SizedBox(width: AppTheme.sSm),
+          const AppChevron(),
+        ],
+      ),
+      child: SizedBox(
+        height: 62,
+        child: _pinnedShortcuts.isEmpty
+            ? AppInnerCard(
+                child: Center(
+                  child: Row(
+                    mainAxisAlignment: MainAxisAlignment.center,
+                    children: [
+                      const Icon(
+                        Icons.push_pin_outlined,
+                        size: 16,
+                        color: AppTheme.muted,
+                      ),
+                      const SizedBox(width: AppTheme.sSm),
+                      // مرن حتى يقصّ النص بدل أن يفيض على الشاشات الضيقة:
+                      // النص غير المرن داخل Row يتلقى عرضًا غير محدود
+                      // فلا يعمل معه ellipsis إطلاقًا.
+                      Flexible(
+                        child: Text(
+                          HomeStrings.pinHint,
+                          maxLines: 1,
+                          overflow: TextOverflow.ellipsis,
+                          style: AppTheme.emptyText,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              )
+            // بلا reverse: العناصر المثبتة تبدأ من اليمين كبقية الأشرطة.
+            : ListView.separated(
+                scrollDirection: Axis.horizontal,
+                padding: EdgeInsets.zero,
+                itemCount: _pinnedShortcuts.length,
+                separatorBuilder: (_, _) => const SizedBox(width: AppTheme.sSm),
+                itemBuilder: (context, index) {
+                  final shortcut = _pinnedShortcuts[index];
+                  return _HomePinnedCard(
+                    key: ValueKey('home-pinned-${shortcut.id}'),
+                    shortcut: shortcut,
+                    onOpen: () => _openShortcut(shortcut),
+                    onRemove: () => _removePinnedShortcut(shortcut.id),
+                  );
+                },
+              ),
       ),
     );
   }
@@ -367,21 +433,21 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
       (
         'income',
         HomeStrings.totalIncome,
-        '${_formatAmount(m.totalIncome)} درهم',
+        '${_formatAmount(m.totalIncome)} ${AppSettings.currencySuffix}',
         Icons.trending_up_rounded,
         const Color(0xFF07835C),
       ),
       (
         'expenses',
         HomeStrings.totalExpenses,
-        '${_formatAmount(m.totalExpenses)} درهم',
+        '${_formatAmount(m.totalExpenses)} ${AppSettings.currencySuffix}',
         Icons.trending_down_rounded,
         const Color(0xFFD05A3A),
       ),
       (
         'debts',
         HomeStrings.totalDebts,
-        '${_formatAmount(m.totalDebts)} درهم',
+        '${_formatAmount(m.totalDebts)} ${AppSettings.currencySuffix}',
         Icons.credit_card_rounded,
         const Color(0xFFC2415D),
       ),
@@ -446,7 +512,7 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
       context: context,
       isScrollControlled: true,
       useSafeArea: true,
-      backgroundColor: const Color(0xFFF5F8FC),
+      backgroundColor: AppTheme.page,
       barrierColor: Colors.black.withValues(alpha: 0.38),
       builder: (sheetContext) => StatefulBuilder(
         builder: (context, setSheetState) {
@@ -579,28 +645,13 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
-        Text(
-          title,
-          style: const TextStyle(
-            fontSize: 14,
-            fontWeight: FontWeight.w900,
-            color: Color(0xFF0F172A),
-          ),
-        ),
+        Text(title, style: AppTheme.cardTitle),
         const SizedBox(height: 3),
-        Text(
-          subtitle,
-          style: const TextStyle(
-            fontSize: 10.5,
-            height: 1.35,
-            fontWeight: FontWeight.w600,
-            color: Color(0xFF64748B),
-          ),
-        ),
-        const SizedBox(height: 9),
+        Text(subtitle, style: AppTheme.rowSubtitle),
+        const SizedBox(height: AppTheme.sMd),
         ...items.map(
           (item) => Padding(
-            padding: const EdgeInsets.only(bottom: 7),
+            padding: const EdgeInsets.only(bottom: AppTheme.sSm),
             child: _HomeSummaryItem(
               key: ValueKey('summary-${item.$1}'),
               title: item.$2,
@@ -662,7 +713,10 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
     return output;
   }
 
-  String _formatAmount(int value) => _formatArabicNumber(value);
+  /// المبالغ تُخفى عند تفعيل "إخفاء المبالغ الحساسة" في الإعدادات — كان
+  /// ذلك الإعداد يُحفظ ولا يؤثر في شيء.
+  String _formatAmount(int value) =>
+      AppSettings.maskAmount(_formatArabicNumber(value));
 
   String _formatCountWithUnit(int value, String unit) {
     return '${_formatArabicNumber(value)} $unit';
@@ -680,7 +734,7 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
       context: context,
       backgroundColor: Colors.white,
       shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+        borderRadius: BorderRadius.vertical(top: Radius.circular(AppTheme.rCard)),
       ),
       builder: (context) {
         return SafeArea(
@@ -932,7 +986,7 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: const Color(0xFFF5F8FC),
+      backgroundColor: AppTheme.page,
       body: _selectedIndex == 0
           ? RefreshIndicator(
               onRefresh: _refreshHomeMetrics,
@@ -946,17 +1000,13 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
                     toolbarHeight: 88,
                     floating: false,
                     pinned: true,
-                    backgroundColor: const Color(0xFFE0F2FE),
+                    backgroundColor: AppTheme.page,
                     elevation: 0,
                     flexibleSpace: FlexibleSpaceBar(
                       background: Container(
-                        decoration: const BoxDecoration(
-                          gradient: LinearGradient(
-                            colors: [Color(0xFFEAF7FF), Color(0xFFCDEBFB)],
-                            begin: Alignment.topRight,
-                            end: Alignment.bottomLeft,
-                          ),
-                        ),
+                        // ترويسة بيضاء نظيفة بدل تدرّج أزرق؛ العناصر
+                        // فوقها تأخذ ألوان النظام الموحّد نفسه.
+                        decoration: const BoxDecoration(color: AppTheme.page),
                         child: SafeArea(
                           bottom: false,
                           child: Padding(
@@ -980,24 +1030,23 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
                                           child: Container(
                                             width: 34,
                                             height: 34,
-                                            decoration: BoxDecoration(
-                                              color: Colors.white,
+                                            clipBehavior: Clip.antiAlias,
+                                            decoration: const BoxDecoration(
+                                              color: AppTheme.field,
                                               shape: BoxShape.circle,
-                                              border: Border.all(
-                                                color: const Color(0xFF8CC8E8),
-                                              ),
-                                              boxShadow: const [
-                                                BoxShadow(
-                                                  color: Color(0x1A1E40AF),
-                                                  blurRadius: 8,
-                                                  offset: Offset(0, 3),
-                                                ),
-                                              ],
                                             ),
-                                            child: const Icon(
-                                              Icons.person_rounded,
-                                              color: Color(0xFF0F6AA8),
-                                            ),
+                                            // الصورة الشخصية المحفوظة فعليًا
+                                            // بدل أيقونة ثابتة لا تتغير.
+                                            child: _profilePhoto == null
+                                                ? const Icon(
+                                                    Icons.person_rounded,
+                                                    size: 20,
+                                                    color: AppTheme.chevron,
+                                                  )
+                                                : Image.memory(
+                                                    _profilePhoto!,
+                                                    fit: BoxFit.cover,
+                                                  ),
                                           ),
                                         ),
                                       ),
@@ -1014,17 +1063,23 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
                                               onTap: _openAccountPage,
                                               borderRadius:
                                                   BorderRadius.circular(8),
-                                              child: const Padding(
-                                                padding: EdgeInsets.symmetric(
-                                                  horizontal: 6,
-                                                  vertical: 4,
-                                                ),
+                                              child: Padding(
+                                                padding:
+                                                    const EdgeInsets.symmetric(
+                                                      horizontal: 6,
+                                                      vertical: 4,
+                                                    ),
+                                                // الاسم المحفوظ في البيانات
+                                                // الشخصية، لا نص ثابت.
                                                 child: Text(
-                                                  HomeStrings.userName,
-                                                  style: TextStyle(
-                                                    fontSize: 13,
+                                                  AppSettings.instance.name,
+                                                  maxLines: 1,
+                                                  overflow:
+                                                      TextOverflow.ellipsis,
+                                                  style: const TextStyle(
+                                                    fontSize: 14,
                                                     fontWeight: FontWeight.w800,
-                                                    color: Color(0xFF0B4A73),
+                                                    color: AppTheme.title,
                                                   ),
                                                 ),
                                               ),
@@ -1032,14 +1087,14 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
                                           ),
                                         ),
                                       ),
-                                      _HomeHeaderAction(
+                                      // أزرار الترويسة بمقاس ونصف قطر
+                                      // ولون موحّد مع بقية أزرار التطبيق
+                                      // بدل ثلاثة أشكال مختلفة بحدود ملوّنة.
+                                      AppIconButton(
                                         tooltip: 'التقويم الذكي',
                                         icon: Icons.calendar_month_rounded,
-                                        backgroundColor: const Color(
-                                          0xFFDCFCE7,
-                                        ),
-                                        borderColor: const Color(0xFF86EFAC),
-                                        iconColor: const Color(0xFF047857),
+                                        background: AppTheme.field,
+                                        color: const Color(0xFF2E7D62),
                                         onTap: () => Navigator.of(context).push(
                                           MaterialPageRoute(
                                             builder: (_) =>
@@ -1047,16 +1102,18 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
                                           ),
                                         ),
                                       ),
-                                      const SizedBox(width: 8),
-                                      _HomeHeaderAction(
+                                      const SizedBox(width: AppTheme.sSm),
+                                      AppIconButton(
                                         tooltip: 'الإشعارات',
-                                        icon: Icons.notifications_none_rounded,
-                                        backgroundColor: const Color(
-                                          0xFFFFEDD5,
-                                        ),
-                                        borderColor: const Color(0xFFFDBA74),
-                                        iconColor: const Color(0xFFB45309),
-                                        showBadge: true,
+                                        icon: _alertsCount > 0
+                                            ? Icons.notifications_active_rounded
+                                            : Icons.notifications_none_rounded,
+                                        background: AppTheme.field,
+                                        color: const Color(0xFFB4741A),
+                                        // النقطة الحمراء كانت مضاءة دائمًا
+                                        // حتى بلا تنبيه واحد؛ الآن تعكس
+                                        // عدد الاستحقاقات القريبة فعلًا.
+                                        badge: _alertsCount > 0,
                                         onTap: () => Navigator.of(context).push(
                                           MaterialPageRoute(
                                             builder: (_) =>
@@ -1064,15 +1121,12 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
                                           ),
                                         ),
                                       ),
-                                      const SizedBox(width: 8),
-                                      _HomeHeaderAction(
+                                      const SizedBox(width: AppTheme.sSm),
+                                      AppIconButton(
                                         tooltip: HomeStrings.raffle,
                                         icon: Icons.casino_outlined,
-                                        backgroundColor: const Color(
-                                          0xFFEDE9FE,
-                                        ),
-                                        borderColor: const Color(0xFFC4B5FD),
-                                        iconColor: const Color(0xFF6D28D9),
+                                        background: AppTheme.field,
+                                        color: const Color(0xFF6D5BC4),
                                         onTap: () => Navigator.of(context).push(
                                           MaterialPageRoute(
                                             builder: (_) =>
@@ -1091,8 +1145,8 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
                                     textAlign: TextAlign.center,
                                     style: TextStyle(
                                       fontSize: 12.5,
-                                      fontWeight: FontWeight.w900,
-                                      color: Color(0xFF0B3555),
+                                      fontWeight: FontWeight.w600,
+                                      color: AppTheme.muted,
                                     ),
                                   ),
                                 ],
@@ -1125,38 +1179,32 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
                                 ),
                                 child: Row(
                                   children: [
+                                    // حقل بحث ممتلئ بلا حدود ولا ظل، بنفس
+                                    // نصف قطر ولون حقول التطبيق الموحّدة.
                                     Expanded(
-                                      child: Container(
-                                        decoration: BoxDecoration(
-                                          color: Colors.white,
-                                          borderRadius: BorderRadius.circular(
-                                            16,
-                                          ),
-                                          border: Border.all(
-                                            color: const Color(0xFFE1E8F0),
-                                          ),
-                                          boxShadow: const [
-                                            BoxShadow(
-                                              color: Color(0x0F0F172A),
-                                              blurRadius: 14,
-                                              offset: Offset(0, 5),
-                                            ),
-                                          ],
-                                        ),
+                                      child: SizedBox(
+                                        height: 52,
                                         child: TextField(
                                           controller: _searchController,
                                           textDirection: TextDirection.rtl,
+                                          style: const TextStyle(
+                                            fontSize: 13.5,
+                                            fontWeight: FontWeight.w600,
+                                            color: AppTheme.title,
+                                          ),
                                           decoration: InputDecoration(
                                             hintText: HomeStrings.searchHint,
                                             hintStyle: const TextStyle(
-                                              color: Color(0xFF94A3B8),
+                                              color: AppTheme.muted,
                                               fontSize: 13,
                                               fontWeight: FontWeight.w600,
                                             ),
+                                            filled: true,
+                                            fillColor: AppTheme.field,
                                             prefixIcon: const Icon(
                                               Icons.search_rounded,
-                                              color: Color(0xFF0F6AA8),
-                                              size: 22,
+                                              color: AppTheme.chevron,
+                                              size: 21,
                                             ),
                                             suffixIcon:
                                                 _searchController.text.isEmpty
@@ -1165,14 +1213,20 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
                                                     icon: const Icon(
                                                       Icons.close_rounded,
                                                       size: 18,
-                                                      color: Color(0xFF94A3B8),
+                                                      color: AppTheme.muted,
                                                     ),
                                                     onPressed: () {
                                                       HapticFeedback.selectionClick();
                                                       _searchController.clear();
                                                     },
                                                   ),
-                                            border: InputBorder.none,
+                                            border: OutlineInputBorder(
+                                              borderRadius:
+                                                  BorderRadius.circular(
+                                                    AppTheme.rField,
+                                                  ),
+                                              borderSide: BorderSide.none,
+                                            ),
                                             contentPadding:
                                                 const EdgeInsets.symmetric(
                                                   vertical: 15,
@@ -1181,28 +1235,28 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
                                         ),
                                       ),
                                     ),
-                                    const SizedBox(width: 8),
+                                    const SizedBox(width: AppTheme.sSm),
                                     _PressableScale(
                                       child: Material(
-                                        color: const Color(0xFF0F6AA8),
-                                        borderRadius: BorderRadius.circular(12),
+                                        color: AppTheme.accent,
+                                        borderRadius: BorderRadius.circular(
+                                          AppTheme.rField,
+                                        ),
+                                        clipBehavior: Clip.antiAlias,
                                         child: InkWell(
                                           onTap: () {
                                             HapticFeedback.selectionClick();
                                             _openHomeFilterSheet();
                                           },
-                                          borderRadius: BorderRadius.circular(
-                                            12,
-                                          ),
                                           child: const SizedBox(
-                                            width: 56,
+                                            width: 60,
                                             height: 52,
                                             child: Center(
                                               child: Text(
                                                 HomeStrings.filterLabel,
                                                 style: TextStyle(
                                                   color: Colors.white,
-                                                  fontSize: 12,
+                                                  fontSize: 13,
                                                   fontWeight: FontWeight.w800,
                                                 ),
                                               ),
@@ -1214,6 +1268,29 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
                                   ],
                                 ),
                               ),
+                              // الفلتر النشط ظاهر دائمًا: كان اختيار فلتر
+                              // يُخفي ثلاثة من أربعة صناديق بلا أي أثر مرئي،
+                              // فيبدو كأن الأقسام اختفت من التطبيق.
+                              if (_selectedHomeFilter != HomeStrings.filterAll)
+                                Padding(
+                                  padding: const EdgeInsetsDirectional.fromSTEB(
+                                    _homeHorizontalInset,
+                                    0,
+                                    _homeHorizontalInset,
+                                    10,
+                                  ),
+                                  child: _buildActiveFilterChip(),
+                                ),
+                              if (_metricsError != null)
+                                Padding(
+                                  padding: const EdgeInsetsDirectional.fromSTEB(
+                                    _homeHorizontalInset,
+                                    0,
+                                    _homeHorizontalInset,
+                                    10,
+                                  ),
+                                  child: _buildMetricsErrorBanner(),
+                                ),
                               Padding(
                                 padding: const EdgeInsetsDirectional.fromSTEB(
                                   _homeHorizontalInset,
@@ -1224,64 +1301,34 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
                                 child: _buildSummaryAndPinnedRow(),
                               ),
                               Padding(
+                                // مسافة أقل أسفل العنوان منها أعلاه، فيلتصق
+                                // بصفّ البطاقات الذي يعنونه بدل أن يطفو في
+                                // منتصف الفراغ بين مركز المتابعة والبطاقات.
                                 padding: const EdgeInsets.fromLTRB(
-                                  16,
-                                  16,
-                                  16,
-                                  12,
+                                  AppTheme.pageInset,
+                                  8,
+                                  AppTheme.pageInset,
+                                  6,
                                 ),
-                                child: Row(
-                                  textDirection: TextDirection.rtl,
-                                  children: [
-                                    Tooltip(
-                                      message: _showCategoriesInTwoColumns
-                                          ? 'عرض بطاقة واحدة في كل صف'
-                                          : 'عرض بطاقتين في كل صف',
-                                      child: _PressableScale(
-                                        child: Material(
-                                          color: const Color(
-                                            0xFF0F6AA8,
-                                          ).withValues(alpha: 0.1),
-                                          borderRadius: BorderRadius.circular(
-                                            10,
-                                          ),
-                                          child: InkWell(
-                                            key: const ValueKey(
-                                              'home-categories-layout-toggle',
-                                            ),
-                                            onTap: () {
-                                              HapticFeedback.selectionClick();
-                                              _toggleLayout();
-                                            },
-                                            borderRadius: BorderRadius.circular(
-                                              10,
-                                            ),
-                                            child: Padding(
-                                              padding: const EdgeInsets.all(9),
-                                              child: Icon(
-                                                _showCategoriesInTwoColumns
-                                                    ? Icons.grid_view_rounded
-                                                    : Icons.view_agenda_rounded,
-                                                color: const Color(0xFF0F6AA8),
-                                                size: 22,
-                                              ),
-                                            ),
-                                          ),
-                                        ),
-                                      ),
+                                // عنوان القسم بنمط العناوين الموحّد: العنوان
+                                // أقصى اليمين وزر تبديل العرض أقصى اليسار.
+                                child: AppSectionTitle(
+                                  text: HomeStrings.manageTitle,
+                                  trailing: AppIconButton(
+                                    key: const ValueKey(
+                                      'home-categories-layout-toggle',
                                     ),
-                                    const SizedBox(width: 10),
-                                    const Expanded(
-                                      child: Text(
-                                        'أدر أموالك وأملاكك باحترافية',
-                                        style: TextStyle(
-                                          fontSize: 17,
-                                          fontWeight: FontWeight.w900,
-                                          color: Color(0xFF0F172A),
-                                        ),
-                                      ),
-                                    ),
-                                  ],
+                                    tooltip: _showCategoriesInTwoColumns
+                                        ? 'عرض بطاقة واحدة في كل صف'
+                                        : 'عرض بطاقتين في كل صف',
+                                    icon: _showCategoriesInTwoColumns
+                                        ? Icons.grid_view_rounded
+                                        : Icons.view_agenda_rounded,
+                                    onTap: () {
+                                      HapticFeedback.selectionClick();
+                                      _toggleLayout();
+                                    },
+                                  ),
                                 ),
                               ),
                               if (_isLoadingMetrics)
@@ -1326,12 +1373,12 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
         const Color(0xFF3B82F6),
         [
           (
-            'ديون لك: ${_formatArabicNumber(_metrics.personalDebtsForYou)}',
+            'ديون لك: ${_formatAmount(_metrics.personalDebtsForYou)}',
             Icons.south_west_rounded,
             const Color(0xFF07835C),
           ),
           (
-            'ديون عليك: ${_formatArabicNumber(_metrics.personalDebtsOnYou)}',
+            'ديون عليك: ${_formatAmount(_metrics.personalDebtsOnYou)}',
             Icons.north_east_rounded,
             const Color(0xFFC73E4D),
           ),
@@ -1444,8 +1491,28 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
         })
         .toList(growable: false);
 
+    if (filteredCategories.isEmpty) {
+      // بلا هذه الحالة كانت الشاشة تظهر فارغة تمامًا بلا تفسير حين يستبعد
+      // الفلتر أو البحث كل الأقسام.
+      return Padding(
+        padding: const EdgeInsets.symmetric(horizontal: AppTheme.pageInset),
+        child: AppInnerCard(
+          // رمادي لا أبيض: خلفية الصفحة بيضاء، فالبطاقة البيضاء تختفي.
+          background: AppTheme.surface,
+          padding: const EdgeInsets.all(AppTheme.sXl),
+          child: Center(
+            child: Text(
+              'لا يوجد قسم مطابق للبحث أو الفلتر الحالي.',
+              textAlign: TextAlign.center,
+              style: AppTheme.emptyText,
+            ),
+          ),
+        ),
+      );
+    }
+
     return Padding(
-      padding: const EdgeInsets.symmetric(horizontal: 16),
+      padding: const EdgeInsets.symmetric(horizontal: AppTheme.pageInset),
       child: GridView.builder(
         key: const ValueKey('home-categories-grid'),
         itemCount: filteredCategories.length,
@@ -1453,9 +1520,13 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
         physics: const NeverScrollableScrollPhysics(),
         gridDelegate: SliverGridDelegateWithFixedCrossAxisCount(
           crossAxisCount: _showCategoriesInTwoColumns ? 2 : 1,
-          crossAxisSpacing: 12,
-          mainAxisSpacing: 12,
-          mainAxisExtent: _showCategoriesInTwoColumns ? 124 : 108,
+          crossAxisSpacing: AppTheme.cardGap,
+          mainAxisSpacing: AppTheme.cardGap,
+          // ارتفاع محسوب على المحتوى الفعلي:
+          //   عمودان: حشوة (24) + ترويسة (36) + فاصل (8) + مقتطفان
+          //           (28 + 6 + 28) = 130.
+          //   عمود واحد: حشوة (24) + ترويسة (40) + فاصل (8) + شريط (32).
+          mainAxisExtent: _showCategoriesInTwoColumns ? 134 : 106,
         ),
         itemBuilder: (context, index) {
           final category = filteredCategories[index];
@@ -1489,135 +1560,126 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
         final flash = _flashingCategoryIndex == categoryIndex
             ? _categoryFlashAnimation.value
             : 0.0;
+        // بطاقة رمادية ناعمة بلا حدود ولا ظل — نفس البطاقة الخارجية
+        // الموحّدة. الوميض عند الوصول من اختصار يلوّن الخلفية مؤقتًا فقط،
+        // بدل حدّ ملوّن سميك يجعل كل بطاقة تبدو مختلفة عن أختها.
         return _PressableScale(
-          child: Container(
-            decoration: BoxDecoration(
-              color: Color.lerp(
-                Colors.white,
-                color.withValues(alpha: 0.18),
-                flash,
-              ),
-              borderRadius: BorderRadius.circular(14),
-              boxShadow: [
-                BoxShadow(
-                  color: color.withValues(alpha: 0.1 + (flash * 0.25)),
-                  blurRadius: 10 + (flash * 10),
-                  offset: Offset(0, 4),
-                ),
-              ],
-              border: Border.all(
-                color: Color.lerp(color.withValues(alpha: 0.14), color, flash)!,
-                width: 1.2 + (flash * 1.8),
-              ),
+          child: Material(
+            color: Color.lerp(
+              AppTheme.surface,
+              color.withValues(alpha: 0.16),
+              flash,
             ),
-            child: Material(
-              color: Colors.transparent,
-              borderRadius: BorderRadius.circular(14),
-              clipBehavior: Clip.antiAlias,
-              child: InkWell(
-                key: ValueKey('home-category-$categoryIndex'),
-                onTap: () {
-                  HapticFeedback.selectionClick();
-                  _openPriorityScreen(title);
-                },
-                borderRadius: BorderRadius.circular(14),
-                child: Padding(
-                  padding: EdgeInsets.symmetric(
-                    horizontal: compact ? 10 : 12,
-                    vertical: 10,
-                  ),
-                  child: child,
-                ),
+            borderRadius: BorderRadius.circular(AppTheme.rCard),
+            clipBehavior: Clip.antiAlias,
+            child: InkWell(
+              key: ValueKey('home-category-$categoryIndex'),
+              onTap: () {
+                HapticFeedback.selectionClick();
+                _openPriorityScreen(title);
+              },
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(14, 12, 14, 12),
+                child: child,
               ),
             ),
           ),
         );
       },
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.end,
-        children: [
-          Row(
-            textDirection: TextDirection.rtl,
-            children: [
-              _HomeCategoryIcon(icon: icon, color: color),
-              const SizedBox(width: 8),
-              Expanded(
-                child: Text(
-                  key: ValueKey('home-category-title-$categoryIndex'),
-                  title,
-                  maxLines: compact ? 2 : 1,
-                  overflow: TextOverflow.ellipsis,
-                  textAlign: TextAlign.right,
-                  style: TextStyle(
-                    fontSize: compact ? 11.5 : 13.5,
-                    height: 1.2,
-                    fontWeight: FontWeight.w900,
-                    color: const Color(0xFF1F2937),
+      child: Directionality(
+        textDirection: TextDirection.rtl,
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Row(
+              children: [
+                AppIconTile(
+                  icon: icon,
+                  color: color,
+                  size: compact ? 36 : 40,
+                  iconSize: compact ? 18 : 20,
+                ),
+                const SizedBox(width: AppTheme.sSm),
+                Expanded(
+                  child: Text(
+                    key: ValueKey('home-category-title-$categoryIndex'),
+                    title,
+                    maxLines: compact ? 2 : 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: TextStyle(
+                      fontSize: compact ? 12 : 14.5,
+                      height: 1.25,
+                      fontWeight: FontWeight.w800,
+                      color: AppTheme.title,
+                    ),
                   ),
                 ),
-              ),
-              const SizedBox(width: 6),
-              _HomeCategoryArrow(color: color),
-            ],
-          ),
-          const SizedBox(height: 8),
-          Expanded(
-            child: compact
-                ? ListView.separated(
-                    scrollDirection: Axis.horizontal,
-                    reverse: true,
-                    itemCount: items.length,
-                    separatorBuilder: (_, __) => const SizedBox(width: 6),
-                    itemBuilder: (context, index) {
-                      final item = items[index];
-                      return SizedBox(
-                        width: 116,
-                        child: _HomeCategoryMetric(
-                          label: item.$1,
-                          icon: item.$2,
-                          color: item.$3,
-                          compact: true,
-                        ),
-                      );
-                    },
-                  )
-                // بأكثر من ثلاث مقتطفات لا يتسع الصف الواحد إلا بتصغير الخط
-                // إلى حدّ يصعب قراءته، لذا يتحول عندها إلى شريط أفقي قابل
-                // للتمرير بعرض ثابت لكل مقتطف.
-                : items.length > 3
-                ? ListView.separated(
-                    scrollDirection: Axis.horizontal,
-                    reverse: true,
-                    itemCount: items.length,
-                    separatorBuilder: (_, __) => const SizedBox(width: 7),
-                    itemBuilder: (context, index) => SizedBox(
-                      width: 148,
+                const SizedBox(width: AppTheme.sXs),
+                const AppChevron(size: 22),
+              ],
+            ),
+            const SizedBox(height: AppTheme.sSm),
+            // في عرض المربعين: مقتطفان تحت بعضهما بعرض المربع كاملًا، بدل
+            // شريط أفقي يُخفي ما بعد المقتطف الأول ويتطلّب سحبًا لرؤيته.
+            if (compact)
+              Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  for (
+                    var index = 0;
+                    index < (items.length < 2 ? items.length : 2);
+                    index++
+                  ) ...[
+                    if (index > 0) const SizedBox(height: 6),
+                    SizedBox(
+                      height: 28,
                       child: _HomeCategoryMetric(
                         label: items[index].$1,
                         icon: items[index].$2,
                         color: items[index].$3,
-                        compact: false,
+                        compact: true,
                       ),
                     ),
-                  )
-                : Row(
-                    textDirection: TextDirection.rtl,
-                    children: [
-                      for (var index = 0; index < items.length; index++) ...[
-                        if (index > 0) const SizedBox(width: 7),
-                        Expanded(
-                          child: _HomeCategoryMetric(
-                            label: items[index].$1,
-                            icon: items[index].$2,
-                            color: items[index].$3,
-                            compact: false,
-                          ),
+                  ],
+                ],
+              )
+            else
+              SizedBox(
+                height: 32,
+                child: items.length > 3
+                  ? ListView.separated(
+                      scrollDirection: Axis.horizontal,
+                      padding: EdgeInsets.zero,
+                      itemCount: items.length,
+                      separatorBuilder: (_, _) => const SizedBox(width: 7),
+                      itemBuilder: (context, index) => SizedBox(
+                        width: 152,
+                        child: _HomeCategoryMetric(
+                          label: items[index].$1,
+                          icon: items[index].$2,
+                          color: items[index].$3,
+                          compact: false,
                         ),
+                      ),
+                    )
+                  : Row(
+                      children: [
+                        for (var index = 0; index < items.length; index++) ...[
+                          if (index > 0) const SizedBox(width: 7),
+                          Expanded(
+                            child: _HomeCategoryMetric(
+                              label: items[index].$1,
+                              icon: items[index].$2,
+                              color: items[index].$3,
+                              compact: false,
+                            ),
+                          ),
+                        ],
                       ],
-                    ],
-                  ),
-          ),
-        ],
+                    ),
+            ),
+          ],
+        ),
       ),
     );
   }
@@ -1908,7 +1970,7 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
           ),
           WidgetSpan(child: SizedBox(width: 4)),
           TextSpan(
-            text: 'درهم',
+            text: AppSettings.currencySuffix,
             style: TextStyle(
               fontSize: 10,
               fontWeight: FontWeight.w600,
@@ -1921,10 +1983,15 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
   }
 
   Widget _buildBottomNavigation() {
-    return SafeArea(
+    return Container(
+      decoration: const BoxDecoration(
+        color: AppTheme.page,
+        border: Border(top: BorderSide(color: AppTheme.line)),
+      ),
+      child: SafeArea(
       top: false,
       child: Padding(
-        padding: const EdgeInsets.fromLTRB(12, 0, 12, 8),
+        padding: const EdgeInsets.fromLTRB(12, 4, 12, 6),
         child: Directionality(
           textDirection: TextDirection.rtl,
           child: Row(
@@ -1965,6 +2032,7 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
           ),
         ),
       ),
+      ),
     );
   }
 
@@ -1975,6 +2043,9 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
     required IconData selectedIcon,
   }) {
     final isSelected = _selectedIndex == index;
+    // شريط تنقّل مسطّح: أيقونة ونص، والمحدَّد يتلوّن بلون التطبيق. كانت
+    // كل أيقونة داخل مربّع متدرّج بحدود وظلّين، وهو شكل لا يتكرر في أي
+    // مكان آخر من التطبيق.
     return _PressableScale(
       child: InkWell(
         onTap: () {
@@ -1983,14 +2054,28 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
           }
           setState(() => _selectedIndex = index);
         },
-        borderRadius: BorderRadius.circular(18),
+        borderRadius: BorderRadius.circular(AppTheme.rInner),
         child: Padding(
-          padding: const EdgeInsets.symmetric(vertical: 2),
+          padding: const EdgeInsets.symmetric(vertical: 6),
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
-              _buildGlassNavIcon(isSelected ? selectedIcon : icon, isSelected),
-              const SizedBox(height: 8),
+              AnimatedContainer(
+                duration: const Duration(milliseconds: 200),
+                curve: Curves.easeOutCubic,
+                width: 46,
+                height: 32,
+                decoration: BoxDecoration(
+                  color: isSelected ? AppTheme.accentSoft : Colors.transparent,
+                  borderRadius: BorderRadius.circular(AppTheme.rIcon),
+                ),
+                child: Icon(
+                  isSelected ? selectedIcon : icon,
+                  size: 23,
+                  color: isSelected ? AppTheme.accentDark : AppTheme.muted,
+                ),
+              ),
+              const SizedBox(height: 5),
               SizedBox(
                 height: 16,
                 child: FittedBox(
@@ -2003,9 +2088,7 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
                       fontWeight: isSelected
                           ? FontWeight.w800
                           : FontWeight.w600,
-                      color: isSelected
-                          ? const Color(0xFF0F4D86)
-                          : const Color(0xFF64748B),
+                      color: isSelected ? AppTheme.accentDark : AppTheme.muted,
                     ),
                   ),
                 ),
@@ -2014,110 +2097,6 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
           ),
         ),
       ),
-    );
-  }
-
-  Widget _buildGlassNavIcon(IconData icon, bool selected) {
-    return AnimatedContainer(
-      duration: const Duration(milliseconds: 220),
-      curve: Curves.easeOutCubic,
-      width: 44,
-      height: 44,
-      decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(15),
-        gradient: LinearGradient(
-          colors: selected
-              ? const [Color(0xFF2E4F7D), Color(0xFF192F4B)]
-              : const [Color(0xFF2A3E58), Color(0xFF182536)],
-          begin: Alignment.topLeft,
-          end: Alignment.bottomRight,
-        ),
-        border: Border.all(
-          color: selected ? const Color(0xFF9BE8FF) : const Color(0xFF6B87A7),
-          width: selected ? 1.4 : 1,
-        ),
-        boxShadow: [
-          BoxShadow(
-            color: selected ? const Color(0x6600E5FF) : const Color(0x332F9BFF),
-            blurRadius: selected ? 14 : 8,
-            offset: const Offset(0, 3),
-          ),
-          const BoxShadow(
-            color: Color(0x1AFFFFFF),
-            blurRadius: 1,
-            offset: Offset(0, -1),
-          ),
-        ],
-      ),
-      child: Icon(
-        icon,
-        size: 24,
-        color: selected ? const Color(0xFFA7F3FF) : const Color(0xFF93C5FD),
-      ),
-    );
-  }
-}
-
-class _HomeHeaderAction extends StatelessWidget {
-  const _HomeHeaderAction({
-    required this.tooltip,
-    required this.icon,
-    required this.onTap,
-    this.backgroundColor = const Color(0xD1FFFFFF),
-    this.iconColor = const Color(0xFF0F6AA8),
-    this.borderColor = const Color(0xFFCCE5F4),
-    this.showBadge = false,
-  });
-
-  final String tooltip;
-  final IconData icon;
-  final VoidCallback onTap;
-  final Color backgroundColor;
-  final Color iconColor;
-  final Color borderColor;
-  final bool showBadge;
-
-  @override
-  Widget build(BuildContext context) {
-    return Stack(
-      clipBehavior: Clip.none,
-      children: [
-        Tooltip(
-          message: tooltip,
-          child: Material(
-            color: backgroundColor,
-            borderRadius: BorderRadius.circular(11),
-            child: InkWell(
-              onTap: onTap,
-              borderRadius: BorderRadius.circular(11),
-              child: SizedBox(
-                width: 40,
-                height: 40,
-                child: DecoratedBox(
-                  decoration: BoxDecoration(
-                    border: Border.all(color: borderColor),
-                    borderRadius: BorderRadius.circular(11),
-                  ),
-                  child: Icon(icon, color: iconColor, size: 21),
-                ),
-              ),
-            ),
-          ),
-        ),
-        if (showBadge)
-          Positioned(
-            top: 7,
-            right: 8,
-            child: Container(
-              width: 7,
-              height: 7,
-              decoration: const BoxDecoration(
-                color: Color(0xFFE5484D),
-                shape: BoxShape.circle,
-              ),
-            ),
-          ),
-      ],
     );
   }
 }
@@ -2142,114 +2121,68 @@ class _HomeSummaryItem extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    return Material(
-      color: selected ? color.withValues(alpha: 0.11) : const Color(0xFFF8FAFC),
-      borderRadius: BorderRadius.circular(10),
-      child: InkWell(
-        onTap: onTap,
-        borderRadius: BorderRadius.circular(10),
-        child: AnimatedContainer(
-          duration: const Duration(milliseconds: 180),
-          padding: const EdgeInsets.all(10),
-          decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(10),
-            border: Border.all(
-              color: selected
-                  ? color.withValues(alpha: 0.55)
-                  : const Color(0xFFE4EAF0),
-              width: selected ? 1.4 : 1,
+    // صف اختيار بنفس بنية صفوف القوائم في التطبيق: أيقونة يمينًا، عنوان
+    // ووصف، ثم مؤشر الاختيار يسارًا. التحديد بتغيير لون الخلفية فقط،
+    // بلا حدّ ملوّن يزيد سماكته ويقفز بالمحتوى.
+    return AnimatedContainer(
+      duration: const Duration(milliseconds: 180),
+      decoration: BoxDecoration(
+        color: selected ? color.withValues(alpha: 0.13) : AppTheme.surface,
+        borderRadius: BorderRadius.circular(AppTheme.rInner),
+      ),
+      clipBehavior: Clip.antiAlias,
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+          onTap: onTap,
+          child: Padding(
+            padding: const EdgeInsets.all(AppTheme.sMd),
+            child: Row(
+              textDirection: TextDirection.rtl,
+              children: [
+                AppIconTile(icon: icon, color: color, size: 38, iconSize: 19),
+                const SizedBox(width: AppTheme.sMd),
+                Expanded(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Text(
+                        title,
+                        style: const TextStyle(
+                          fontSize: 13,
+                          fontWeight: FontWeight.w800,
+                          color: AppTheme.title,
+                          height: 1.25,
+                        ),
+                      ),
+                      const SizedBox(height: 3),
+                      Text(
+                        detail,
+                        maxLines: 2,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          fontSize: 11,
+                          height: 1.4,
+                          fontWeight: FontWeight.w500,
+                          color: AppTheme.muted,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                const SizedBox(width: AppTheme.sSm),
+                Icon(
+                  selected
+                      ? Icons.check_circle_rounded
+                      : Icons.radio_button_unchecked_rounded,
+                  color: selected ? color : AppTheme.muted,
+                  size: 20,
+                ),
+              ],
             ),
-          ),
-          child: Row(
-            textDirection: TextDirection.rtl,
-            children: [
-              Container(
-                width: 38,
-                height: 38,
-                decoration: BoxDecoration(
-                  color: color.withValues(alpha: 0.11),
-                  borderRadius: BorderRadius.circular(9),
-                ),
-                child: Icon(icon, color: color, size: 20),
-              ),
-              const SizedBox(width: 10),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      title,
-                      style: const TextStyle(
-                        fontSize: 12,
-                        fontWeight: FontWeight.w900,
-                        color: Color(0xFF1F2937),
-                      ),
-                    ),
-                    const SizedBox(height: 3),
-                    Text(
-                      detail,
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
-                        fontSize: 10.5,
-                        height: 1.3,
-                        fontWeight: FontWeight.w600,
-                        color: Color(0xFF64748B),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-              const SizedBox(width: 7),
-              Icon(
-                selected
-                    ? Icons.check_circle_rounded
-                    : Icons.radio_button_unchecked_rounded,
-                color: selected ? color : const Color(0xFFB6C1CD),
-                size: 20,
-              ),
-            ],
           ),
         ),
       ),
-    );
-  }
-}
-
-class _HomeCategoryIcon extends StatelessWidget {
-  const _HomeCategoryIcon({required this.icon, required this.color});
-
-  final IconData icon;
-  final Color color;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.all(8),
-      decoration: BoxDecoration(
-        color: color.withValues(alpha: 0.12),
-        borderRadius: BorderRadius.circular(10),
-      ),
-      child: Icon(icon, color: color, size: 18),
-    );
-  }
-}
-
-class _HomeCategoryArrow extends StatelessWidget {
-  const _HomeCategoryArrow({required this.color});
-
-  final Color color;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      width: 27,
-      height: 27,
-      decoration: BoxDecoration(
-        color: color.withValues(alpha: 0.09),
-        shape: BoxShape.circle,
-      ),
-      child: Icon(Icons.arrow_forward_ios_rounded, color: color, size: 12),
     );
   }
 }
@@ -2269,17 +2202,13 @@ class _HomeCategoryMetric extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final metricTextStyle = TextStyle(
-      fontSize: compact ? 11.2 : 12.2,
-      fontWeight: FontWeight.w800,
-      height: 1.1,
-      color: color,
-      fontFamilyFallback: const ['Cairo', 'Noto Kufi Arabic', 'Tahoma'],
-    );
-
-    return SizedBox(
-      width: double.infinity,
-      height: compact ? 31 : 30,
+    // مقتطف داخل بطاقة الفئة: بطاقة داخلية بيضاء بنفس نصف قطر البطاقات
+    // الداخلية في التطبيق، بدل صف عارٍ بلا حاوية.
+    return AppInnerCard(
+      padding: EdgeInsets.symmetric(
+        horizontal: compact ? 7 : 9,
+        vertical: compact ? 5 : 6,
+      ),
       child: Row(
         textDirection: TextDirection.rtl,
         children: [
@@ -2291,7 +2220,21 @@ class _HomeCategoryMetric extends StatelessWidget {
               child: FittedBox(
                 fit: BoxFit.scaleDown,
                 alignment: Alignment.centerRight,
-                child: Text(label, maxLines: 1, style: metricTextStyle),
+                child: Text(
+                  label,
+                  maxLines: 1,
+                  style: TextStyle(
+                    fontSize: compact ? 11 : 12,
+                    fontWeight: FontWeight.w700,
+                    height: 1.15,
+                    color: color,
+                    fontFamilyFallback: const [
+                      'Cairo',
+                      'Noto Kufi Arabic',
+                      'Tahoma',
+                    ],
+                  ),
+                ),
               ),
             ),
           ),
@@ -2319,83 +2262,67 @@ class _HomePinnedCard extends StatelessWidget {
         ? shortcut.id.split(':').first
         : shortcut.moduleId;
     final style = _pinModuleStyle(moduleId);
-    return Align(
-      alignment: Alignment.center,
-      child: Material(
-        color: style.color.withValues(alpha: 0.08),
-        borderRadius: BorderRadius.circular(10),
-        child: InkWell(
-          onTap: onOpen,
-          borderRadius: BorderRadius.circular(10),
-          child: Container(
-            key: ValueKey('home-pinned-card-${shortcut.id}'),
-            width: 152,
-            height: 50,
-            padding: const EdgeInsetsDirectional.fromSTEB(7, 4, 3, 4),
-            decoration: BoxDecoration(
-              borderRadius: BorderRadius.circular(10),
-              border: Border.all(color: style.color.withValues(alpha: 0.22)),
+    // بطاقة داخلية بيضاء داخل البطاقة الرمادية — نفس نمط البطاقات
+    // الداخلية في كل التطبيق.
+    return SizedBox(
+      width: 158,
+      child: AppInnerCard(
+        key: ValueKey('home-pinned-card-${shortcut.id}'),
+        onTap: onOpen,
+        padding: const EdgeInsetsDirectional.fromSTEB(10, 8, 4, 8),
+        child: Row(
+          children: [
+            AppIconTile(
+              icon: style.icon,
+              color: style.color,
+              size: 32,
+              iconSize: 16,
             ),
-            child: Row(
-              children: [
-                Container(
-                  width: 28,
-                  height: 28,
-                  decoration: BoxDecoration(
-                    color: style.color.withValues(alpha: 0.13),
-                    borderRadius: BorderRadius.circular(8),
+            const SizedBox(width: AppTheme.sSm),
+            Expanded(
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                crossAxisAlignment: CrossAxisAlignment.start,
+                children: [
+                  Text(
+                    shortcut.title,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      fontSize: 11.5,
+                      fontWeight: FontWeight.w800,
+                      color: AppTheme.title,
+                      height: 1.2,
+                    ),
                   ),
-                  child: Icon(style.icon, size: 16, color: style.color),
-                ),
-                const SizedBox(width: 6),
-                Expanded(
-                  child: Column(
-                    mainAxisAlignment: MainAxisAlignment.center,
-                    crossAxisAlignment: CrossAxisAlignment.start,
-                    children: [
-                      Text(
-                        shortcut.title,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(
-                          fontSize: 10.5,
-                          fontWeight: FontWeight.w900,
-                          color: Color(0xFF17212B),
-                        ),
-                      ),
-                      const SizedBox(height: 1),
-                      Text(
-                        shortcut.subtitle.isEmpty
-                            ? style.label
-                            : shortcut.subtitle,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(
-                          fontSize: 8.5,
-                          color: Color(0xFF718096),
-                        ),
-                      ),
-                    ],
+                  const SizedBox(height: 2),
+                  Text(
+                    shortcut.subtitle.isEmpty ? style.label : shortcut.subtitle,
+                    maxLines: 1,
+                    overflow: TextOverflow.ellipsis,
+                    style: const TextStyle(
+                      fontSize: 9.5,
+                      fontWeight: FontWeight.w500,
+                      color: AppTheme.muted,
+                      height: 1.2,
+                    ),
                   ),
-                ),
-                IconButton(
-                  tooltip: 'إلغاء التثبيت',
-                  onPressed: onRemove,
-                  visualDensity: VisualDensity.compact,
-                  constraints: const BoxConstraints.tightFor(
-                    width: 26,
-                    height: 26,
-                  ),
-                  padding: EdgeInsets.zero,
-                  icon: const Icon(
-                    Icons.close_rounded,
-                    size: 15,
-                    color: Color(0xFF94A3B8),
-                  ),
-                ),
-              ],
+                ],
+              ),
             ),
-          ),
+            IconButton(
+              tooltip: 'إلغاء التثبيت',
+              onPressed: onRemove,
+              visualDensity: VisualDensity.compact,
+              constraints: const BoxConstraints.tightFor(width: 26, height: 26),
+              padding: EdgeInsets.zero,
+              icon: const Icon(
+                Icons.close_rounded,
+                size: 15,
+                color: AppTheme.muted,
+              ),
+            ),
+          ],
         ),
       ),
     );
@@ -2461,11 +2388,10 @@ class _PinItemsListState extends State<_PinItemsList> {
       return Center(
         child: Container(
           width: 260,
-          padding: const EdgeInsets.all(24),
+          padding: const EdgeInsets.all(AppTheme.sXxl),
           decoration: BoxDecoration(
-            color: Colors.white,
-            borderRadius: BorderRadius.circular(16),
-            border: Border.all(color: const Color(0xFFE5ECEA)),
+            color: AppTheme.surface,
+            borderRadius: BorderRadius.circular(AppTheme.rCard),
           ),
           child: const Column(
             mainAxisSize: MainAxisSize.min,
@@ -2879,6 +2805,11 @@ class _ReportsArchiveHubPageState extends State<_ReportsArchiveHubPage> {
     return '$d/$m/${date.year}';
   }
 
+  /// تنسيق مبالغ التقارير.
+  ///
+  /// لا يُطبَّق هنا "إخفاء المبالغ الحساسة": ذلك الإعداد يخفي الأرقام عن
+  /// نظرة عابرة على الشاشة الرئيسية، أما التقرير فيصنعه المستخدم عمدًا
+  /// ليقرأه أو يرسله، وتقرير بأرقام ممحوّة لا فائدة منه.
   String _formatAmount(int value) {
     final text = value.abs().toString();
     final buffer = StringBuffer();
@@ -2927,18 +2858,18 @@ class _ReportsArchiveHubPageState extends State<_ReportsArchiveHubPage> {
     switch (section) {
       case 'الملخص المالي':
         return [
-          ('إجمالي الدخل', '${_formatAmount(m.totalIncome)} درهم'),
-          ('إجمالي المصروفات', '${_formatAmount(m.totalExpenses)} درهم'),
+          ('إجمالي الدخل', '${_formatAmount(m.totalIncome)} ${AppSettings.currencySuffix}'),
+          ('إجمالي المصروفات', '${_formatAmount(m.totalExpenses)} ${AppSettings.currencySuffix}'),
           (
             'الصافي',
-            '${_formatAmount(m.totalIncome - m.totalExpenses)} درهم',
+            '${_formatAmount(m.totalIncome - m.totalExpenses)} ${AppSettings.currencySuffix}',
           ),
         ];
       case 'الديون':
         return [
-          ('إجمالي الديون', '${_formatAmount(m.totalDebts)} درهم'),
-          ('ديون لك', '${_formatAmount(m.personalDebtsForYou)} درهم'),
-          ('ديون عليك', '${_formatAmount(m.personalDebtsOnYou)} درهم'),
+          ('إجمالي الديون', '${_formatAmount(m.totalDebts)} ${AppSettings.currencySuffix}'),
+          ('ديون لك', '${_formatAmount(m.personalDebtsForYou)} ${AppSettings.currencySuffix}'),
+          ('ديون عليك', '${_formatAmount(m.personalDebtsOnYou)} ${AppSettings.currencySuffix}'),
         ];
       case 'الالتزامات والمهام':
         return [
@@ -3041,7 +2972,9 @@ class _ReportsArchiveHubPageState extends State<_ReportsArchiveHubPage> {
       fromDate: _reportFromDate,
       toDate: _reportToDate,
       dataFields: fields,
-      createdBy: HomeStrings.userName,
+      // اسم المستخدم من بياناته المحفوظة، لا نص ثابت يبقى كما هو بعد
+      // تعديل الملف الشخصي.
+      createdBy: AppSettings.instance.name,
       createdAt: DateTime.now(),
     );
     setState(() {
@@ -3157,7 +3090,7 @@ class _ReportsArchiveHubPageState extends State<_ReportsArchiveHubPage> {
       isScrollControlled: true,
       backgroundColor: Colors.white,
       shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(22)),
+        borderRadius: BorderRadius.vertical(top: Radius.circular(AppTheme.rCard)),
       ),
       builder: (sheetContext) {
         return Directionality(
@@ -3253,8 +3186,8 @@ class _ReportsArchiveHubPageState extends State<_ReportsArchiveHubPage> {
                           backgroundColor: _accent,
                           minimumSize: const Size.fromHeight(46),
                           shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(12),
-                          ),
+          borderRadius: BorderRadius.circular(AppTheme.rField),
+        ),
                         ),
                       ),
                     ],
@@ -3270,11 +3203,11 @@ class _ReportsArchiveHubPageState extends State<_ReportsArchiveHubPage> {
 
   Widget _previewSection(String title, List<(String, String)> rows) {
     return Container(
-      padding: const EdgeInsets.all(13),
+      padding: const EdgeInsets.all(AppTheme.sLg),
+      // شيت المعاينة أبيض، فالبطاقة داخله رمادية لتظهر.
       decoration: BoxDecoration(
-        color: const Color(0xFFF8FAFC),
-        borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: const Color(0xFFE6ECF3)),
+        color: AppTheme.surface,
+        borderRadius: BorderRadius.circular(AppTheme.rField),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -3396,10 +3329,9 @@ class _ReportsArchiveHubPageState extends State<_ReportsArchiveHubPage> {
       child: Container(
         padding: const EdgeInsets.symmetric(vertical: 11, horizontal: 8),
         decoration: BoxDecoration(
-          color: Colors.white,
-          borderRadius: BorderRadius.circular(13),
-          border: Border.all(color: const Color(0xFFE2E8F0)),
-        ),
+            color: AppTheme.surface,
+            borderRadius: BorderRadius.circular(AppTheme.rField),
+          ),
         child: Column(
           children: [
             Icon(icon, size: 18, color: _accent),
@@ -3472,10 +3404,9 @@ class _ReportsArchiveHubPageState extends State<_ReportsArchiveHubPage> {
       width: double.infinity,
       padding: const EdgeInsets.symmetric(vertical: 26, horizontal: 16),
       decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: const Color(0xFFE2E8F0)),
-      ),
+            color: AppTheme.surface,
+            borderRadius: BorderRadius.circular(AppTheme.rField),
+          ),
       child: Column(
         children: [
           Icon(icon, size: 30, color: const Color(0xFFCBD5E1)),
@@ -3499,21 +3430,12 @@ class _ReportsArchiveHubPageState extends State<_ReportsArchiveHubPage> {
     return Container(
       margin: const EdgeInsets.only(bottom: 10),
       decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(16),
-        border: Border.all(color: const Color(0xFFE2E8F0)),
-        boxShadow: const [
-          BoxShadow(
-            color: Color(0x0A0F172A),
-            blurRadius: 10,
-            offset: Offset(0, 3),
+            color: AppTheme.surface,
+            borderRadius: BorderRadius.circular(AppTheme.rField),
           ),
-        ],
-      ),
+      clipBehavior: Clip.antiAlias,
       child: Material(
         color: Colors.transparent,
-        borderRadius: BorderRadius.circular(16),
-        clipBehavior: Clip.antiAlias,
         child: InkWell(
           onTap: () => _showReportPreview(report),
           child: Padding(
@@ -3695,18 +3617,15 @@ class _ReportsArchiveHubPageState extends State<_ReportsArchiveHubPage> {
       _baseDecoration().copyWith(labelText: label);
 
   InputDecoration _baseDecoration() => InputDecoration(
+    // حقل ممتلئ بلا حدود بنفس نصف قطر ولون حقول التطبيق.
     filled: true,
-    fillColor: Colors.white,
+    fillColor: AppTheme.field,
     border: OutlineInputBorder(
-      borderRadius: BorderRadius.circular(12),
-      borderSide: const BorderSide(color: Color(0xFFE2E8F0)),
-    ),
-    enabledBorder: OutlineInputBorder(
-      borderRadius: BorderRadius.circular(12),
-      borderSide: const BorderSide(color: Color(0xFFE2E8F0)),
+      borderRadius: BorderRadius.circular(AppTheme.rField),
+      borderSide: BorderSide.none,
     ),
     focusedBorder: OutlineInputBorder(
-      borderRadius: BorderRadius.circular(12),
+      borderRadius: BorderRadius.circular(AppTheme.rField),
       borderSide: const BorderSide(color: _accent, width: 1.4),
     ),
   );
@@ -3742,9 +3661,8 @@ class _ReportsArchiveHubPageState extends State<_ReportsArchiveHubPage> {
         Container(
           padding: const EdgeInsets.all(14),
           decoration: BoxDecoration(
-            color: Colors.white,
-            borderRadius: BorderRadius.circular(16),
-            border: Border.all(color: const Color(0xFFE2E8F0)),
+            color: AppTheme.surface,
+            borderRadius: BorderRadius.circular(AppTheme.rField),
           ),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -3899,8 +3817,8 @@ class _ReportsArchiveHubPageState extends State<_ReportsArchiveHubPage> {
                   backgroundColor: _accent,
                   minimumSize: const Size.fromHeight(48),
                   shape: RoundedRectangleBorder(
-                    borderRadius: BorderRadius.circular(12),
-                  ),
+          borderRadius: BorderRadius.circular(AppTheme.rField),
+        ),
                 ),
               ),
             ],
@@ -3918,8 +3836,8 @@ class _ReportsArchiveHubPageState extends State<_ReportsArchiveHubPage> {
             side: const BorderSide(color: _accent),
             minimumSize: const Size.fromHeight(46),
             shape: RoundedRectangleBorder(
-              borderRadius: BorderRadius.circular(12),
-            ),
+          borderRadius: BorderRadius.circular(AppTheme.rField),
+        ),
           ),
         ),
         const SizedBox(height: 18),
@@ -3968,9 +3886,8 @@ class _ReportsArchiveHubPageState extends State<_ReportsArchiveHubPage> {
         Container(
           padding: const EdgeInsets.all(13),
           decoration: BoxDecoration(
-            color: Colors.white,
-            borderRadius: BorderRadius.circular(16),
-            border: Border.all(color: const Color(0xFFE2E8F0)),
+            color: AppTheme.surface,
+            borderRadius: BorderRadius.circular(AppTheme.rField),
           ),
           child: Column(
             crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -4106,10 +4023,9 @@ class _ReportsArchiveHubPageState extends State<_ReportsArchiveHubPage> {
       padding: const EdgeInsets.only(top: 6),
       child: Container(
         decoration: BoxDecoration(
-          color: Colors.white,
-          borderRadius: BorderRadius.circular(12),
-          border: Border.all(color: const Color(0xFFE2E8F0)),
-        ),
+            color: AppTheme.surface,
+            borderRadius: BorderRadius.circular(AppTheme.rField),
+          ),
         child: Column(
           mainAxisSize: MainAxisSize.min,
           children: [
@@ -4170,22 +4086,23 @@ class _ReportsArchiveHubPageState extends State<_ReportsArchiveHubPage> {
       child: DefaultTabController(
         length: 2,
         child: Scaffold(
-          backgroundColor: const Color(0xFFF5F8FC),
+          backgroundColor: AppTheme.page,
           appBar: AppBar(
             title: const Text(
               'التقارير / الأرشيف',
               style: TextStyle(fontWeight: FontWeight.w900),
             ),
             centerTitle: true,
-            backgroundColor: Colors.white,
+            backgroundColor: AppTheme.page,
             surfaceTintColor: Colors.transparent,
-            foregroundColor: const Color(0xFF0F172A),
+            foregroundColor: AppTheme.title,
             elevation: 0,
+            scrolledUnderElevation: 0,
             bottom: const TabBar(
               labelColor: _accent,
-              unselectedLabelColor: Color(0xFF94A3B8),
+              unselectedLabelColor: AppTheme.muted,
               indicatorColor: _accent,
-              indicatorWeight: 2.6,
+              indicatorWeight: 3,
               labelStyle: TextStyle(
                 fontSize: 13.5,
                 fontWeight: FontWeight.w900,
@@ -4279,32 +4196,60 @@ class _DelegationsHubPage extends StatefulWidget {
 
 class _DelegationsHubPageState extends State<_DelegationsHubPage> {
   String _selectedFilter = 'all';
-  late final List<_DelegationRecord> _delegations = [
-    _DelegationRecord(
-      delegateName: 'أحمد محمد',
-      delegationType: 'الالتزامات المالية',
-      permissions: const ['عرض البيانات', 'إضافة السجلات', 'تعديل السجلات'],
-      startDate: DateTime.now().subtract(const Duration(days: 45)),
-      endDate: DateTime.now().add(const Duration(days: 180)),
-      active: true,
-    ),
-    _DelegationRecord(
-      delegateName: 'شركة الأمان',
-      delegationType: 'العقارات والمشاريع',
-      permissions: const ['عرض البيانات'],
-      startDate: DateTime.now().subtract(const Duration(days: 120)),
-      endDate: DateTime.now().add(const Duration(days: 14)),
-      active: true,
-    ),
-    _DelegationRecord(
-      delegateName: 'سارة عبدالله',
-      delegationType: 'العقارات والمشاريع',
-      permissions: const ['عرض البيانات', 'تعديل السجلات'],
-      startDate: DateTime.now().subtract(const Duration(days: 90)),
-      endDate: DateTime.now().add(const Duration(days: 90)),
-      active: false,
-    ),
-  ];
+
+  // كانت هذه قائمة داخل الذاكرة مصحوبة بثلاثة تفويضات وهمية: كل إضافة أو
+  // تعديل أو حذف يضيع بمجرد الخروج من الصفحة، وتعود البيانات الوهمية.
+  final DelegationsRepository _repository = SupabaseDelegationsRepository();
+  List<_DelegationRecord> _delegations = [];
+  bool _loading = true;
+  String? _loadError;
+
+  @override
+  void initState() {
+    super.initState();
+    _load();
+  }
+
+  Future<void> _load() async {
+    if (!mounted) return;
+    setState(() {
+      // يُعرض مؤشر التحميل في أول تحميل فقط؛ إظهاره أثناء السحب للتحديث
+      // يزيل القائمة ومعها مؤشر السحب نفسه قبل أن يكتمل.
+      _loading = _delegations.isEmpty;
+      _loadError = null;
+    });
+    try {
+      final rows = await _repository.fetchDelegations();
+      if (!mounted) return;
+      setState(() {
+        _delegations = rows.map(_DelegationRecord.fromRecord).toList();
+        _loading = false;
+      });
+    } catch (_) {
+      if (!mounted) return;
+      setState(() {
+        _loading = false;
+        _loadError = 'تعذّر تحميل التفويضات. تحقّق من الاتصال وحاول مجددًا.';
+      });
+    }
+  }
+
+  void _notify(String message) {
+    if (!mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(message), behavior: SnackBarBehavior.floating),
+    );
+  }
+
+  Future<void> _persist(_DelegationRecord record, {String? notice}) async {
+    try {
+      await _repository.upsertDelegation(record.toRecord());
+      await _load();
+      if (notice != null) _notify(notice);
+    } catch (_) {
+      _notify('تعذّر حفظ التفويض. حاول مرة أخرى.');
+    }
+  }
 
   String _formatDate(DateTime date) {
     final d = date.day.toString().padLeft(2, '0');
@@ -4407,20 +4352,11 @@ class _DelegationsHubPageState extends State<_DelegationsHubPage> {
     final delegateController = TextEditingController(
       text: existing?.delegateName ?? '',
     );
-    final types = const [
-      'الالتزامات المالية',
-      'العقارات والمشاريع',
-      'الأفراد والجهات',
-      'جميع الوحدات',
-    ];
+    // القوائم الرسمية من طبقة البيانات بدل ثلاث قوائم متباينة (النموذج،
+    // المستودع، القاعدة) لا يطابق بعضها بعضًا.
+    final types = DelegationRecord.scopes;
     String selectedType = existing?.delegationType ?? types.first;
-    final allPermissions = const [
-      'عرض البيانات',
-      'إضافة السجلات',
-      'تعديل السجلات',
-      'حذف السجلات',
-      'اعتماد العمليات',
-    ];
+    final allPermissions = DelegationRecord.allPermissions;
     final selectedPermissions = <String>{
       ...?existing?.permissions,
       if (existing == null) 'عرض البيانات',
@@ -4451,7 +4387,7 @@ class _DelegationsHubPageState extends State<_DelegationsHubPage> {
                 ),
                 decoration: const BoxDecoration(
                   color: Colors.white,
-                  borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+                  borderRadius: BorderRadius.vertical(top: Radius.circular(AppTheme.rCard)),
                 ),
                 child: SingleChildScrollView(
                   child: Directionality(
@@ -4506,7 +4442,7 @@ class _DelegationsHubPageState extends State<_DelegationsHubPage> {
                           decoration: InputDecoration(
                             hintText: 'اكتب اسم الشخص أو الجهة',
                             filled: true,
-                            fillColor: const Color(0xFFF7F9F8),
+                            fillColor: AppTheme.field,
                             border: OutlineInputBorder(
                               borderRadius: BorderRadius.circular(12),
                               borderSide: const BorderSide(
@@ -4532,7 +4468,7 @@ class _DelegationsHubPageState extends State<_DelegationsHubPage> {
                           initialValue: selectedType,
                           decoration: InputDecoration(
                             filled: true,
-                            fillColor: const Color(0xFFF7F9F8),
+                            fillColor: AppTheme.field,
                             border: OutlineInputBorder(
                               borderRadius: BorderRadius.circular(12),
                             ),
@@ -4672,7 +4608,7 @@ class _DelegationsHubPageState extends State<_DelegationsHubPage> {
                         ],
                         const SizedBox(height: 14),
                         FilledButton.icon(
-                          onPressed: () {
+                          onPressed: () async {
                             final name = delegateController.text.trim();
                             if (name.isEmpty) {
                               setModalState(
@@ -4696,6 +4632,12 @@ class _DelegationsHubPageState extends State<_DelegationsHubPage> {
                               return;
                             }
                             final record = _DelegationRecord(
+                              // بدون تمرير المعرّف يُنشئ الحفظ سجلًا جديدًا
+                              // في كل مرة بدل تعديل القائم — نسخة مكررة عند
+                              // كل ضغطة "حفظ التعديل".
+                              id: existing?.id,
+                              notes: existing?.notes,
+                              delegateRef: existing?.delegateRef,
                               delegateName: name,
                               delegationType: selectedType,
                               permissions: selectedPermissions.toList(
@@ -4705,23 +4647,22 @@ class _DelegationsHubPageState extends State<_DelegationsHubPage> {
                               endDate: endDate,
                               active: existing?.active ?? true,
                             );
-                            setState(() {
-                              if (index != null && existing != null) {
-                                _delegations[index] = record;
-                              } else {
-                                _delegations.insert(0, record);
-                              }
-                              _selectedFilter = 'all';
-                            });
+                            setState(() => _selectedFilter = 'all');
                             Navigator.pop(context);
+                            await _persist(
+                              record,
+                              notice: existing == null
+                                  ? 'تمت إضافة التفويض'
+                                  : 'تم حفظ التعديل',
+                            );
                           },
                           style: FilledButton.styleFrom(
                             backgroundColor: const Color(0xFF087F6A),
                             foregroundColor: Colors.white,
                             padding: const EdgeInsets.symmetric(vertical: 14),
                             shape: RoundedRectangleBorder(
-                              borderRadius: BorderRadius.circular(12),
-                            ),
+          borderRadius: BorderRadius.circular(AppTheme.rField),
+        ),
                           ),
                           icon: const Icon(Icons.check_rounded),
                           label: Text(
@@ -4751,21 +4692,59 @@ class _DelegationsHubPageState extends State<_DelegationsHubPage> {
     final filtered = _filteredDelegations();
 
     return Scaffold(
-      backgroundColor: const Color(0xFFF7F9F8),
+      backgroundColor: AppTheme.page,
       appBar: AppBar(
-        title: const Text(
-          'التفويضات',
-          style: TextStyle(fontSize: 18, fontWeight: FontWeight.w900),
-        ),
+        title: const Text('التفويضات', style: AppTheme.cardTitle),
         centerTitle: true,
-        backgroundColor: const Color(0xFFF7F9F8),
+        backgroundColor: AppTheme.page,
         surfaceTintColor: Colors.transparent,
+        elevation: 0,
+        scrolledUnderElevation: 0,
       ),
-      body: Directionality(
+      body: _loading
+          ? const Center(child: CircularProgressIndicator())
+          : Directionality(
         textDirection: TextDirection.rtl,
-        child: ListView(
+        child: RefreshIndicator(
+          onRefresh: _load,
+          child: ListView(
           padding: const EdgeInsets.fromLTRB(16, 8, 16, 28),
           children: [
+            // شريط خطأ صريح بدل قائمة فارغة يظنّها المستخدم "لا توجد بيانات".
+            if (_loadError != null) ...[
+              Container(
+                padding: const EdgeInsets.all(12),
+                margin: const EdgeInsets.only(bottom: 12),
+                decoration: BoxDecoration(
+                  color: const Color(0xFFFEF2F2),
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(color: const Color(0xFFFECACA)),
+                ),
+                child: Row(
+                  children: [
+                    const Icon(
+                      Icons.error_outline_rounded,
+                      color: Color(0xFFB42318),
+                    ),
+                    const SizedBox(width: 8),
+                    Expanded(
+                      child: Text(
+                        _loadError!,
+                        style: const TextStyle(
+                          fontSize: 11.5,
+                          fontWeight: FontWeight.w700,
+                          color: Color(0xFFB42318),
+                        ),
+                      ),
+                    ),
+                    TextButton(
+                      onPressed: _load,
+                      child: const Text('إعادة المحاولة'),
+                    ),
+                  ],
+                ),
+              ),
+            ],
             Container(
               key: const ValueKey('delegations-overview'),
               padding: const EdgeInsets.fromLTRB(16, 16, 16, 15),
@@ -4867,8 +4846,8 @@ class _DelegationsHubPageState extends State<_DelegationsHubPage> {
                 foregroundColor: Colors.white,
                 minimumSize: const Size.fromHeight(50),
                 shape: RoundedRectangleBorder(
-                  borderRadius: BorderRadius.circular(12),
-                ),
+          borderRadius: BorderRadius.circular(AppTheme.rField),
+        ),
               ),
               icon: const Icon(Icons.add_rounded),
               label: const Text(
@@ -4936,7 +4915,7 @@ class _DelegationsHubPageState extends State<_DelegationsHubPage> {
                 final sourceIndex = _delegations.indexOf(item);
                 final status = _statusOf(item);
                 return _DelegationCard(
-                  key: ValueKey('delegation-${item.delegateName}'),
+                  key: ValueKey('delegation-${item.id ?? item.delegateName}'),
                   record: item,
                   statusLabel: status.label,
                   statusColor: status.color,
@@ -4949,7 +4928,7 @@ class _DelegationsHubPageState extends State<_DelegationsHubPage> {
                       builder: (_) => _DelegationDetailsPage(record: item),
                     ),
                   ),
-                  onAction: (action) {
+                  onAction: (action) async {
                     if (action == 'view') {
                       Navigator.of(context).push(
                         MaterialPageRoute(
@@ -4963,20 +4942,30 @@ class _DelegationsHubPageState extends State<_DelegationsHubPage> {
                       return;
                     }
                     if (action == 'toggle') {
-                      setState(() {
-                        _delegations[sourceIndex] = item.copyWith(
-                          active: !item.active,
-                        );
-                      });
+                      await _persist(
+                        item.copyWith(active: !item.active),
+                        notice: item.active
+                            ? 'تم إيقاف التفويض'
+                            : 'تم تفعيل التفويض',
+                      );
                       return;
                     }
                     if (action == 'delete') {
-                      setState(() => _delegations.removeAt(sourceIndex));
+                      final id = item.id;
+                      if (id == null) return;
+                      try {
+                        await _repository.deleteDelegation(id);
+                        await _load();
+                        _notify('تم حذف التفويض');
+                      } catch (_) {
+                        _notify('تعذّر حذف التفويض');
+                      }
                     }
                   },
                 );
               }),
           ],
+        ),
         ),
       ),
     );
@@ -4985,36 +4974,78 @@ class _DelegationsHubPageState extends State<_DelegationsHubPage> {
 
 class _DelegationRecord {
   const _DelegationRecord({
+    this.id,
+    this.delegateRef,
     required this.delegateName,
     required this.delegationType,
     required this.permissions,
     required this.startDate,
     required this.endDate,
     required this.active,
+    this.notes,
   });
 
+  /// معرّف السجل في قاعدة البيانات — بدونه لا يمكن تعديل أو حذف التفويض
+  /// فعليًا، وكان غيابه سبب بقاء كل شيء في الذاكرة فقط.
+  final String? id;
+
+  /// مرجع الشخص/الجهة في إدارة الأفراد. كان يُمحى من قاعدة البيانات عند كل
+  /// تعديل أو إيقاف لأنه لم يكن يُنقل ذهابًا وإيابًا.
+  final String? delegateRef;
   final String delegateName;
   final String delegationType;
   final List<String> permissions;
   final DateTime startDate;
   final DateTime endDate;
   final bool active;
+  final String? notes;
+
+  /// تحويل من/إلى سجل قاعدة البيانات.
+  factory _DelegationRecord.fromRecord(DelegationRecord r) => _DelegationRecord(
+    id: r.id,
+    delegateRef: r.delegateRef,
+    delegateName: r.delegateName,
+    delegationType: r.scope,
+    permissions: r.permissions,
+    startDate: r.startDate ?? DateTime.now(),
+    endDate: r.endDate ?? DateTime.now().add(const Duration(days: 365)),
+    active: !r.isPaused,
+    notes: r.notes,
+  );
+
+  DelegationRecord toRecord() => DelegationRecord(
+    id: id,
+    delegateRef: delegateRef,
+    delegateName: delegateName,
+    scope: delegationType,
+    permissions: permissions,
+    startDate: startDate,
+    endDate: endDate,
+    isPaused: !active,
+    notes: notes,
+  );
 
   _DelegationRecord copyWith({
+    String? id,
+    String? delegateRef,
     String? delegateName,
     String? delegationType,
     List<String>? permissions,
     DateTime? startDate,
     DateTime? endDate,
     bool? active,
+    String? notes,
   }) {
     return _DelegationRecord(
+      id: id ?? this.id,
+      delegateRef: delegateRef ?? this.delegateRef,
       delegateName: delegateName ?? this.delegateName,
       delegationType: delegationType ?? this.delegationType,
       permissions: permissions ?? this.permissions,
       startDate: startDate ?? this.startDate,
       endDate: endDate ?? this.endDate,
       active: active ?? this.active,
+      notes: notes ?? this.notes,
     );
   }
 }
@@ -5044,22 +5075,14 @@ class _DelegationCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Container(
-      margin: const EdgeInsets.only(bottom: 10),
+      margin: const EdgeInsets.only(bottom: AppTheme.cardGap),
       decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: const Color(0xFFE1E8E6)),
-        boxShadow: const [
-          BoxShadow(
-            color: Color(0x080F172A),
-            blurRadius: 10,
-            offset: Offset(0, 3),
-          ),
-        ],
+        color: AppTheme.surface,
+        borderRadius: BorderRadius.circular(AppTheme.rField),
       ),
+      clipBehavior: Clip.antiAlias,
       child: Material(
         color: Colors.transparent,
-        borderRadius: BorderRadius.circular(14),
         child: InkWell(
           onTap: onTap,
           borderRadius: BorderRadius.circular(14),
@@ -5175,8 +5198,8 @@ class _DelegationCard extends StatelessWidget {
                     vertical: 8,
                   ),
                   decoration: BoxDecoration(
-                    color: const Color(0xFFF7F9F8),
-                    borderRadius: BorderRadius.circular(9),
+                    color: AppTheme.surfaceInner,
+                    borderRadius: BorderRadius.circular(AppTheme.rInner),
                   ),
                   child: Row(
                     children: [
@@ -5251,9 +5274,8 @@ class _DelegationsEmptyState extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 20, vertical: 28),
       decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: const Color(0xFFE1E8E6)),
+        color: AppTheme.surface,
+        borderRadius: BorderRadius.circular(AppTheme.rCard),
       ),
       child: const Column(
         children: [
@@ -5302,10 +5324,9 @@ class _DelegationStatCard extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 11),
       decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: const Color(0xFFE2E8F0)),
-      ),
+            color: AppTheme.surface,
+            borderRadius: BorderRadius.circular(AppTheme.rField),
+          ),
       child: Column(
         children: [
           Icon(icon, color: color, size: 16),
@@ -5357,12 +5378,12 @@ class _DelegationFilterChip extends StatelessWidget {
         child: Container(
           padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 8),
           decoration: BoxDecoration(
-            color: selected ? const Color(0xFFE6E9FF) : Colors.white,
-            borderRadius: BorderRadius.circular(99),
+            color: selected ? const Color(0xFFE6E9FF) : AppTheme.field,
+            borderRadius: BorderRadius.circular(AppTheme.rPill),
             border: Border.all(
               color: selected
                   ? const Color(0xFF4F46E5)
-                  : const Color(0xFFE2E8F0),
+                  : Colors.transparent,
             ),
           ),
           child: Text(
@@ -5407,12 +5428,12 @@ class _DateFieldTile extends StatelessWidget {
         const SizedBox(height: 6),
         InkWell(
           onTap: onTap,
-          borderRadius: BorderRadius.circular(12),
+          borderRadius: BorderRadius.circular(AppTheme.rField),
           child: Container(
-            padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 12),
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 14),
             decoration: BoxDecoration(
-              borderRadius: BorderRadius.circular(12),
-              border: Border.all(color: const Color(0xFFE2E8F0)),
+              color: AppTheme.field,
+              borderRadius: BorderRadius.circular(AppTheme.rField),
             ),
             child: Row(
               children: [
@@ -5483,14 +5504,13 @@ class _DelegationDetailsPage extends StatelessWidget {
             icon: Icons.check_circle_outline_rounded,
           );
     return Scaffold(
-      backgroundColor: const Color(0xFFF7F9F8),
+      backgroundColor: AppTheme.page,
       appBar: AppBar(
-        title: const Text(
-          'تفاصيل التفويض',
-          style: TextStyle(fontSize: 18, fontWeight: FontWeight.w900),
-        ),
+        elevation: 0,
+        scrolledUnderElevation: 0,
+        title: const Text('تفاصيل التفويض', style: AppTheme.cardTitle),
         centerTitle: true,
-        backgroundColor: const Color(0xFFF7F9F8),
+        backgroundColor: AppTheme.page,
         surfaceTintColor: Colors.transparent,
       ),
       body: Directionality(
@@ -5576,10 +5596,9 @@ class _DelegationDetailsPage extends StatelessWidget {
             Container(
               padding: const EdgeInsets.all(14),
               decoration: BoxDecoration(
-                color: Colors.white,
-                borderRadius: BorderRadius.circular(14),
-                border: Border.all(color: const Color(0xFFE2E8F0)),
-              ),
+            color: AppTheme.surface,
+            borderRadius: BorderRadius.circular(AppTheme.rField),
+          ),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.end,
                 children: [
@@ -5671,11 +5690,11 @@ class _DelegationDetailValue extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Container(
-      padding: const EdgeInsets.all(10),
+      padding: const EdgeInsets.all(AppTheme.sMd),
+      // بطاقة داخلية بيضاء داخل البطاقة الرمادية.
       decoration: BoxDecoration(
-        color: const Color(0xFFF7F9F8),
-        borderRadius: BorderRadius.circular(10),
-        border: Border.all(color: const Color(0xFFE5EBE9)),
+        color: AppTheme.surfaceInner,
+        borderRadius: BorderRadius.circular(AppTheme.rInner),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -5733,8 +5752,15 @@ class _ArchiveHubPage extends StatelessWidget {
     ];
 
     return Scaffold(
-      backgroundColor: const Color(0xFFF5F8FC),
-      appBar: AppBar(title: const Text('الأرشيف'), centerTitle: true),
+      backgroundColor: AppTheme.page,
+      appBar: AppBar(
+        title: const Text('الأرشيف', style: AppTheme.cardTitle),
+        centerTitle: true,
+        backgroundColor: AppTheme.page,
+        surfaceTintColor: Colors.transparent,
+        elevation: 0,
+        scrolledUnderElevation: 0,
+      ),
       body: Directionality(
         textDirection: TextDirection.rtl,
         child: ListView(
@@ -5754,10 +5780,9 @@ class _ArchiveHubPage extends StatelessWidget {
                 margin: const EdgeInsets.only(bottom: 10),
                 padding: const EdgeInsets.all(12),
                 decoration: BoxDecoration(
-                  color: Colors.white,
-                  borderRadius: BorderRadius.circular(14),
-                  border: Border.all(color: const Color(0xFFE2E8F0)),
-                ),
+            color: AppTheme.surface,
+            borderRadius: BorderRadius.circular(AppTheme.rField),
+          ),
                 child: Row(
                   children: [
                     Icon(item.$3, color: item.$4, size: 22),
@@ -5791,275 +5816,1694 @@ class _ArchiveHubPage extends StatelessWidget {
   }
 }
 
-class _WalletsHubPage extends StatelessWidget {
+// ============================================================
+// شاشة المحافظ
+// ============================================================
+// كانت هذه الشاشة واجهة ثابتة بالكامل: "128,400 درهم" و"4 بطاقات نشطة"
+// و"12 دفعة" و"83% التزام" و"9 اشتراكات" أرقامًا مكتوبة في الكود، بلا زر
+// واحد وبلا أي ارتباط بقاعدة البيانات. أُعيد بناؤها بالكامل على جدولَي
+// wallets / wallet_transactions الحقيقيين.
+class _WalletsHubPage extends StatefulWidget {
   const _WalletsHubPage();
 
   @override
-  Widget build(BuildContext context) {
-    return Scaffold(
-      backgroundColor: const Color(0xFFF5F8FC),
-      appBar: AppBar(title: const Text('المحافظ'), centerTitle: true),
-      body: Directionality(
+  State<_WalletsHubPage> createState() => _WalletsHubPageState();
+}
+
+class _WalletsHubPageState extends State<_WalletsHubPage> {
+  static const _accent = Color(0xFF0F172A);
+  static const _incomeColor = Color(0xFF10B981);
+  static const _expenseColor = Color(0xFFEF4444);
+  static const _transferColor = Color(0xFF0EA5E9);
+  static const _hideBalancesKey = 'wallets_hide_balances_v1';
+
+  final WalletsRepository _repository = SupabaseWalletsRepository();
+
+  List<WalletRecord> _wallets = const [];
+  List<WalletTransactionRecord> _transactions = const [];
+  bool _loading = true;
+  String? _error;
+
+  /// إخفاء المبالغ بنقرة واحدة — سلوك قياسي في التطبيقات المالية عند فتح
+  /// التطبيق أمام الآخرين. يُحفظ الاختيار محليًا لأنه تفضيل عرض لا بيانات.
+  bool _hideBalances = false;
+
+  /// null = كل المحافظ.
+  String? _selectedWalletId;
+
+  @override
+  void initState() {
+    super.initState();
+    _restorePreference();
+    _load();
+  }
+
+  Future<void> _restorePreference() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      if (!mounted) return;
+      setState(
+        () => _hideBalances = prefs.getBool(_hideBalancesKey) ?? false,
+      );
+    } catch (_) {
+      // تفضيل عرض فقط — تجاهله بأمان.
+    }
+  }
+
+  Future<void> _toggleHideBalances() async {
+    final next = !_hideBalances;
+    setState(() => _hideBalances = next);
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setBool(_hideBalancesKey, next);
+    } catch (_) {
+      // لا يمنع تغيير العرض.
+    }
+  }
+
+  Future<void> _load() async {
+    if (!mounted) return;
+    setState(() {
+      _loading = true;
+      _error = null;
+    });
+    try {
+      final wallets = await _repository.fetchWallets();
+      final transactions = await _repository.fetchTransactions();
+      if (!mounted) return;
+      setState(() {
+        _wallets = wallets;
+        _transactions = transactions;
+        // محفظة مختارة حُذفت: يعود العرض إلى الكل بدل قائمة فارغة أبدية.
+        if (_selectedWalletId != null &&
+            !wallets.any((w) => w.id == _selectedWalletId)) {
+          _selectedWalletId = null;
+        }
+        _loading = false;
+      });
+    } catch (error) {
+      if (!mounted) return;
+      setState(() {
+        _loading = false;
+        _error = 'تعذّر تحميل المحافظ. تحقّق من الاتصال وحاول مرة أخرى.';
+      });
+    }
+  }
+
+  // ===== حسابات حقيقية =====
+
+  List<WalletRecord> get _activeWallets =>
+      _wallets.where((w) => !w.isArchived).toList(growable: false);
+
+  /// رصيد محفظة = الرصيد الافتتاحي + كل الحركات الموقَّعة عليها.
+  double _balanceOf(WalletRecord wallet) {
+    final moves = _transactions
+        .where((t) => t.walletId == wallet.id)
+        .fold<double>(0, (sum, t) => sum + t.signedAmount);
+    return wallet.openingBalance + moves;
+  }
+
+  double get _totalBalance =>
+      _activeWallets.fold<double>(0, (sum, w) => sum + _balanceOf(w));
+
+  List<WalletTransactionRecord> get _visibleTransactions {
+    final id = _selectedWalletId;
+    final list = id == null
+        ? _transactions
+        : _transactions.where((t) => t.walletId == id).toList();
+    return list;
+  }
+
+  /// إجماليات الشهر الحالي — تُحسب من الحركات الفعلية. التحويلات الداخلية
+  /// مستبعدة عمدًا: نقل المال بين محفظتين ليس دخلًا ولا مصروفًا، واحتسابه
+  /// يضخّم الرقمين معًا ويعطي صورة مالية خاطئة.
+  (double income, double expense) get _monthTotals {
+    final now = DateTime.now();
+    var income = 0.0;
+    var expense = 0.0;
+    for (final t in _visibleTransactions) {
+      final date = t.occurredOn;
+      if (date == null || date.year != now.year || date.month != now.month) {
+        continue;
+      }
+      if (t.kind == WalletTransactionRecord.kindIncome) income += t.amount;
+      if (t.kind == WalletTransactionRecord.kindExpense) expense += t.amount;
+    }
+    return (income, expense);
+  }
+
+  String _money(double value) {
+    if (_hideBalances) return '•••••';
+    if (!value.isFinite) return '—';
+    final negative = value < 0;
+    final text = value.abs().toStringAsFixed(2);
+    final parts = text.split('.');
+    final buffer = StringBuffer();
+    for (var i = 0; i < parts[0].length; i++) {
+      if (i > 0 && (parts[0].length - i) % 3 == 0) buffer.write(',');
+      buffer.write(parts[0][i]);
+    }
+    return '${negative ? '-' : ''}$buffer.${parts[1]}';
+  }
+
+  String _fmtDate(DateTime? date) {
+    if (date == null) return 'بدون تاريخ';
+    return '${date.year}/${date.month.toString().padLeft(2, '0')}'
+        '/${date.day.toString().padLeft(2, '0')}';
+  }
+
+  String get _currency => _activeWallets.isEmpty
+      ? AppSettings.currencySuffix
+      : _activeWallets.first.currencyLabel;
+
+  void _toast(String message) {
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text(message), behavior: SnackBarBehavior.floating),
+    );
+  }
+
+  Color _walletColor(WalletRecord wallet) =>
+      wallet.color == null ? _accent : Color(wallet.color!);
+
+  IconData _walletIcon(String kind) => switch (kind) {
+    WalletRecord.kindBank => Icons.account_balance_rounded,
+    WalletRecord.kindCard => Icons.credit_card_rounded,
+    WalletRecord.kindDigital => Icons.account_balance_wallet_rounded,
+    _ => Icons.payments_rounded,
+  };
+
+  // ===== نماذج =====
+
+  InputDecoration _field(String label) => InputDecoration(
+    labelText: label,
+    filled: true,
+    fillColor: AppTheme.field,
+    border: OutlineInputBorder(
+      borderRadius: BorderRadius.circular(AppTheme.rField),
+      borderSide: BorderSide.none,
+    ),
+    focusedBorder: OutlineInputBorder(
+      borderRadius: BorderRadius.circular(AppTheme.rField),
+      borderSide: const BorderSide(color: Color(0xFF0EA5E9), width: 1.4),
+    ),
+  );
+
+  Future<void> _openWalletForm({WalletRecord? existing}) async {
+    final nameCtrl = TextEditingController(text: existing?.name ?? '');
+    final issuerCtrl = TextEditingController(text: existing?.issuer ?? '');
+    final last4Ctrl = TextEditingController(text: existing?.last4 ?? '');
+    final openingCtrl = TextEditingController(
+      text: existing == null || existing.openingBalance == 0
+          ? ''
+          : existing.openingBalance.toStringAsFixed(2),
+    );
+    final notesCtrl = TextEditingController(text: existing?.notes ?? '');
+    var kind = existing?.kind ?? WalletRecord.kindCash;
+    var color = existing?.color ?? 0xFF0F172A;
+
+    const palette = [
+      0xFF0F172A,
+      0xFF0EA5E9,
+      0xFF10B981,
+      0xFF7C3AED,
+      0xFFF59E0B,
+      0xFFEF4444,
+    ];
+
+    final saved = await showModalBottomSheet<bool>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.white,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(AppTheme.rCard)),
+      ),
+      builder: (sheetContext) => Directionality(
         textDirection: TextDirection.rtl,
-        child: ListView(
-          padding: const EdgeInsets.fromLTRB(16, 16, 16, 20),
-          children: [
-            const Text(
-              'لوحة احترافية للأموال والبطاقات والدفعات والخطط والاشتراكات',
-              style: TextStyle(
-                fontSize: 13,
-                fontWeight: FontWeight.w600,
-                color: Color(0xFF64748B),
-              ),
+        child: StatefulBuilder(
+          builder: (sheetContext, setSheetState) => Padding(
+            padding: EdgeInsets.fromLTRB(
+              18,
+              16,
+              18,
+              MediaQuery.of(sheetContext).viewInsets.bottom + 18,
             ),
-            const SizedBox(height: 12),
-            Container(
-              padding: const EdgeInsets.all(14),
-              decoration: BoxDecoration(
-                gradient: const LinearGradient(
-                  colors: [Color(0xFF0F172A), Color(0xFF1E293B)],
-                  begin: Alignment.topRight,
-                  end: Alignment.bottomLeft,
-                ),
-                borderRadius: BorderRadius.circular(18),
-              ),
-              child: const Column(
-                crossAxisAlignment: CrossAxisAlignment.start,
+            child: SingleChildScrollView(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                mainAxisSize: MainAxisSize.min,
                 children: [
                   Text(
-                    'الرصيد الكلي',
-                    style: TextStyle(
-                      fontSize: 12,
-                      fontWeight: FontWeight.w700,
-                      color: Color(0xFFCBD5E1),
-                    ),
-                  ),
-                  SizedBox(height: 6),
-                  Text(
-                    '128,400 درهم',
-                    style: TextStyle(
-                      fontSize: 26,
+                    existing == null ? 'إضافة محفظة' : 'تعديل المحفظة',
+                    style: const TextStyle(
+                      fontSize: 16,
                       fontWeight: FontWeight.w900,
-                      color: Colors.white,
+                      color: Color(0xFF0F172A),
                     ),
                   ),
-                  SizedBox(height: 12),
+                  const SizedBox(height: 14),
                   Row(
                     children: [
-                      Icon(Icons.credit_card_rounded, color: Color(0xFF93C5FD)),
-                      SizedBox(width: 6),
-                      Text(
-                        '4 بطاقات نشطة',
-                        style: TextStyle(
-                          color: Color(0xFFDBEAFE),
-                          fontWeight: FontWeight.w700,
+                      for (final k in WalletRecord.kinds) ...[
+                        Expanded(
+                          child: InkWell(
+                            onTap: () => setSheetState(() => kind = k),
+                            borderRadius: BorderRadius.circular(
+                              AppTheme.rIcon,
+                            ),
+                            child: Container(
+                              padding: const EdgeInsets.symmetric(
+                                vertical: 10,
+                                horizontal: 4,
+                              ),
+                              // بلا حدود؛ المحدَّد يتلوّن كبقية الشرائح.
+                              decoration: BoxDecoration(
+                                color: kind == k
+                                    ? const Color(
+                                        0xFF0EA5E9,
+                                      ).withValues(alpha: 0.13)
+                                    : AppTheme.field,
+                                borderRadius: BorderRadius.circular(
+                                  AppTheme.rIcon,
+                                ),
+                              ),
+                              child: Column(
+                                mainAxisSize: MainAxisSize.min,
+                                children: [
+                                  Icon(
+                                    _walletIcon(k),
+                                    size: 19,
+                                    color: kind == k
+                                        ? const Color(0xFF0EA5E9)
+                                        : const Color(0xFF94A3B8),
+                                  ),
+                                  const SizedBox(height: 4),
+                                  Text(
+                                    WalletRecord.kindLabel(k),
+                                    maxLines: 1,
+                                    overflow: TextOverflow.ellipsis,
+                                    style: TextStyle(
+                                      fontSize: 10.5,
+                                      fontWeight: kind == k
+                                          ? FontWeight.w900
+                                          : FontWeight.w700,
+                                      color: kind == k
+                                          ? const Color(0xFF0EA5E9)
+                                          : const Color(0xFF64748B),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          ),
                         ),
-                      ),
+                        if (k != WalletRecord.kinds.last)
+                          const SizedBox(width: 7),
+                      ],
                     ],
+                  ),
+                  const SizedBox(height: 12),
+                  TextField(
+                    controller: nameCtrl,
+                    textAlign: TextAlign.right,
+                    decoration: _field('اسم المحفظة'),
+                  ),
+                  if (kind != WalletRecord.kindCash) ...[
+                    const SizedBox(height: 10),
+                    TextField(
+                      controller: issuerCtrl,
+                      textAlign: TextAlign.right,
+                      decoration: _field(
+                        kind == WalletRecord.kindDigital
+                            ? 'المزوّد'
+                            : 'اسم البنك',
+                      ),
+                    ),
+                  ],
+                  if (kind == WalletRecord.kindCard) ...[
+                    const SizedBox(height: 10),
+                    TextField(
+                      controller: last4Ctrl,
+                      textAlign: TextAlign.right,
+                      keyboardType: TextInputType.number,
+                      maxLength: 4,
+                      decoration: _field('آخر 4 أرقام'),
+                    ),
+                  ],
+                  const SizedBox(height: 10),
+                  TextField(
+                    controller: openingCtrl,
+                    textAlign: TextAlign.right,
+                    keyboardType: const TextInputType.numberWithOptions(
+                      decimal: true,
+                      signed: true,
+                    ),
+                    decoration: _field('الرصيد الافتتاحي'),
+                  ),
+                  const SizedBox(height: 12),
+                  const Align(
+                    alignment: Alignment.centerRight,
+                    child: Text(
+                      'لون البطاقة',
+                      style: TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.w800,
+                        color: Color(0xFF334155),
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 8),
+                  Row(
+                    children: [
+                      for (final c in palette) ...[
+                        InkWell(
+                          onTap: () => setSheetState(() => color = c),
+                          borderRadius: BorderRadius.circular(99),
+                          child: Container(
+                            width: 32,
+                            height: 32,
+                            decoration: BoxDecoration(
+                              color: Color(c),
+                              shape: BoxShape.circle,
+                              border: Border.all(
+                                color: color == c
+                                    ? const Color(0xFF0F172A)
+                                    : Colors.transparent,
+                                width: 2.5,
+                              ),
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                      ],
+                    ],
+                  ),
+                  const SizedBox(height: 12),
+                  TextField(
+                    controller: notesCtrl,
+                    textAlign: TextAlign.right,
+                    maxLines: 2,
+                    decoration: _field('ملاحظات (اختياري)'),
+                  ),
+                  const SizedBox(height: 16),
+                  FilledButton(
+                    style: FilledButton.styleFrom(
+                      backgroundColor: _accent,
+                      minimumSize: const Size.fromHeight(48),
+                      shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(AppTheme.rField),
+        ),
+                    ),
+                    onPressed: () async {
+                      final name = nameCtrl.text.trim();
+                      if (name.isEmpty) {
+                        ScaffoldMessenger.of(sheetContext).showSnackBar(
+                          const SnackBar(
+                            content: Text('أدخل اسم المحفظة أولاً'),
+                          ),
+                        );
+                        return;
+                      }
+                      final record = WalletRecord(
+                        id: existing?.id,
+                        name: name,
+                        kind: kind,
+                        issuer: issuerCtrl.text.trim().isEmpty
+                            ? null
+                            : issuerCtrl.text.trim(),
+                        last4: last4Ctrl.text.trim().isEmpty
+                            ? null
+                            : last4Ctrl.text.trim(),
+                        openingBalance:
+                            double.tryParse(openingCtrl.text.trim()) ?? 0,
+                        // المحافظ الجديدة تتبع عملة الإعدادات ولا تُثبَّت
+                        // على عملة مكتوبة في الشيفرة.
+                        currency: existing?.currency ?? '',
+                        color: color,
+                        isArchived: existing?.isArchived ?? false,
+                        isDefault: existing?.isDefault ?? false,
+                        notes: notesCtrl.text.trim().isEmpty
+                            ? null
+                            : notesCtrl.text.trim(),
+                      );
+                      try {
+                        await _repository.upsertWallet(record);
+                        if (!sheetContext.mounted) return;
+                        Navigator.of(sheetContext).pop(true);
+                      } catch (_) {
+                        if (!sheetContext.mounted) return;
+                        ScaffoldMessenger.of(sheetContext).showSnackBar(
+                          const SnackBar(content: Text('تعذّر حفظ المحفظة')),
+                        );
+                      }
+                    },
+                    child: Text(existing == null ? 'إضافة' : 'حفظ التعديل'),
                   ),
                 ],
               ),
             ),
-            const SizedBox(height: 12),
-            const _WalletStatTile(
-              title: 'دفعات هذا الأسبوع',
-              value: '12 دفعة',
-              subtitle: '4 دفعات قادمة خلال يومين',
-              icon: Icons.payments_rounded,
-              color: Color(0xFF0EA5E9),
+          ),
+        ),
+      ),
+    );
+    if (saved == true) {
+      await _load();
+      if (mounted) {
+        _toast(existing == null ? 'تمت إضافة المحفظة' : 'تم حفظ التعديل');
+      }
+    }
+  }
+
+  Future<void> _openTransactionForm({
+    required String kind,
+    WalletTransactionRecord? existing,
+  }) async {
+    if (_activeWallets.isEmpty) {
+      _toast('أضف محفظة أولاً قبل تسجيل أي حركة');
+      return;
+    }
+    final income = kind == WalletTransactionRecord.kindIncome;
+    final amountCtrl = TextEditingController(
+      text: existing == null || existing.amount == 0
+          ? ''
+          : existing.amount.toStringAsFixed(2),
+    );
+    final categoryCtrl = TextEditingController(text: existing?.category ?? '');
+    final noteCtrl = TextEditingController(text: existing?.note ?? '');
+    // قائمة محافظ النموذج = المحافظ النشطة، مضافًا إليها محفظة الحركة
+    // الحالية إن كانت مؤرشفة. بدون ذلك تكون قيمة القائمة المنسدلة خارج
+    // عناصرها فيسقط التطبيق بتأكيد (assert) عند تعديل حركة على محفظة
+    // مؤرشفة، أو عند اختيار محفظة مؤرشفة من شريط التصفية ثم تسجيل حركة.
+    final preferredId =
+        existing?.walletId ?? _selectedWalletId ?? _activeWallets.first.id!;
+    final formWallets = <WalletRecord>[
+      ..._activeWallets,
+      ..._wallets.where(
+        (w) => w.id == preferredId && !_activeWallets.any((a) => a.id == w.id),
+      ),
+    ];
+    var walletId = formWallets.any((w) => w.id == preferredId)
+        ? preferredId
+        : formWallets.first.id!;
+    DateTime date = existing?.occurredOn ?? DateTime.now();
+    final accent = income ? _incomeColor : _expenseColor;
+    final suggestions = income
+        ? const ['راتب', 'إيجار', 'مبيعات', 'هدية', 'دخل آخر']
+        : const ['طعام', 'مواصلات', 'فواتير', 'تسوّق', 'صيانة', 'مصروف آخر'];
+
+    final saved = await showModalBottomSheet<bool>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.white,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(AppTheme.rCard)),
+      ),
+      builder: (sheetContext) => Directionality(
+        textDirection: TextDirection.rtl,
+        child: StatefulBuilder(
+          builder: (sheetContext, setSheetState) => Padding(
+            padding: EdgeInsets.fromLTRB(
+              18,
+              16,
+              18,
+              MediaQuery.of(sheetContext).viewInsets.bottom + 18,
             ),
-            const _WalletStatTile(
-              title: 'الخطة المالية',
-              value: '83% التزام',
-              subtitle: 'ضمن الميزانية الشهرية المحددة',
-              icon: Icons.track_changes_outlined,
-              color: Color(0xFF16A34A),
+            child: SingleChildScrollView(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Row(
+                    children: [
+                      Icon(
+                        income
+                            ? Icons.trending_up_rounded
+                            : Icons.trending_down_rounded,
+                        color: accent,
+                        size: 20,
+                      ),
+                      const SizedBox(width: 8),
+                      Text(
+                        existing == null
+                            ? (income ? 'إضافة دخل' : 'إضافة مصروف')
+                            : (income ? 'تعديل الدخل' : 'تعديل المصروف'),
+                        style: const TextStyle(
+                          fontSize: 16,
+                          fontWeight: FontWeight.w900,
+                          color: Color(0xFF0F172A),
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 14),
+                  TextField(
+                    controller: amountCtrl,
+                    textAlign: TextAlign.right,
+                    keyboardType: const TextInputType.numberWithOptions(
+                      decimal: true,
+                    ),
+                    decoration: _field('المبلغ'),
+                  ),
+                  const SizedBox(height: 10),
+                  DropdownButtonFormField<String>(
+                    initialValue: walletId,
+                    isExpanded: true,
+                    decoration: _field('المحفظة'),
+                    items: formWallets
+                        .map(
+                          (w) => DropdownMenuItem(
+                            value: w.id,
+                            child: Text(
+                              w.name,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ),
+                        )
+                        .toList(growable: false),
+                    onChanged: (value) {
+                      if (value == null) return;
+                      setSheetState(() => walletId = value);
+                    },
+                  ),
+                  const SizedBox(height: 10),
+                  OutlinedButton.icon(
+                    onPressed: () async {
+                      final picked = await showDatePicker(
+                        context: sheetContext,
+                        initialDate: date,
+                        firstDate: DateTime(2015),
+                        lastDate: DateTime(2060),
+                        builder: (pickerContext, child) => Directionality(
+                          textDirection: TextDirection.rtl,
+                          child: child!,
+                        ),
+                      );
+                      if (picked != null && sheetContext.mounted) {
+                        setSheetState(() => date = picked);
+                      }
+                    },
+                    icon: const Icon(Icons.event_outlined, size: 18),
+                    label: Text(_fmtDate(date)),
+                  ),
+                  const SizedBox(height: 10),
+                  TextField(
+                    controller: categoryCtrl,
+                    textAlign: TextAlign.right,
+                    decoration: _field('التصنيف'),
+                  ),
+                  const SizedBox(height: 8),
+                  Wrap(
+                    spacing: 6,
+                    runSpacing: 6,
+                    children: [
+                      for (final s in suggestions)
+                        ActionChip(
+                          label: Text(s, style: const TextStyle(fontSize: 11)),
+                          onPressed: () =>
+                              setSheetState(() => categoryCtrl.text = s),
+                        ),
+                    ],
+                  ),
+                  const SizedBox(height: 10),
+                  TextField(
+                    controller: noteCtrl,
+                    textAlign: TextAlign.right,
+                    maxLines: 2,
+                    decoration: _field('ملاحظات (اختياري)'),
+                  ),
+                  const SizedBox(height: 16),
+                  FilledButton(
+                    style: FilledButton.styleFrom(
+                      backgroundColor: accent,
+                      minimumSize: const Size.fromHeight(48),
+                      shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(AppTheme.rField),
+        ),
+                    ),
+                    onPressed: () async {
+                      final amount =
+                          double.tryParse(amountCtrl.text.trim()) ?? 0;
+                      if (amount <= 0) {
+                        ScaffoldMessenger.of(sheetContext).showSnackBar(
+                          const SnackBar(
+                            content: Text('أدخل مبلغًا صحيحًا أكبر من صفر'),
+                          ),
+                        );
+                        return;
+                      }
+                      try {
+                        await _repository.upsertTransaction(
+                          WalletTransactionRecord(
+                            id: existing?.id,
+                            walletId: walletId,
+                            kind: kind,
+                            amount: amount,
+                            occurredOn: date,
+                            category: categoryCtrl.text.trim().isEmpty
+                                ? null
+                                : categoryCtrl.text.trim(),
+                            note: noteCtrl.text.trim().isEmpty
+                                ? null
+                                : noteCtrl.text.trim(),
+                          ),
+                        );
+                        if (!sheetContext.mounted) return;
+                        Navigator.of(sheetContext).pop(true);
+                      } catch (_) {
+                        if (!sheetContext.mounted) return;
+                        ScaffoldMessenger.of(sheetContext).showSnackBar(
+                          const SnackBar(content: Text('تعذّر حفظ الحركة')),
+                        );
+                      }
+                    },
+                    child: Text(existing == null ? 'حفظ' : 'حفظ التعديل'),
+                  ),
+                ],
+              ),
             ),
-            const _WalletStatTile(
-              title: 'الاشتراكات',
-              value: '9 اشتراكات',
-              subtitle: 'اشتراكان قريبان للتجديد',
-              icon: Icons.subscriptions_outlined,
-              color: Color(0xFF7C3AED),
+          ),
+        ),
+      ),
+    );
+    if (saved == true) await _load();
+  }
+
+  Future<void> _openTransferForm() async {
+    // التحويل يتطلّب محفظتين على الأقل — بدون هذا الشرط يظهر النموذج ثم
+    // يفشل عند الحفظ، أو يسمح بالتحويل من محفظة إلى نفسها بلا أي معنى.
+    if (_activeWallets.length < 2) {
+      _toast('التحويل يحتاج محفظتين على الأقل');
+      return;
+    }
+    final amountCtrl = TextEditingController();
+    final noteCtrl = TextEditingController();
+    var fromId = _activeWallets.first.id!;
+    var toId = _activeWallets[1].id!;
+    DateTime date = DateTime.now();
+
+    final saved = await showModalBottomSheet<bool>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.white,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(AppTheme.rCard)),
+      ),
+      builder: (sheetContext) => Directionality(
+        textDirection: TextDirection.rtl,
+        child: StatefulBuilder(
+          builder: (sheetContext, setSheetState) => Padding(
+            padding: EdgeInsets.fromLTRB(
+              18,
+              16,
+              18,
+              MediaQuery.of(sheetContext).viewInsets.bottom + 18,
+            ),
+            child: SingleChildScrollView(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Row(
+                    children: [
+                      Icon(
+                        Icons.swap_horiz_rounded,
+                        color: _transferColor,
+                        size: 20,
+                      ),
+                      SizedBox(width: 8),
+                      Text(
+                        'تحويل بين المحافظ',
+                        style: TextStyle(
+                          fontSize: 16,
+                          fontWeight: FontWeight.w900,
+                          color: Color(0xFF0F172A),
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 14),
+                  DropdownButtonFormField<String>(
+                    initialValue: fromId,
+                    isExpanded: true,
+                    decoration: _field('من محفظة'),
+                    items: _activeWallets
+                        .map(
+                          (w) => DropdownMenuItem(
+                            value: w.id,
+                            child: Text(
+                              w.name,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ),
+                        )
+                        .toList(growable: false),
+                    onChanged: (value) {
+                      if (value == null) return;
+                      setSheetState(() {
+                        fromId = value;
+                        // منع التحويل إلى نفس المحفظة تلقائيًا.
+                        if (toId == fromId) {
+                          toId = _activeWallets
+                              .firstWhere((w) => w.id != fromId)
+                              .id!;
+                        }
+                      });
+                    },
+                  ),
+                  const SizedBox(height: 10),
+                  DropdownButtonFormField<String>(
+                    initialValue: toId,
+                    isExpanded: true,
+                    decoration: _field('إلى محفظة'),
+                    items: _activeWallets
+                        .where((w) => w.id != fromId)
+                        .map(
+                          (w) => DropdownMenuItem(
+                            value: w.id,
+                            child: Text(
+                              w.name,
+                              maxLines: 1,
+                              overflow: TextOverflow.ellipsis,
+                            ),
+                          ),
+                        )
+                        .toList(growable: false),
+                    onChanged: (value) {
+                      if (value == null) return;
+                      setSheetState(() => toId = value);
+                    },
+                  ),
+                  const SizedBox(height: 10),
+                  TextField(
+                    controller: amountCtrl,
+                    textAlign: TextAlign.right,
+                    keyboardType: const TextInputType.numberWithOptions(
+                      decimal: true,
+                    ),
+                    decoration: _field('المبلغ'),
+                  ),
+                  const SizedBox(height: 10),
+                  OutlinedButton.icon(
+                    onPressed: () async {
+                      final picked = await showDatePicker(
+                        context: sheetContext,
+                        initialDate: date,
+                        firstDate: DateTime(2015),
+                        lastDate: DateTime(2060),
+                        builder: (pickerContext, child) => Directionality(
+                          textDirection: TextDirection.rtl,
+                          child: child!,
+                        ),
+                      );
+                      if (picked != null && sheetContext.mounted) {
+                        setSheetState(() => date = picked);
+                      }
+                    },
+                    icon: const Icon(Icons.event_outlined, size: 18),
+                    label: Text(_fmtDate(date)),
+                  ),
+                  const SizedBox(height: 10),
+                  TextField(
+                    controller: noteCtrl,
+                    textAlign: TextAlign.right,
+                    decoration: _field('ملاحظات (اختياري)'),
+                  ),
+                  const SizedBox(height: 16),
+                  FilledButton(
+                    style: FilledButton.styleFrom(
+                      backgroundColor: _transferColor,
+                      minimumSize: const Size.fromHeight(48),
+                      shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(AppTheme.rField),
+        ),
+                    ),
+                    onPressed: () async {
+                      final amount =
+                          double.tryParse(amountCtrl.text.trim()) ?? 0;
+                      if (amount <= 0) {
+                        ScaffoldMessenger.of(sheetContext).showSnackBar(
+                          const SnackBar(
+                            content: Text('أدخل مبلغًا صحيحًا أكبر من صفر'),
+                          ),
+                        );
+                        return;
+                      }
+                      if (fromId == toId) {
+                        ScaffoldMessenger.of(sheetContext).showSnackBar(
+                          const SnackBar(
+                            content: Text('اختر محفظتين مختلفتين'),
+                          ),
+                        );
+                        return;
+                      }
+                      try {
+                        await _repository.transfer(
+                          fromWalletId: fromId,
+                          toWalletId: toId,
+                          amount: amount,
+                          occurredOn: date,
+                          note: noteCtrl.text.trim().isEmpty
+                              ? null
+                              : noteCtrl.text.trim(),
+                        );
+                        if (!sheetContext.mounted) return;
+                        Navigator.of(sheetContext).pop(true);
+                      } catch (_) {
+                        if (!sheetContext.mounted) return;
+                        ScaffoldMessenger.of(sheetContext).showSnackBar(
+                          const SnackBar(content: Text('تعذّر تنفيذ التحويل')),
+                        );
+                      }
+                    },
+                    child: const Text('تنفيذ التحويل'),
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+    if (saved == true) {
+      await _load();
+      if (mounted) _toast('تم تنفيذ التحويل');
+    }
+  }
+
+  Future<void> _walletMenu(WalletRecord wallet) async {
+    final action = await showModalBottomSheet<String>(
+      context: context,
+      backgroundColor: Colors.white,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(AppTheme.rCard)),
+      ),
+      builder: (sheetContext) => Directionality(
+        textDirection: TextDirection.rtl,
+        child: SafeArea(
+          top: false,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              ListTile(
+                leading: const Icon(Icons.edit_outlined),
+                title: const Text('تعديل المحفظة'),
+                onTap: () => Navigator.of(sheetContext).pop('edit'),
+              ),
+              ListTile(
+                leading: Icon(
+                  wallet.isArchived
+                      ? Icons.unarchive_outlined
+                      : Icons.archive_outlined,
+                ),
+                title: Text(
+                  wallet.isArchived ? 'إلغاء الأرشفة' : 'أرشفة المحفظة',
+                ),
+                onTap: () => Navigator.of(sheetContext).pop('archive'),
+              ),
+              ListTile(
+                leading: const Icon(
+                  Icons.delete_outline_rounded,
+                  color: Color(0xFFEF4444),
+                ),
+                title: const Text(
+                  'حذف المحفظة',
+                  style: TextStyle(color: Color(0xFFEF4444)),
+                ),
+                onTap: () => Navigator.of(sheetContext).pop('delete'),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+    if (action == null || !mounted) return;
+
+    if (action == 'edit') {
+      await _openWalletForm(existing: wallet);
+      return;
+    }
+    if (action == 'archive') {
+      try {
+        await _repository.upsertWallet(
+          wallet.copyWith(isArchived: !wallet.isArchived),
+        );
+        // إلغاء تصفية القائمة إن كانت على المحفظة التي أُرشفت للتو.
+        if (!wallet.isArchived && _selectedWalletId == wallet.id) {
+          _selectedWalletId = null;
+        }
+        await _load();
+        if (mounted) {
+          _toast(
+            wallet.isArchived ? 'تم إخراجها من الأرشيف' : 'تمت أرشفة المحفظة',
+          );
+        }
+      } catch (_) {
+        if (mounted) _toast('تعذّر تنفيذ العملية');
+      }
+      return;
+    }
+
+    final own = _transactions.where((t) => t.walletId == wallet.id).toList();
+    final count = own.length;
+    // حذف المحفظة يحذف أيضًا الطرف المقابل لكل تحويل يخصّها من المحفظة
+    // الأخرى، وإلا بقي خصمٌ بلا إيداع مقابل. يجب أن يعرف المستخدم ذلك.
+    final transfers = own.where((t) => t.isTransfer).length;
+    final confirmed = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => Directionality(
+        textDirection: TextDirection.rtl,
+        child: AlertDialog(
+          title: const Text('حذف المحفظة'),
+          // تحذير صريح بعدد الحركات التي ستُحذف معها — الحذف يُسقط كل
+          // حركاتها عبر cascade في قاعدة البيانات.
+          content: Text(
+            [
+              count == 0
+                  ? 'سيتم حذف "${wallet.name}" نهائيًا.'
+                  : 'سيتم حذف "${wallet.name}" و $count حركة مسجّلة عليها نهائيًا.',
+              if (transfers > 0)
+                'ومن بينها $transfers تحويلًا سيُحذف طرفه المقابل من المحفظة الأخرى أيضًا، فيتغيّر رصيدها.',
+            ].join('\n'),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.of(dialogContext).pop(false),
+              child: const Text('إلغاء'),
+            ),
+            TextButton(
+              onPressed: () => Navigator.of(dialogContext).pop(true),
+              child: const Text(
+                'حذف',
+                style: TextStyle(color: Color(0xFFEF4444)),
+              ),
             ),
           ],
         ),
       ),
     );
+    if (confirmed != true || !mounted) return;
+    try {
+      await _repository.deleteWallet(wallet.id!);
+      await _load();
+      if (mounted) _toast('تم حذف المحفظة');
+    } catch (_) {
+      if (mounted) _toast('تعذّر حذف المحفظة');
+    }
   }
-}
 
-class _WalletStatTile extends StatelessWidget {
-  const _WalletStatTile({
-    required this.title,
-    required this.value,
-    required this.subtitle,
-    required this.icon,
-    required this.color,
-  });
+  Future<void> _transactionMenu(WalletTransactionRecord t) async {
+    final action = await showModalBottomSheet<String>(
+      context: context,
+      backgroundColor: Colors.white,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(AppTheme.rCard)),
+      ),
+      builder: (sheetContext) => Directionality(
+        textDirection: TextDirection.rtl,
+        child: SafeArea(
+          top: false,
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              // التحويل لا يُعدَّل طرفًا واحدًا: تعديل جهة أو مبلغ طرف دون
+              // الآخر يترك المحفظتين بأرصدة غير متطابقة. يُحذف ويُعاد.
+              if (!t.isTransfer)
+                ListTile(
+                  leading: const Icon(Icons.edit_outlined),
+                  title: const Text('تعديل الحركة'),
+                  onTap: () => Navigator.of(sheetContext).pop('edit'),
+                ),
+              ListTile(
+                leading: const Icon(
+                  Icons.delete_outline_rounded,
+                  color: Color(0xFFEF4444),
+                ),
+                title: Text(
+                  t.isTransfer ? 'حذف التحويل (الطرفين)' : 'حذف الحركة',
+                  style: const TextStyle(color: Color(0xFFEF4444)),
+                ),
+                onTap: () => Navigator.of(sheetContext).pop('delete'),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+    if (action == null || !mounted) return;
+    if (action == 'edit') {
+      await _openTransactionForm(kind: t.kind, existing: t);
+      return;
+    }
+    try {
+      await _repository.deleteTransaction(t);
+      await _load();
+      if (mounted) _toast('تم الحذف');
+    } catch (_) {
+      if (mounted) _toast('تعذّر الحذف');
+    }
+  }
 
-  final String title;
-  final String value;
-  final String subtitle;
-  final IconData icon;
-  final Color color;
+  // ===== الواجهة =====
 
   @override
   Widget build(BuildContext context) {
-    return Container(
-      margin: const EdgeInsets.only(bottom: 10),
-      padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: const Color(0xFFE2E8F0)),
-      ),
-      child: Row(
-        children: [
-          Container(
-            width: 38,
-            height: 38,
-            decoration: BoxDecoration(
-              color: color.withValues(alpha: 0.12),
-              borderRadius: BorderRadius.circular(10),
-            ),
-            child: Icon(icon, color: color, size: 21),
+    final totals = _monthTotals;
+    return Directionality(
+      textDirection: TextDirection.rtl,
+      child: Scaffold(
+        backgroundColor: AppTheme.page,
+        appBar: AppBar(
+          title: const Text(
+            'المحافظ',
+            style: TextStyle(fontWeight: FontWeight.w900),
           ),
-          const SizedBox(width: 10),
-          Expanded(
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text(
-                  title,
-                  style: const TextStyle(
-                    fontSize: 14,
-                    fontWeight: FontWeight.w900,
-                    color: Color(0xFF0F172A),
-                  ),
+          centerTitle: true,
+          backgroundColor: AppTheme.page,
+          surfaceTintColor: Colors.transparent,
+          foregroundColor: AppTheme.title,
+          elevation: 0,
+          scrolledUnderElevation: 0,
+          actions: [
+            IconButton(
+              tooltip: _hideBalances ? 'إظهار المبالغ' : 'إخفاء المبالغ',
+              onPressed: _toggleHideBalances,
+              icon: Icon(
+                _hideBalances
+                    ? Icons.visibility_off_rounded
+                    : Icons.visibility_rounded,
+              ),
+            ),
+            IconButton(
+              tooltip: 'تحديث',
+              onPressed: _load,
+              icon: const Icon(Icons.refresh_rounded),
+            ),
+          ],
+        ),
+        floatingActionButton: FloatingActionButton.extended(
+          onPressed: () => _openWalletForm(),
+          backgroundColor: _accent,
+          foregroundColor: Colors.white,
+          icon: const Icon(Icons.add_rounded),
+          label: const Text('محفظة'),
+        ),
+        body: _loading
+            ? const Center(child: CircularProgressIndicator())
+            : RefreshIndicator(
+                onRefresh: _load,
+                child: ListView(
+                  padding: const EdgeInsets.fromLTRB(16, 14, 16, 90),
+                  children: [
+                    if (_error != null) ...[
+                      _errorBanner(),
+                      const SizedBox(height: 12),
+                    ],
+                    _totalCard(totals.$1, totals.$2),
+                    const SizedBox(height: 14),
+                    _quickActions(),
+                    const SizedBox(height: 18),
+                    _sectionTitle(
+                      'محافظي',
+                      trailing: _activeWallets.isEmpty
+                          ? null
+                          : '${_activeWallets.length}',
+                    ),
+                    if (_wallets.isEmpty)
+                      _emptyCard(
+                        Icons.account_balance_wallet_outlined,
+                        'لا توجد محافظ بعد.\nأضف محفظتك الأولى من زر "+ محفظة".',
+                      )
+                    else
+                      SizedBox(
+                        height: 152,
+                        child: ListView.separated(
+                          scrollDirection: Axis.horizontal,
+                          itemCount: _wallets.length,
+                          separatorBuilder: (_, __) =>
+                              const SizedBox(width: 10),
+                          itemBuilder: (context, index) =>
+                              _walletCard(_wallets[index]),
+                        ),
+                      ),
+                    const SizedBox(height: 18),
+                    _sectionTitle(
+                      _selectedWalletId == null
+                          ? 'آخر الحركات'
+                          : 'حركات المحفظة المحددة',
+                      trailing: _visibleTransactions.isEmpty
+                          ? null
+                          // القائمة تعرض 60 حركة كحدّ أقصى، فيُظهر العنوان
+                          // العدد المعروض فعلًا لا العدد الكلي.
+                          : _visibleTransactions.length > 60
+                          ? '60 من ${_visibleTransactions.length}'
+                          : '${_visibleTransactions.length}',
+                    ),
+                    if (_wallets.isNotEmpty) _walletFilterChips(),
+                    if (_visibleTransactions.isEmpty)
+                      _emptyCard(
+                        Icons.receipt_long_outlined,
+                        'لا توجد حركات مسجّلة بعد.\nاستخدم أزرار الدخل والمصروف والتحويل أعلاه.',
+                      )
+                    else
+                      for (final t in _visibleTransactions.take(60))
+                        _transactionTile(t),
+                  ],
                 ),
-                const SizedBox(height: 3),
+              ),
+      ),
+    );
+  }
+
+  Widget _errorBanner() => Container(
+    padding: const EdgeInsets.all(12),
+    decoration: BoxDecoration(
+      color: const Color(0xFFFEF2F2),
+      borderRadius: BorderRadius.circular(12),
+      border: Border.all(color: const Color(0xFFFECACA)),
+    ),
+    child: Row(
+      children: [
+        const Icon(Icons.error_outline_rounded, color: Color(0xFFB42318)),
+        const SizedBox(width: 8),
+        Expanded(
+          child: Text(
+            _error!,
+            style: const TextStyle(
+              fontSize: 11.5,
+              fontWeight: FontWeight.w700,
+              color: Color(0xFFB42318),
+            ),
+          ),
+        ),
+        TextButton(onPressed: _load, child: const Text('إعادة المحاولة')),
+      ],
+    ),
+  );
+
+  Widget _totalCard(double income, double expense) {
+    final cards = _activeWallets
+        .where((w) => w.kind == WalletRecord.kindCard)
+        .length;
+    return Container(
+      padding: const EdgeInsets.all(16),
+      decoration: BoxDecoration(
+        gradient: const LinearGradient(
+          colors: [Color(0xFF0F172A), Color(0xFF1E293B)],
+          begin: Alignment.topRight,
+          end: Alignment.bottomLeft,
+        ),
+        borderRadius: BorderRadius.circular(18),
+        boxShadow: const [
+          BoxShadow(
+            color: Color(0x330F172A),
+            blurRadius: 18,
+            offset: Offset(0, 8),
+          ),
+        ],
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              const Text(
+                'الرصيد الكلي',
+                style: TextStyle(
+                  fontSize: 12,
+                  fontWeight: FontWeight.w700,
+                  color: Color(0xFFCBD5E1),
+                ),
+              ),
+              const Spacer(),
+              if (_activeWallets.isNotEmpty)
                 Text(
-                  subtitle,
+                  '${_activeWallets.length} محفظة'
+                  '${cards > 0 ? ' · $cards بطاقة' : ''}',
                   style: const TextStyle(
                     fontSize: 11,
-                    fontWeight: FontWeight.w600,
-                    color: Color(0xFF64748B),
+                    fontWeight: FontWeight.w700,
+                    color: Color(0xFF93C5FD),
                   ),
                 ),
-              ],
+            ],
+          ),
+          const SizedBox(height: 6),
+          Text(
+            '${_money(_totalBalance)} $_currency',
+            style: const TextStyle(
+              fontSize: 26,
+              fontWeight: FontWeight.w900,
+              color: Colors.white,
             ),
           ),
-          Text(
-            value,
-            style: TextStyle(
-              fontSize: 12.5,
-              fontWeight: FontWeight.w900,
-              color: color,
-            ),
+          const SizedBox(height: 14),
+          Row(
+            children: [
+              Expanded(
+                child: _totalMini(
+                  'دخل هذا الشهر',
+                  income,
+                  Icons.arrow_downward_rounded,
+                  const Color(0xFF6EE7B7),
+                ),
+              ),
+              Container(width: 1, height: 30, color: const Color(0x33FFFFFF)),
+              Expanded(
+                child: _totalMini(
+                  'مصروف هذا الشهر',
+                  expense,
+                  Icons.arrow_upward_rounded,
+                  const Color(0xFFFCA5A5),
+                ),
+              ),
+            ],
           ),
         ],
       ),
     );
   }
-}
 
-class _AccountPage extends StatelessWidget {
-  const _AccountPage();
-
-  @override
-  Widget build(BuildContext context) {
-    const accountItems = [
-      ('الملف الشخصي', Icons.person_outline_rounded),
-      ('الأمان وتغيير كلمة المرور', Icons.lock_outline_rounded),
-      ('طرق الدفع والمحافظ', Icons.account_balance_wallet_outlined),
-      ('إدارة الاشتراكات', Icons.subscriptions_outlined),
-      ('اللغة والمظهر', Icons.palette_outlined),
-      ('الخصوصية والصلاحيات', Icons.verified_user_outlined),
-      ('المساعدة والدعم', Icons.support_agent_outlined),
-      ('تسجيل الخروج', Icons.logout_rounded),
-    ];
-
-    return Scaffold(
-      backgroundColor: const Color(0xFFF5F8FC),
-      appBar: AppBar(title: const Text('الحساب'), centerTitle: true),
-      body: Directionality(
-        textDirection: TextDirection.rtl,
-        child: ListView(
-          padding: const EdgeInsets.fromLTRB(16, 18, 16, 22),
-          children: [
-            Container(
-              padding: const EdgeInsets.all(14),
-              decoration: BoxDecoration(
-                color: Colors.white,
-                borderRadius: BorderRadius.circular(14),
-                border: Border.all(color: const Color(0xFFE2E8F0)),
-              ),
-              child: const Row(
-                children: [
-                  CircleAvatar(
-                    radius: 24,
-                    backgroundColor: Color(0xFFDBEAFE),
-                    child: Icon(Icons.person_rounded, color: Color(0xFF1D4ED8)),
+  Widget _totalMini(String label, double value, IconData icon, Color color) =>
+      Column(
+        children: [
+          Row(
+            mainAxisAlignment: MainAxisAlignment.center,
+            children: [
+              Icon(icon, size: 14, color: color),
+              const SizedBox(width: 4),
+              Flexible(
+                child: Text(
+                  _money(value),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    fontSize: 14,
+                    fontWeight: FontWeight.w900,
+                    color: color,
                   ),
-                  SizedBox(width: 10),
-                  Expanded(
-                    child: Column(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        Text(
-                          'عبدالعزيز',
-                          style: TextStyle(
-                            fontSize: 16,
-                            fontWeight: FontWeight.w900,
-                            color: Color(0xFF0F172A),
-                          ),
-                        ),
-                        SizedBox(height: 3),
-                        Text(
-                          'حسابك جاهز لإدارة كل التزاماتك',
-                          style: TextStyle(
-                            fontSize: 11,
-                            fontWeight: FontWeight.w600,
-                            color: Color(0xFF64748B),
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                ],
+                ),
               ),
+            ],
+          ),
+          const SizedBox(height: 2),
+          Text(
+            label,
+            maxLines: 1,
+            overflow: TextOverflow.ellipsis,
+            style: const TextStyle(
+              fontSize: 10,
+              fontWeight: FontWeight.w700,
+              color: Color(0xFF94A3B8),
             ),
-            const SizedBox(height: 12),
-            ...accountItems.map(
-              (item) => Container(
-                margin: const EdgeInsets.only(bottom: 8),
-                decoration: BoxDecoration(
-                  color: Colors.white,
-                  borderRadius: BorderRadius.circular(12),
-                  border: Border.all(color: const Color(0xFFE2E8F0)),
-                ),
-                child: ListTile(
-                  leading: Icon(item.$2, color: const Color(0xFF334155)),
-                  trailing: const Icon(
-                    Icons.arrow_forward_ios_rounded,
-                    size: 16,
-                    color: Color(0xFF64748B),
-                  ),
-                  title: Text(
-                    item.$1,
-                    style: const TextStyle(
-                      fontSize: 13,
-                      fontWeight: FontWeight.w800,
-                      color: Color(0xFF0F172A),
-                    ),
-                  ),
-                ),
+          ),
+        ],
+      );
+
+  Widget _quickActions() => Row(
+    children: [
+      Expanded(
+        child: _actionButton(
+          'دخل',
+          Icons.add_circle_outline_rounded,
+          _incomeColor,
+          () => _openTransactionForm(
+            kind: WalletTransactionRecord.kindIncome,
+          ),
+        ),
+      ),
+      const SizedBox(width: 9),
+      Expanded(
+        child: _actionButton(
+          'مصروف',
+          Icons.remove_circle_outline_rounded,
+          _expenseColor,
+          () => _openTransactionForm(
+            kind: WalletTransactionRecord.kindExpense,
+          ),
+        ),
+      ),
+      const SizedBox(width: 9),
+      Expanded(
+        child: _actionButton(
+          'تحويل',
+          Icons.swap_horiz_rounded,
+          _transferColor,
+          _openTransferForm,
+        ),
+      ),
+    ],
+  );
+
+  Widget _actionButton(
+    String label,
+    IconData icon,
+    Color color,
+    VoidCallback onTap,
+  ) => Material(
+    color: AppTheme.surface,
+    borderRadius: BorderRadius.circular(AppTheme.rField),
+    clipBehavior: Clip.antiAlias,
+    child: InkWell(
+      onTap: onTap,
+      child: Padding(
+        padding: const EdgeInsets.symmetric(vertical: 14),
+        child: Column(
+          children: [
+            Icon(icon, color: color, size: 21),
+            const SizedBox(height: 5),
+            Text(
+              label,
+              style: TextStyle(
+                fontSize: 12,
+                fontWeight: FontWeight.w900,
+                color: color,
               ),
             ),
           ],
         ),
       ),
+    ),
+  );
+
+  Widget _sectionTitle(String text, {String? trailing}) => Padding(
+    padding: const EdgeInsets.only(bottom: 10),
+    child: Row(
+      children: [
+        Container(
+          width: 4,
+          height: 17,
+          decoration: BoxDecoration(
+            color: _accent,
+            borderRadius: BorderRadius.circular(99),
+          ),
+        ),
+        const SizedBox(width: 8),
+        Expanded(
+          child: Text(
+            text,
+            style: const TextStyle(
+              fontSize: 14.5,
+              fontWeight: FontWeight.w900,
+              color: Color(0xFF0F172A),
+            ),
+          ),
+        ),
+        if (trailing != null)
+          Text(
+            trailing,
+            style: const TextStyle(
+              fontSize: 11.5,
+              fontWeight: FontWeight.w700,
+              color: Color(0xFF94A3B8),
+            ),
+          ),
+      ],
+    ),
+  );
+
+  Widget _emptyCard(IconData icon, String message) => Container(
+    width: double.infinity,
+    padding: const EdgeInsets.symmetric(vertical: 26, horizontal: 16),
+    decoration: BoxDecoration(
+            color: AppTheme.surface,
+            borderRadius: BorderRadius.circular(AppTheme.rField),
+          ),
+    child: Column(
+      children: [
+        Icon(icon, size: 30, color: const Color(0xFFCBD5E1)),
+        const SizedBox(height: 10),
+        Text(
+          message,
+          textAlign: TextAlign.center,
+          style: const TextStyle(
+            fontSize: 12.5,
+            fontWeight: FontWeight.w700,
+            color: Color(0xFF94A3B8),
+          ),
+        ),
+      ],
+    ),
+  );
+
+  Widget _walletCard(WalletRecord wallet) {
+    final color = _walletColor(wallet);
+    final selected = _selectedWalletId == wallet.id;
+    return SizedBox(
+      width: 210,
+      child: Material(
+        color: Colors.transparent,
+        borderRadius: BorderRadius.circular(16),
+        child: InkWell(
+          borderRadius: BorderRadius.circular(16),
+          // الضغط يصفّي قائمة الحركات على هذه المحفظة، والضغط مجددًا يلغي
+          // التصفية — ربط مباشر بين البطاقة والقائمة أسفلها.
+          onTap: () => setState(
+            () => _selectedWalletId = selected ? null : wallet.id,
+          ),
+          onLongPress: () => _walletMenu(wallet),
+          child: Container(
+            padding: const EdgeInsets.all(14),
+            decoration: BoxDecoration(
+              gradient: LinearGradient(
+                colors: [color, Color.lerp(color, Colors.black, 0.35)!],
+                begin: Alignment.topRight,
+                end: Alignment.bottomLeft,
+              ),
+              borderRadius: BorderRadius.circular(16),
+              border: Border.all(
+                color: selected ? Colors.white : Colors.transparent,
+                width: 2,
+              ),
+              boxShadow: [
+                BoxShadow(
+                  color: color.withValues(alpha: 0.30),
+                  blurRadius: 12,
+                  offset: const Offset(0, 5),
+                ),
+              ],
+            ),
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Row(
+                  children: [
+                    Icon(
+                      _walletIcon(wallet.kind),
+                      color: Colors.white,
+                      size: 20,
+                    ),
+                    const SizedBox(width: 7),
+                    Expanded(
+                      child: Text(
+                        wallet.name,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          fontSize: 13.5,
+                          fontWeight: FontWeight.w900,
+                          color: Colors.white,
+                        ),
+                      ),
+                    ),
+                    InkWell(
+                      onTap: () => _walletMenu(wallet),
+                      borderRadius: BorderRadius.circular(99),
+                      child: const Padding(
+                        padding: EdgeInsets.all(2),
+                        child: Icon(
+                          Icons.more_horiz_rounded,
+                          color: Colors.white70,
+                          size: 19,
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+                const Spacer(),
+                Text(
+                  _money(_balanceOf(wallet)),
+                  maxLines: 1,
+                  overflow: TextOverflow.ellipsis,
+                  style: const TextStyle(
+                    fontSize: 20,
+                    fontWeight: FontWeight.w900,
+                    color: Colors.white,
+                  ),
+                ),
+                const SizedBox(height: 2),
+                Text(
+                  wallet.currencyLabel,
+                  style: const TextStyle(
+                    fontSize: 10.5,
+                    fontWeight: FontWeight.w700,
+                    color: Colors.white70,
+                  ),
+                ),
+                const SizedBox(height: 8),
+                Row(
+                  children: [
+                    Text(
+                      wallet.kind == WalletRecord.kindCard &&
+                              (wallet.last4 ?? '').isNotEmpty
+                          ? '•••• ${wallet.last4}'
+                          : WalletRecord.kindLabel(wallet.kind),
+                      style: const TextStyle(
+                        fontSize: 10.5,
+                        fontWeight: FontWeight.w700,
+                        color: Colors.white70,
+                      ),
+                    ),
+                    const Spacer(),
+                    if (wallet.isArchived)
+                      Container(
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 7,
+                          vertical: 2,
+                        ),
+                        decoration: BoxDecoration(
+                          color: Colors.white24,
+                          borderRadius: BorderRadius.circular(99),
+                        ),
+                        child: const Text(
+                          'مؤرشفة',
+                          style: TextStyle(
+                            fontSize: 9.5,
+                            fontWeight: FontWeight.w800,
+                            color: Colors.white,
+                          ),
+                        ),
+                      ),
+                  ],
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  Widget _walletFilterChips() => Padding(
+    padding: const EdgeInsets.only(bottom: 10),
+    child: SizedBox(
+      height: 32,
+      child: ListView(
+        scrollDirection: Axis.horizontal,
+        children: [
+          ChoiceChip(
+            label: const Text('الكل', style: TextStyle(fontSize: 11)),
+            selected: _selectedWalletId == null,
+            onSelected: (_) => setState(() => _selectedWalletId = null),
+          ),
+          for (final w in _wallets) ...[
+            const SizedBox(width: 6),
+            ChoiceChip(
+              label: Text(w.name, style: const TextStyle(fontSize: 11)),
+              selected: _selectedWalletId == w.id,
+              onSelected: (_) => setState(() => _selectedWalletId = w.id),
+            ),
+          ],
+        ],
+      ),
+    ),
+  );
+
+  Widget _transactionTile(WalletTransactionRecord t) {
+    final wallet = _wallets.where((w) => w.id == t.walletId).toList();
+    final walletName = wallet.isEmpty ? '' : wallet.first.name;
+    final color = t.isTransfer
+        ? _transferColor
+        : (t.isCredit ? _incomeColor : _expenseColor);
+    final icon = t.isTransfer
+        ? (t.kind == WalletTransactionRecord.kindTransferIn
+              ? Icons.call_received_rounded
+              : Icons.call_made_rounded)
+        : (t.isCredit
+              ? Icons.arrow_downward_rounded
+              : Icons.arrow_upward_rounded);
+    final title = (t.category ?? '').trim().isNotEmpty
+        ? t.category!.trim()
+        : (t.isTransfer
+              ? 'تحويل'
+              : (t.isCredit ? 'دخل' : 'مصروف'));
+
+    return Container(
+      margin: const EdgeInsets.only(bottom: 8),
+      decoration: BoxDecoration(
+            color: AppTheme.surface,
+            borderRadius: BorderRadius.circular(AppTheme.rField),
+          ),
+      clipBehavior: Clip.antiAlias,
+      // Material شفافة بين الحاوية وInkWell حتى يظهر أثر اللمس فوق
+      // خلفية البطاقة بدل أن يُرسم خلفها فلا يُرى.
+      child: Material(
+        color: Colors.transparent,
+        child: InkWell(
+        onTap: () => _transactionMenu(t),
+        child: Padding(
+          padding: const EdgeInsets.all(12),
+          child: Row(
+            children: [
+              Container(
+                width: 34,
+                height: 34,
+                decoration: BoxDecoration(
+                  color: color.withValues(alpha: 0.12),
+                  shape: BoxShape.circle,
+                ),
+                child: Icon(icon, size: 18, color: color),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      title,
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        fontSize: 12.5,
+                        fontWeight: FontWeight.w800,
+                        color: Color(0xFF0F172A),
+                      ),
+                    ),
+                    const SizedBox(height: 2),
+                    Text(
+                      [
+                        _fmtDate(t.occurredOn),
+                        if (walletName.isNotEmpty) walletName,
+                        if ((t.note ?? '').trim().isNotEmpty) t.note!.trim(),
+                      ].join(' · '),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                      style: const TextStyle(
+                        fontSize: 11,
+                        fontWeight: FontWeight.w600,
+                        color: Color(0xFF64748B),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              const SizedBox(width: 8),
+              Text(
+                _hideBalances
+                    ? _money(t.amount)
+                    : '${t.isCredit ? '+' : '-'}${_money(t.amount)}',
+                style: TextStyle(
+                  fontSize: 12.5,
+                  fontWeight: FontWeight.w900,
+                  color: color,
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+      ),
     );
   }
 }
+

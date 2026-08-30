@@ -4,11 +4,17 @@ import 'package:flutter/material.dart';
 import 'package:share_plus/share_plus.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import '../data/app_settings.dart';
 import '../data/app_reminders_store.dart';
 import '../widgets/detail_page_chrome.dart';
 import '../widgets/followup_center_card.dart';
 import '../widgets/management_dashboard_chrome.dart';
+import '../widgets/shared/app_design.dart';
+import '../widgets/shared/app_filter_sheet.dart';
+import '../widgets/shared/followup_center_sheet.dart';
+import 'smart_calendar_screen.dart';
 import '../widgets/shared/module_shared_widgets.dart';
+import '../widgets/shared/measured_pinned_header.dart';
 
 /// تاريخ اليوم بصيغة d/M/yyyy — تُخزَّن التواريخ كنص بهذه الصيغة في سجلات
 /// الأشخاص. كانت تُكتب سابقًا بالكلمة الثابتة 'اليوم'، فيظل سجل أُنشئ قبل
@@ -131,6 +137,12 @@ class _PeopleManagementScreenState extends State<PeopleManagementScreen> {
   void initState() {
     super.initState();
     _loadSavedPeople();
+  }
+
+  void _openSmartCalendar() {
+    Navigator.of(
+      context,
+    ).push(MaterialPageRoute(builder: (_) => const SmartCalendarScreen()));
   }
 
   Future<void> _loadSavedPeople() async {
@@ -292,178 +304,115 @@ class _PeopleManagementScreenState extends State<PeopleManagementScreen> {
     return const [];
   }
 
-  Future<void> _openScopeFiltersPopup({required bool isEntity}) async {
+  /// عناصر القائمة المنسدلة لشريحة "الأفراد" أو "الجهات".
+  ///
+  /// كانت هذه التصنيفات تُعرض في نافذة تملأ الشاشة بكل عناصرها دفعةً
+  /// واحدة؛ صارت قائمة منسدلة أسفل الشريحة نفسها.
+  List<AppDropdownItem> _scopeDropdownItems({required bool isEntity}) {
     final scopeKey = isEntity ? 'scope_entities' : 'scope_people';
     final allKey = isEntity ? 'all_entities' : 'all_people';
     final allLabel = isEntity ? 'كل الجهات' : 'كل الأفراد';
-    final allColor = isEntity
-        ? const Color(0xFF7C3AED)
-        : const Color(0xFF0F6AA8);
     final allIcon = isEntity
         ? Icons.apartment_rounded
         : Icons.people_alt_outlined;
 
-    final filters = _createTypeFilters(isEntity);
-    final options = <({String key, String label, Color color, IconData icon})>[
-      (key: allKey, label: allLabel, color: allColor, icon: allIcon),
-      ...filters.map(
-        (filter) => (
-          key: filter.key,
-          label: filter.label,
-          color: filter.color,
-          icon: _typeIcon(filter.key),
-        ),
-      ),
-    ];
-
-    await showGeneralDialog<void>(
-      context: context,
-      barrierDismissible: true,
-      barrierLabel: 'scope_filter_popup',
-      barrierColor: Colors.black.withValues(alpha: 0.28),
-      transitionDuration: const Duration(milliseconds: 220),
-      pageBuilder: (dialogContext, _, _) {
-        return SafeArea(
-          child: Center(
-            child: ConstrainedBox(
-              constraints: const BoxConstraints(maxWidth: 460),
-              child: Material(
-                color: Colors.transparent,
-                child: Container(
-                  margin: const EdgeInsets.symmetric(
-                    horizontal: 20,
-                    vertical: 80,
-                  ),
-                  decoration: BoxDecoration(
-                    color: Colors.white,
-                    borderRadius: BorderRadius.circular(18),
-                    boxShadow: const [
-                      BoxShadow(
-                        color: Color(0x30000000),
-                        blurRadius: 26,
-                        offset: Offset(0, 8),
-                      ),
-                    ],
-                  ),
-                  child: Directionality(
-                    textDirection: TextDirection.rtl,
-                    child: Padding(
-                      padding: const EdgeInsets.fromLTRB(14, 12, 14, 14),
-                      child: Column(
-                        mainAxisSize: MainAxisSize.min,
-                        crossAxisAlignment: CrossAxisAlignment.stretch,
-                        children: [
-                          Row(
-                            children: [
-                              Expanded(
-                                child: Text(
-                                  isEntity
-                                      ? 'تصنيفات الجهات'
-                                      : 'تصنيفات الأفراد',
-                                  style: const TextStyle(
-                                    fontSize: 16,
-                                    fontWeight: FontWeight.w900,
-                                    color: Color(0xFF0F172A),
-                                  ),
-                                ),
-                              ),
-                              IconButton(
-                                tooltip: 'إغلاق',
-                                onPressed: () =>
-                                    Navigator.of(dialogContext).pop(),
-                                icon: const Icon(Icons.close_rounded),
-                              ),
-                            ],
-                          ),
-                          const SizedBox(height: 8),
-                          ConstrainedBox(
-                            constraints: const BoxConstraints(maxHeight: 360),
-                            child: SingleChildScrollView(
-                              child: LayoutBuilder(
-                                builder: (context, constraints) {
-                                  final columns = constraints.maxWidth >= 420
-                                      ? 3
-                                      : 2;
-                                  const spacing = 8.0;
-                                  final itemWidth =
-                                      (constraints.maxWidth -
-                                          spacing * (columns - 1)) /
-                                      columns;
-
-                                  return Wrap(
-                                    spacing: spacing,
-                                    runSpacing: spacing,
-                                    children: options
-                                        .map(
-                                          (option) => SizedBox(
-                                            width: itemWidth,
-                                            child: _ScopeFilterRect(
-                                              label: option.label,
-                                              count: _countByType(option.key),
-                                              icon: option.icon,
-                                              color: option.color,
-                                              selected:
-                                                  _selectedScopeKey ==
-                                                      scopeKey &&
-                                                  _selectedTypeKey ==
-                                                      option.key,
-                                              onTap: () {
-                                                setState(() {
-                                                  _selectedScopeKey = scopeKey;
-                                                  _selectedTypeKey = option.key;
-                                                });
-                                                Navigator.of(
-                                                  dialogContext,
-                                                ).pop();
-                                              },
-                                            ),
-                                          ),
-                                        )
-                                        .toList(growable: false),
-                                  );
-                                },
-                              ),
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                  ),
-                ),
-              ),
-            ),
-          ),
-        );
-      },
-      transitionBuilder: (context, animation, _, child) {
-        final curved = CurvedAnimation(
-          parent: animation,
-          curve: Curves.easeOutCubic,
-          reverseCurve: Curves.easeInCubic,
-        );
-        return FadeTransition(
-          opacity: curved,
-          child: ScaleTransition(
-            scale: Tween<double>(begin: 0.94, end: 1).animate(curved),
-            child: child,
-          ),
-        );
-      },
-    );
-  }
-
-  List<(String label, String key, Color color)> _topTypeFilters() {
-    final relativeCount = _countByType('person_relative');
-    final employeeCount = _countByType('person_employee');
-    final clientCount = _countByType('person_client');
+    AppDropdownItem build(String key, String label, IconData icon) {
+      return AppDropdownItem(
+        label: label,
+        icon: icon,
+        count: _countByType(key),
+        selected: _selectedScopeKey == scopeKey && _selectedTypeKey == key,
+        onTap: () => setState(() {
+          _selectedScopeKey = scopeKey;
+          _selectedTypeKey = key;
+          // الفئة الفرعية في الفلتر الكبير تتبع الاختيار هنا، وإلا بقيت
+          // قيمة قديمة تُعاد تطبيقها فوق اختيار المستخدم.
+          _filter.subCategory = null;
+        }),
+      );
+    }
 
     return [
-      ('الكل', 'all', const Color(0xFF0B3A78)),
-      ('قريب ($relativeCount)', 'person_relative', const Color(0xFF0F6AA8)),
-      ('موظف ($employeeCount)', 'person_employee', const Color(0xFFF59E0B)),
-      ('عميل ($clientCount)', 'person_client', const Color(0xFF2563EB)),
-      ('المزيد', 'more', const Color(0xFF7C3AED)),
+      build(allKey, allLabel, allIcon),
+      ..._createTypeFilters(
+        isEntity,
+      ).map((filter) => build(filter.key, filter.label, _typeIcon(filter.key))),
     ];
+  }
+
+  /// قيم الفلتر الرئيسي — نفس البنية في الشاشات الأربع.
+  final AppFilterValues _filter = AppFilterValues();
+
+  bool _matchesAdvancedPeopleFilters(_PersonItem person) {
+    switch (_filter.status) {
+      case 'نشط':
+        if (person.isFrozen) return false;
+      case 'المستحق بعد 7 أيام':
+        if (person.openTasks <= 0) return false;
+      case 'متأخر':
+        if (!person.statusNote.contains('متأخر') &&
+            !person.badge.contains('عاجل')) {
+          return false;
+        }
+      case 'مكتمل':
+        if (person.openTasks > 0) return false;
+      case 'ملغاة':
+        if (!person.badge.contains('ملغا')) return false;
+      case 'مؤرشف':
+        if (!person.isFrozen) return false;
+    }
+    // اختصارات المبلغ: "لي" مستحقات لك، "عليّ" مستحقات عليك.
+    switch (_filter.amountShortcut) {
+      case 'لي':
+        if (person.dueToYou <= 0) return false;
+      case 'عليّ':
+        if (person.dueOnYou <= 0) return false;
+    }
+    final amount = person.dueToYou > 0 ? person.dueToYou : person.dueOnYou;
+    if (!_filter.matchesAmount(amount)) return false;
+    if (_filter.personName.isNotEmpty &&
+        !AppFilterValues.textMatches(_filter.personName, [
+          person.fullName,
+          person.nickName,
+          person.roleTitle,
+        ])) {
+      return false;
+    }
+    if (_filter.personCategory != null &&
+        !person.categoryName.contains(_filter.personCategory!)) {
+      return false;
+    }
+    if (_filter.delegateName.isNotEmpty &&
+        !AppFilterValues.textMatches(_filter.delegateName, [
+          person.fullName,
+          person.details['المفوَّض'] ?? '',
+        ])) {
+      return false;
+    }
+    if (_filter.documentName.isNotEmpty &&
+        !AppFilterValues.textMatches(_filter.documentName, person.documents)) {
+      return false;
+    }
+    if (_filter.placeName.isNotEmpty &&
+        !AppFilterValues.textMatches(_filter.placeName, [
+          person.details['العنوان'] ?? '',
+          person.details['المكان'] ?? '',
+        ])) {
+      return false;
+    }
+    if (!_filter.matchesDate(_parsePeopleDate(person.lastUpdate))) return false;
+    return true;
+  }
+
+  /// تحويل تاريخ نصّي (d/M/yyyy) إلى DateTime، أو null إن تعذّر.
+  DateTime? _parsePeopleDate(String raw) {
+    final parts = raw.split('/');
+    if (parts.length != 3) return null;
+    final day = int.tryParse(parts[0]);
+    final month = int.tryParse(parts[1]);
+    final year = int.tryParse(parts[2]);
+    if (day == null || month == null || year == null) return null;
+    return DateTime(year, month, day);
   }
 
   List<_PersonItem> _filteredPeople() {
@@ -509,7 +458,10 @@ class _PeopleManagementScreenState extends State<PeopleManagementScreen> {
           ...person.details.values,
         ],
       );
-      return scopeMatches && typeMatches && queryMatches;
+      return scopeMatches &&
+          typeMatches &&
+          queryMatches &&
+          _matchesAdvancedPeopleFilters(person);
     }).toList();
 
     // المثبَّت أولًا دائمًا مهما كان الترتيب المختار (نفس سلوك شاشة
@@ -520,27 +472,42 @@ class _PeopleManagementScreenState extends State<PeopleManagementScreen> {
       return a.isPinned ? -1 : 1;
     }
 
-    if (_selectedSort == 'الأعلى مستحقات') {
-      filtered.sort((a, b) {
-        final pinned = byPinned(a, b);
-        if (pinned != 0) return pinned;
-        return (b.dueToYou + b.dueOnYou).compareTo(a.dueToYou + a.dueOnYou);
-      });
-    } else if (_selectedSort == 'الأكثر مهاماً') {
-      filtered.sort((a, b) {
-        final pinned = byPinned(a, b);
-        if (pinned != 0) return pinned;
-        return b.openTasks.compareTo(a.openTasks);
-      });
-    } else {
-      filtered.sort((a, b) {
-        final pinned = byPinned(a, b);
-        if (pinned != 0) return pinned;
-        return _parsePersonDate(
-          b.lastUpdate,
-        ).compareTo(_parsePersonDate(a.lastUpdate));
-      });
+    // الفلتر الصغير يُقدّم المطابق ولا يُخفي غيره.
+    int rank(_PersonItem person) {
+      switch (_selectedSort) {
+        case 'نشط':
+          return person.isFrozen ? 1 : 0;
+        case 'مستندات قريبة الإنتهاء':
+          return person.statusNote.contains('قريب') &&
+                  person.statusNote.contains('مستند')
+              ? 0
+              : 1;
+        case 'مستندات منتهية':
+          return person.statusNote.contains('منته') &&
+                  person.statusNote.contains('مستند')
+              ? 0
+              : 1;
+        default:
+          return 0;
+      }
     }
+
+    filtered.sort((a, b) {
+      final pinned = byPinned(a, b);
+      if (pinned != 0) return pinned;
+      // "أعلى مستحقات" من الفلتر الكبير يتقدّم على ترتيب الفلتر الصغير.
+      if (_filter.amountShortcut == 'أعلى مستحقات') {
+        final byDue = (b.dueToYou + b.dueOnYou).compareTo(
+          a.dueToYou + a.dueOnYou,
+        );
+        if (byDue != 0) return byDue;
+      }
+      final byRank = rank(a).compareTo(rank(b));
+      if (byRank != 0) return byRank;
+      return _parsePersonDate(
+        b.lastUpdate,
+      ).compareTo(_parsePersonDate(a.lastUpdate));
+    });
     return filtered;
   }
 
@@ -611,6 +578,122 @@ class _PeopleManagementScreenState extends State<PeopleManagementScreen> {
     }
   }
 
+  /// مركز المتابعة بالقالب الموحَّد نفسه المستعمل في بقية الوحدات.
+  ///
+  /// كان زر "المزيد" هنا يفتح نافذة **فلترة** لا علاقة لها بالمتابعة، فيرى
+  /// المستخدم شيئًا مختلفًا تمامًا عمّا يراه في الالتزامات.
+  void _openFollowUpSheet(List<_PersonItem> people) {
+    FollowUpEntry entryFor(_PersonItem person, String trailing) => FollowUpEntry(
+      title: person.fullName,
+      subtitle: person.categoryName,
+      icon: person.typeKey == 'entity'
+          ? Icons.apartment_rounded
+          : Icons.person_outline_rounded,
+      color: person.badgeColor,
+      trailingText: trailing,
+      onTap: () => _openPersonDetails(person),
+    );
+
+    showFollowUpCenterSheet(
+      context: context,
+      accent: const Color(0xFF7C3AED),
+      groups: [
+        FollowUpGroup(
+          title: 'المستحقات',
+          icon: Icons.account_balance_wallet_outlined,
+          color: const Color(0xFF07835C),
+          metrics: [
+            FollowUpMetric(
+              label: 'مستحقات لك',
+              icon: Icons.call_received_rounded,
+              entries: [
+                for (final person in people.where((p) => p.dueToYou > 0))
+                  entryFor(
+                    person,
+                    '${person.dueToYou} ${AppSettings.currencySuffix}',
+                  ),
+              ],
+            ),
+            FollowUpMetric(
+              label: 'مستحقات عليك',
+              icon: Icons.call_made_rounded,
+              entries: [
+                for (final person in people.where((p) => p.dueOnYou > 0))
+                  entryFor(
+                    person,
+                    '${person.dueOnYou} ${AppSettings.currencySuffix}',
+                  ),
+              ],
+            ),
+          ],
+        ),
+        FollowUpGroup(
+          title: 'المهام',
+          icon: Icons.task_alt_rounded,
+          color: const Color(0xFFB56A09),
+          metrics: [
+            FollowUpMetric(
+              label: 'مهام مفتوحة',
+              icon: Icons.pending_actions_outlined,
+              entries: [
+                for (final person in people.where((p) => p.openTasks > 0))
+                  entryFor(person, '${person.openTasks}'),
+              ],
+            ),
+          ],
+        ),
+        FollowUpGroup(
+          title: 'المستندات',
+          icon: Icons.folder_outlined,
+          color: const Color(0xFF0F6AA8),
+          metrics: [
+            FollowUpMetric(
+              label: 'وثائق للمتابعة',
+              icon: Icons.description_outlined,
+              entries: [
+                for (final person in people.where(
+                  (p) => p.statusNote.contains('مستند'),
+                ))
+                  entryFor(person, person.statusNote),
+              ],
+            ),
+            FollowUpMetric(
+              label: 'بلا مستندات',
+              icon: Icons.folder_off_outlined,
+              entries: [
+                for (final person in people.where((p) => p.documentsCount == 0))
+                  entryFor(person, '0'),
+              ],
+            ),
+          ],
+        ),
+        FollowUpGroup(
+          title: 'الحالة',
+          icon: Icons.flag_outlined,
+          color: const Color(0xFFC73E4D),
+          metrics: [
+            FollowUpMetric(
+              label: 'مجمّدة',
+              icon: Icons.ac_unit_rounded,
+              entries: [
+                for (final person in people.where((p) => p.isFrozen))
+                  entryFor(person, 'مجمّد'),
+              ],
+            ),
+            FollowUpMetric(
+              label: 'مثبّتة',
+              icon: Icons.push_pin_outlined,
+              entries: [
+                for (final person in people.where((p) => p.isPinned))
+                  entryFor(person, 'مثبّت'),
+              ],
+            ),
+          ],
+        ),
+      ],
+    );
+  }
+
   void _openPersonDetails(_PersonItem person) {
     Navigator.of(context).push(
       MaterialPageRoute(
@@ -635,187 +718,82 @@ class _PeopleManagementScreenState extends State<PeopleManagementScreen> {
     );
   }
 
+  // الفلتر الرئيسي: نفس قالب الشاشات الأربع، والأقسام وترتيبها مطابقة
+  // لملف "فلاتر فوندلي" لصفحة الأفراد والجهات.
   void _openTypeFilterSheet() {
-    showModalBottomSheet<void>(
+    showAppFilterSheet(
       context: context,
-      backgroundColor: Colors.white,
-      // قابل للتمرير: مع نطاق "الكل" تُعرض عشرون رقاقة تتجاوز حدود الشاشة.
-      isScrollControlled: true,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
-      ),
-      // اتجاه صريح: هذه النافذة تُفتح من سياق أعلى غلاف الاتجاه في الشاشة،
-      // فكانت تعتمد على الاتجاه الافتراضي بالصدفة.
-      builder: (context) => Directionality(
-        textDirection: TextDirection.rtl,
-        // بدون StatefulBuilder كان setState يُعيد بناء الشاشة خلف النافذة
-        // فقط، فلا تتلوّن رقاقة النطاق المختارة ولا تتغيّر رقاقات التصنيف
-        // تحتها — يبدو الزر معطّلًا تمامًا.
-        child: StatefulBuilder(
-          builder: (context, setSheetState) {
-        final scopeOptions = [
-          ('scope_all', 'الكل'),
-          ('scope_people', 'الأفراد'),
-          ('scope_entities', 'الجهات'),
-        ];
-
-        final typeOptions = _selectedScopeKey == 'scope_all'
-            ? _allTypeFilters
+      title: 'أفراد وجهات',
+      accent: const Color(0xFF7C3AED),
+      values: _filter
+        ..mainCategory = _selectedScopeKey == 'scope_entities'
+            ? 'جهات'
             : _selectedScopeKey == 'scope_people'
-            ? [
-                const _TypeFilterDef(
-                  'all_people',
-                  'كل الأفراد',
-                  Color(0xFF0F6AA8),
-                ),
-                ..._allTypeFilters.where((f) => f.key.startsWith('person_')),
-                const _TypeFilterDef(
-                  'status_near',
-                  'قريب الانتهاء',
-                  Color(0xFF0284C7),
-                ),
-                const _TypeFilterDef(
-                  'status_urgent',
-                  'مستعجل',
-                  Color(0xFFD97706),
-                ),
-                const _TypeFilterDef('status_late', 'متأخر', Color(0xFFDC2626)),
-              ]
-            : [
-                const _TypeFilterDef(
-                  'all_entities',
-                  'كل الجهات',
-                  Color(0xFF7C3AED),
-                ),
-                ..._allTypeFilters.where((f) => f.key.startsWith('entity_')),
-              ];
-
-        return SafeArea(
-          top: false,
-          child: SingleChildScrollView(
-            child: Padding(
-            padding: const EdgeInsets.fromLTRB(16, 12, 16, 18),
-            child: Column(
-              mainAxisSize: MainAxisSize.min,
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                const Text(
-                  'تصفية الأشخاص',
-                  style: TextStyle(
-                    fontSize: 16,
-                    fontWeight: FontWeight.w800,
-                    color: Color(0xFF0F172A),
-                  ),
-                ),
-                const SizedBox(height: 10),
-                const Text(
-                  'النطاق',
-                  style: TextStyle(
-                    fontSize: 12,
-                    fontWeight: FontWeight.w800,
-                    color: Color(0xFF475569),
-                  ),
-                ),
-                const SizedBox(height: 8),
-                Wrap(
-                  spacing: 8,
-                  runSpacing: 8,
-                  textDirection: TextDirection.rtl,
-                  children: scopeOptions
-                      .map((scope) {
-                        final selected = _selectedScopeKey == scope.$1;
-                        return ChoiceChip(
-                          label: Text(scope.$2),
-                          selected: selected,
-                          selectedColor: const Color(
-                            0xFF7C3AED,
-                          ).withValues(alpha: 0.2),
-                          onSelected: (_) {
-                            void apply() {
-                              _selectedScopeKey = scope.$1;
-                              if (scope.$1 == 'scope_all') {
-                                _selectedTypeKey = 'all';
-                              } else if (scope.$1 == 'scope_people') {
-                                _selectedTypeKey = 'all_people';
-                              } else {
-                                _selectedTypeKey = 'all_entities';
-                              }
-                            }
-
-                            setState(apply);
-                            setSheetState(() {});
-                          },
-                        );
-                      })
-                      .toList(growable: false),
-                ),
-                const SizedBox(height: 12),
-                const Text(
-                  'الفئة',
-                  style: TextStyle(
-                    fontSize: 12,
-                    fontWeight: FontWeight.w800,
-                    color: Color(0xFF475569),
-                  ),
-                ),
-                const SizedBox(height: 8),
-                Wrap(
-                  spacing: 8,
-                  runSpacing: 8,
-                  textDirection: TextDirection.rtl,
-                  children: typeOptions
-                      .map((filter) {
-                        final isSelected = _selectedTypeKey == filter.key;
-                        return ChoiceChip(
-                          label: Text(
-                            '${filter.label} (${_countByType(filter.key)})',
-                          ),
-                          selected: isSelected,
-                          onSelected: (_) {
-                            setState(() {
-                              if (_selectedScopeKey == 'scope_all') {
-                                if (filter.key.startsWith('person_') ||
-                                    filter.key == 'all_people' ||
-                                    filter.key.startsWith('status_')) {
-                                  _selectedScopeKey = 'scope_people';
-                                } else if (filter.key.startsWith('entity_') ||
-                                    filter.key == 'all_entities') {
-                                  _selectedScopeKey = 'scope_entities';
-                                }
-                              }
-                              _selectedTypeKey = filter.key;
-                            });
-                            Navigator.of(context).pop();
-                          },
-                          selectedColor: filter.color,
-                          backgroundColor: const Color(0xFFF8FAFC),
-                          labelStyle: TextStyle(
-                            color: isSelected
-                                ? Colors.white
-                                : const Color(0xFF334155),
-                            fontWeight: FontWeight.w700,
-                            fontSize: 11,
-                          ),
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(12),
-                            side: BorderSide(
-                              color: isSelected
-                                  ? filter.color
-                                  : const Color(0xFFDCE5EF),
-                            ),
-                          ),
-                        );
-                      })
-                      .toList(growable: false),
-                ),
-              ],
-            ),
-            ),
-          ),
-        );
-          },
-        ),
-      ),
+            ? 'أفراد'
+            : 'الكل',
+      mainCategories: const ['الكل', 'أفراد', 'جهات'],
+      subCategoriesFor: (main) => main == 'أفراد'
+          ? _allTypeFilters
+                .where((filter) => filter.key.startsWith('person_'))
+                .map((filter) => filter.label)
+                .toList(growable: false)
+          : main == 'جهات'
+          ? _allTypeFilters
+                .where((filter) => filter.key.startsWith('entity_'))
+                .map((filter) => filter.label)
+                .toList(growable: false)
+          : const <String>[],
+      // بلا مدخل "الكل": القالب يضيف رقاقة "الكل" بنفسه، فكانت تظهر مرتين
+      // والثانية تُفلتر على تصنيف اسمه "الكل" فلا يطابق أحدًا.
+      personCategories: _allTypeFilters
+          .where((filter) => filter.key != 'all')
+          .map((filter) => filter.label)
+          .toList(growable: false),
+      documentStates: const [],
+      amountShortcuts: const ['لي', 'عليّ', 'أعلى مستحقات'],
+      sections: const [
+        AppFilterSection.mainCategory,
+        AppFilterSection.subCategory,
+        AppFilterSection.people,
+        AppFilterSection.delegates,
+        AppFilterSection.date,
+        AppFilterSection.status,
+        AppFilterSection.amount,
+        AppFilterSection.document,
+        AppFilterSection.place,
+      ],
+      onApply: (values) => setState(() {
+        _selectedScopeKey = values.mainCategory == 'أفراد'
+            ? 'scope_people'
+            : values.mainCategory == 'جهات'
+            ? 'scope_entities'
+            : 'scope_all';
+        final matching = _allTypeFilters
+            .where((filter) => filter.label == values.subCategory)
+            .toList(growable: false);
+        _selectedTypeKey = matching.isNotEmpty
+            ? matching.first.key
+            : _selectedScopeKey == 'scope_people'
+            ? 'all_people'
+            : _selectedScopeKey == 'scope_entities'
+            ? 'all_entities'
+            : 'all';
+        _filter
+          ..mainCategory = values.mainCategory
+          ..subCategory = values.subCategory
+          ..dateFrom = values.dateFrom
+          ..dateTo = values.dateTo
+          ..status = values.status
+          ..amountFrom = values.amountFrom
+          ..amountTo = values.amountTo
+          ..amountShortcut = values.amountShortcut
+          ..documentName = values.documentName
+          ..documentState = values.documentState
+          ..personName = values.personName
+          ..personCategory = values.personCategory
+          ..delegateName = values.delegateName
+          ..placeName = values.placeName;
+      }),
     );
   }
 
@@ -830,7 +808,7 @@ class _PeopleManagementScreenState extends State<PeopleManagementScreen> {
           padding: const EdgeInsets.fromLTRB(16, 12, 16, 24),
           decoration: const BoxDecoration(
             color: Colors.white,
-            borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
+            borderRadius: BorderRadius.vertical(top: Radius.circular(AppTheme.rCard)),
             boxShadow: [
               BoxShadow(
                 color: Color(0x1A000000),
@@ -892,10 +870,9 @@ class _PeopleManagementScreenState extends State<PeopleManagementScreen> {
                 Container(
                   padding: const EdgeInsets.all(10),
                   decoration: BoxDecoration(
-                    color: const Color(0xFFF1F3F5),
-                    borderRadius: BorderRadius.circular(14),
-                    border: Border.all(color: const Color(0xFFE2E6EA)),
-                  ),
+            color: AppTheme.surface,
+            borderRadius: BorderRadius.circular(AppTheme.rField),
+          ),
                   child: Row(
                     children: [
                       Expanded(
@@ -956,7 +933,7 @@ class _PeopleManagementScreenState extends State<PeopleManagementScreen> {
           padding: const EdgeInsets.fromLTRB(16, 12, 16, 20),
           decoration: const BoxDecoration(
             color: Colors.white,
-            borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
+            borderRadius: BorderRadius.vertical(top: Radius.circular(AppTheme.rCard)),
             boxShadow: [
               BoxShadow(
                 color: Color(0x1A000000),
@@ -1121,7 +1098,7 @@ class _PeopleManagementScreenState extends State<PeopleManagementScreen> {
                 ),
                 decoration: const BoxDecoration(
                   color: Colors.white,
-                  borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
+                  borderRadius: BorderRadius.vertical(top: Radius.circular(AppTheme.rCard)),
                 ),
                 child: Directionality(
                   textDirection: TextDirection.rtl,
@@ -1299,8 +1276,8 @@ class _PeopleManagementScreenState extends State<PeopleManagementScreen> {
                       foregroundColor: Colors.white,
                       minimumSize: const Size.fromHeight(48),
                       shape: RoundedRectangleBorder(
-                        borderRadius: BorderRadius.circular(12),
-                      ),
+          borderRadius: BorderRadius.circular(AppTheme.rField),
+        ),
                     ),
                       ),
                     ],
@@ -1336,7 +1313,7 @@ class _PeopleManagementScreenState extends State<PeopleManagementScreen> {
             padding: const EdgeInsets.fromLTRB(16, 12, 16, 20),
             decoration: const BoxDecoration(
               color: Colors.white,
-              borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
+              borderRadius: BorderRadius.vertical(top: Radius.circular(AppTheme.rCard)),
             ),
             child: Directionality(
               textDirection: TextDirection.rtl,
@@ -1458,7 +1435,7 @@ class _PeopleManagementScreenState extends State<PeopleManagementScreen> {
     final selectedPeople = _peopleForSelectedType();
 
     return Scaffold(
-      backgroundColor: const Color(0xFFF5F8FC),
+      backgroundColor: AppTheme.page,
       floatingActionButton: AddFab(
         screenId: 'people_management',
         onPressed: _openQuickCreateSheet,
@@ -1470,10 +1447,11 @@ class _PeopleManagementScreenState extends State<PeopleManagementScreen> {
         child: CustomScrollView(
           slivers: [
             ManagementDashboardHeader(
-              title: 'إدارة الأشخاص',
+              title: 'إدارة الأفراد والجهات',
               subtitle: 'تنظيم العلاقات والالتزامات وبيانات التواصل',
               icon: Icons.person_search_rounded,
               colors: const [Color(0xFF6D28D9), Color(0xFF7C3AED)],
+              onSmartCalendarTap: _openSmartCalendar,
               onClose: () => Navigator.of(context).pop(),
             ),
             SliverPadding(
@@ -1492,12 +1470,15 @@ class _PeopleManagementScreenState extends State<PeopleManagementScreen> {
                 ),
               ),
             ),
-            ManagementPinnedControls(
-              height: 278,
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                children: [
-                  ManagementFollowUpCenter(
+            // مركز المتابعة يتحرّك مع الصفحة ويختفي عند النزول لأسفل،
+            // بدل تثبيت الكتلة كاملة بارتفاع مفترض (278) كان يترك فراغًا
+            // ميتًا دائمًا ويمنع مركز المتابعة من الاختفاء.
+            SliverToBoxAdapter(
+              child: ColoredBox(
+                color: AppTheme.page,
+                child: Padding(
+                  padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
+                  child: ManagementFollowUpCenter(
                     subtitle: _selectedTypeKey == 'all'
                         ? 'الأهم والأقرب من جميع الأشخاص والجهات'
                         // _selectedFilterLabel لا يعرف مفاتيح الحالة
@@ -1505,10 +1486,10 @@ class _PeopleManagementScreenState extends State<PeopleManagementScreen> {
                         // فكان الرأس يقول "الكل" بينما القائمة مُصفّاة.
                         : 'متابعة ${_activeSearchFilterLabel()}',
                     accentColor: const Color(0xFF047857),
-                    onMore: _openTypeFilterSheet,
+                    onMore: () => _openFollowUpSheet(selectedPeople),
                     metrics: [
                       ManagementMetricData(
-                        label: 'وثائق تحتاج متابعة',
+                        label: 'وثائق للمتابعة',
                         count: selectedPeople
                             .where(
                               (person) => person.statusNote.contains('مستند'),
@@ -1544,17 +1525,17 @@ class _PeopleManagementScreenState extends State<PeopleManagementScreen> {
                       ),
                     ],
                   ),
-                  const SizedBox(height: 8),
-                  const Text(
-                    'الفئات',
-                    textAlign: TextAlign.right,
-                    style: TextStyle(
-                      fontSize: 13,
-                      fontWeight: FontWeight.w900,
-                      color: Color(0xFF334155),
-                    ),
-                  ),
-                  const SizedBox(height: 8),
+                ),
+              ),
+            ),
+            // صف "الفئات" يبقى مثبَّتًا في الأعلى عند التمرير.
+            MeasuredPinnedHeader(
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                  // بلا عنوان "الفئات" — كبقية الشاشات.
                   SizedBox(
                     height: 46,
                     child: ListView(
@@ -1569,62 +1550,72 @@ class _PeopleManagementScreenState extends State<PeopleManagementScreen> {
                           onTap: () => setState(() {
                             _selectedScopeKey = 'scope_all';
                             _selectedTypeKey = 'all';
+                            _filter.subCategory = null;
                           }),
                         ),
                         const SizedBox(width: 8),
-                        _SplitScopeCategoryTab(
+                        // نفس شريحة "مالية" في الالتزامات الشخصية: شريحة
+                        // بسهم يفتح قائمة منسدلة أسفلها بستة عناصر ظاهرة
+                        // ومؤشّر تمرير — بدل نافذة تملأ الشاشة بثلاثة عشر
+                        // عنصرًا دفعةً واحدة.
+                        AppCategoryDropdownChip(
                           label: 'الأفراد',
                           count: _countByScope('scope_people'),
                           icon: Icons.person_outline_rounded,
                           color: const Color(0xFF0F6AA8),
                           selected: _selectedScopeKey == 'scope_people',
-                          onLabelTap: () => setState(() {
+                          onTap: () => setState(() {
                             _selectedScopeKey = 'scope_people';
                             _selectedTypeKey = 'all_people';
+                            _filter.subCategory = null;
                           }),
-                          onArrowTap: () =>
-                              _openScopeFiltersPopup(isEntity: false),
+                          items: _scopeDropdownItems(isEntity: false),
                         ),
                         const SizedBox(width: 8),
-                        _SplitScopeCategoryTab(
+                        AppCategoryDropdownChip(
                           label: 'الجهات',
                           count: _countByScope('scope_entities'),
                           icon: Icons.apartment_rounded,
                           color: const Color(0xFF7C3AED),
                           selected: _selectedScopeKey == 'scope_entities',
-                          onLabelTap: () => setState(() {
+                          onTap: () => setState(() {
                             _selectedScopeKey = 'scope_entities';
                             _selectedTypeKey = 'all_entities';
+                            _filter.subCategory = null;
                           }),
-                          onArrowTap: () =>
-                              _openScopeFiltersPopup(isEntity: true),
+                          items: _scopeDropdownItems(isEntity: true),
                         ),
                       ],
                     ),
                   ),
-                ],
+                  const SizedBox(height: 10),
+                  // عنوان القائمة وزر الترتيب مثبَّتان مع الفئات، كبقية
+                  // الشاشات: كانا ينزلقان تحت الرأس المثبَّت عند التمرير.
+                  ManagementSortHeader(
+                    value: _selectedSort,
+                    // الفلتر الصغير — كما في ملف "فلاتر فوندلي".
+                    options: const [
+                      'الأحدث أولاً',
+                      'نشط',
+                      'مستندات قريبة الإنتهاء',
+                      'مستندات منتهية',
+                    ],
+                    onSelected: (value) =>
+                        setState(() => _selectedSort = value),
+                    title: _selectedTypeKey == 'all'
+                        ? 'جميع الأفراد والجهات'
+                        : _activeSearchFilterLabel(),
+                    count: people.length,
+                    accentColor: const Color(0xFF7C3AED),
+                  ),
+                  ],
+                ),
               ),
             ),
             SliverPadding(
               padding: const EdgeInsets.fromLTRB(16, 12, 16, 22),
               sliver: SliverList(
                 delegate: SliverChildListDelegate([
-                  ManagementSortHeader(
-                    value: _selectedSort,
-                    options: const [
-                      'الأحدث أولاً',
-                      'الأعلى مستحقات',
-                      'الأكثر مهاماً',
-                    ],
-                    onSelected: (value) =>
-                        setState(() => _selectedSort = value),
-                    title: _selectedTypeKey == 'all'
-                        ? 'جميع الأشخاص والجهات'
-                        : _activeSearchFilterLabel(),
-                    count: people.length,
-                    accentColor: const Color(0xFF7C3AED),
-                  ),
-                  const SizedBox(height: 10),
                   // بطاقة القائمة هنا مطابقة تماماً لبنية بطاقة الالتزام
                   // الشخصي/المشترك (نفس المقاسات والخطوط والتباعد): أيقونة
                   // 46x46 + اسم مع نقطة حالة وتحته النوع + عمود "له/عليه"
@@ -1779,7 +1770,7 @@ class _PersonDetailsScreenState extends State<PersonDetailsScreen> {
             ),
             decoration: const BoxDecoration(
               color: Colors.white,
-              borderRadius: BorderRadius.vertical(top: Radius.circular(22)),
+              borderRadius: BorderRadius.vertical(top: Radius.circular(AppTheme.rCard)),
             ),
             child: SingleChildScrollView(
               child: Column(
@@ -2221,7 +2212,7 @@ class _PersonDetailsScreenState extends State<PersonDetailsScreen> {
             ),
             decoration: const BoxDecoration(
               color: Colors.white,
-              borderRadius: BorderRadius.vertical(top: Radius.circular(22)),
+              borderRadius: BorderRadius.vertical(top: Radius.circular(AppTheme.rCard)),
             ),
             child: SingleChildScrollView(
               child: Column(
@@ -2346,8 +2337,8 @@ class _PersonDetailsScreenState extends State<PersonDetailsScreen> {
                         backgroundColor: color,
                         foregroundColor: Colors.white,
                         shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(12),
-                        ),
+          borderRadius: BorderRadius.circular(AppTheme.rField),
+        ),
                       ),
                       child: const Text('حفظ'),
                     ),
@@ -2387,7 +2378,7 @@ class _PersonDetailsScreenState extends State<PersonDetailsScreen> {
               padding: const EdgeInsets.fromLTRB(16, 12, 16, 18),
               decoration: const BoxDecoration(
                 color: Colors.white,
-                borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+                borderRadius: BorderRadius.vertical(top: Radius.circular(AppTheme.rCard)),
               ),
               child: SingleChildScrollView(
                 child: Column(
@@ -2629,7 +2620,7 @@ class _PersonDetailsScreenState extends State<PersonDetailsScreen> {
               padding: const EdgeInsets.fromLTRB(16, 12, 16, 20),
               decoration: const BoxDecoration(
                 color: Colors.white,
-                borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
+                borderRadius: BorderRadius.vertical(top: Radius.circular(AppTheme.rCard)),
               ),
               child: SingleChildScrollView(
                 child: Column(
@@ -2764,8 +2755,8 @@ class _PersonDetailsScreenState extends State<PersonDetailsScreen> {
                         foregroundColor: Colors.white,
                         minimumSize: const Size.fromHeight(48),
                         shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(12),
-                        ),
+          borderRadius: BorderRadius.circular(AppTheme.rField),
+        ),
                       ),
                     ),
                   ],
@@ -2792,7 +2783,7 @@ class _PersonDetailsScreenState extends State<PersonDetailsScreen> {
         : kind;
     final logParts = <String>['$category — $resolvedKind'];
     if (amountCtrl.text.trim().isNotEmpty) {
-      logParts.add('${amountCtrl.text.trim()} درهم');
+      logParts.add('${amountCtrl.text.trim()} ${AppSettings.currencySuffix}');
     }
     if (dateCtrl.text.trim().isNotEmpty) logParts.add(dateCtrl.text.trim());
     if (notesCtrl.text.trim().isNotEmpty) logParts.add(notesCtrl.text.trim());
@@ -2848,7 +2839,7 @@ class _PersonDetailsScreenState extends State<PersonDetailsScreen> {
           ),
           decoration: const BoxDecoration(
             color: Color(0xFFF8FAFC),
-            borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
+            borderRadius: BorderRadius.vertical(top: Radius.circular(AppTheme.rCard)),
             boxShadow: [
               BoxShadow(
                 color: Color(0x22000000),
@@ -2927,10 +2918,9 @@ class _PersonDetailsScreenState extends State<PersonDetailsScreen> {
                         child: Container(
                           padding: const EdgeInsets.all(12),
                           decoration: BoxDecoration(
-                            color: const Color(0xFFF1F3F5),
-                            borderRadius: BorderRadius.circular(10),
-                            border: Border.all(color: const Color(0xFFDDE2E7)),
-                          ),
+            color: AppTheme.surfaceInner,
+            borderRadius: BorderRadius.circular(AppTheme.rInner),
+          ),
                           child: Column(
                             crossAxisAlignment: CrossAxisAlignment.end,
                             children: [
@@ -2938,12 +2928,9 @@ class _PersonDetailsScreenState extends State<PersonDetailsScreen> {
                                 width: 36,
                                 height: 36,
                                 decoration: BoxDecoration(
-                                  color: Colors.white,
-                                  borderRadius: BorderRadius.circular(9),
-                                  border: Border.all(
-                                    color: const Color(0xFFDDE2E7),
-                                  ),
-                                ),
+            color: AppTheme.surface,
+            borderRadius: BorderRadius.circular(AppTheme.rIcon),
+          ),
                                 child: Icon(
                                   Icons.folder_copy_outlined,
                                   color: group.color,
@@ -3126,7 +3113,7 @@ class _PersonDetailsScreenState extends State<PersonDetailsScreen> {
             height: MediaQuery.of(context).size.height * 0.72,
             decoration: const BoxDecoration(
               color: Colors.white,
-              borderRadius: BorderRadius.vertical(top: Radius.circular(24)),
+              borderRadius: BorderRadius.vertical(top: Radius.circular(AppTheme.rCard)),
             ),
             child: Column(
               children: [
@@ -3212,7 +3199,7 @@ class _PersonDetailsScreenState extends State<PersonDetailsScreen> {
       context: context,
       backgroundColor: Colors.white,
       shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+        borderRadius: BorderRadius.vertical(top: Radius.circular(AppTheme.rCard)),
       ),
       builder: (context) {
         return SafeArea(
@@ -3295,7 +3282,7 @@ class _PersonDetailsScreenState extends State<PersonDetailsScreen> {
     const color = Color(0xFF0C6A8C);
 
     return Scaffold(
-      backgroundColor: const Color(0xFFF5F7FA),
+      backgroundColor: AppTheme.page,
       floatingActionButtonLocation: FloatingActionButtonLocation.endFloat,
       floatingActionButton: AddFab(
         key: const ValueKey('add-person-detail-entry'),
@@ -3337,10 +3324,17 @@ class _PersonDetailsScreenState extends State<PersonDetailsScreen> {
       ),
       body: Directionality(
         textDirection: TextDirection.rtl,
-        child: ListView(
+        // CustomScrollView ليمكن تثبيت شريط التبويبات: بطاقة بيانات الفرد
+        // تختفي عند النزول ويبقى شريط "الملخص / التنظيم / ..." ثابتًا.
+        child: CustomScrollView(
           key: const ValueKey('compact-person-details'),
-          padding: const EdgeInsets.fromLTRB(14, 14, 14, 92),
-          children: [
+          slivers: [
+            SliverToBoxAdapter(
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(14, 14, 14, 0),
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
             // نفس بنية "مستطيل تفاصيل الالتزام" الموحّد تمامًا: هيدر مدمج
             // + خط رفيع + شريط أبرز البيانات، ثم تبويبات بعرض متساوٍ، ثم
             // محتوى بـ AnimatedSwitcher — بدل مكوّن DetailScaffold العام.
@@ -3349,17 +3343,9 @@ class _PersonDetailsScreenState extends State<PersonDetailsScreen> {
             Container(
               key: const ValueKey('compact-person-details-header'),
               decoration: BoxDecoration(
-                color: Colors.white,
-                borderRadius: BorderRadius.circular(8),
-                border: Border.all(color: const Color(0xFFE1E7EF)),
-                boxShadow: const [
-                  BoxShadow(
-                    color: Color(0x0A0F172A),
-                    blurRadius: 12,
-                    offset: Offset(0, 4),
-                  ),
-                ],
-              ),
+            color: AppTheme.surface,
+            borderRadius: BorderRadius.circular(AppTheme.rField),
+          ),
               child: Column(
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
@@ -3373,18 +3359,30 @@ class _PersonDetailsScreenState extends State<PersonDetailsScreen> {
                 ],
               ),
             ),
-            const SizedBox(height: 12),
+                  ],
+                ),
+              ),
+            ),
             // كانت نسخة محلية مطابقة لـDetailPageTabs إلا أنها تُسقط
             // overflow: ellipsis، فتتجاوز عناوين مثل "متابعة وتخطيط" حدود
             // التبويب الواحد. استُبدلت بالمكوّن المشترك نفسه.
-            DetailPageTabs(
-              sections: _detailSections,
-              selectedIndex: _selectedMainTab,
-              color: color,
-              onSelected: (index) => setState(() => _selectedMainTab = index),
+            MeasuredPinnedHeader(
+              background: AppTheme.page,
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(14, 12, 14, 12),
+                child: DetailPageTabs(
+                  sections: _detailSections,
+                  selectedIndex: _selectedMainTab,
+                  color: color,
+                  onSelected: (index) =>
+                      setState(() => _selectedMainTab = index),
+                ),
+              ),
             ),
-            const SizedBox(height: 12),
-            AnimatedSwitcher(
+            SliverPadding(
+              padding: const EdgeInsets.fromLTRB(14, 0, 14, 92),
+              sliver: SliverToBoxAdapter(
+                child: AnimatedSwitcher(
               duration: const Duration(milliseconds: 180),
               child: KeyedSubtree(
                 key: ValueKey(_selectedMainTab),
@@ -3415,12 +3413,12 @@ class _PersonDetailsScreenState extends State<PersonDetailsScreen> {
                       blocks: [
                         (
                           'المستحق له',
-                          '${person.dueToYou} درهم',
+                          '${person.dueToYou} ${AppSettings.currencySuffix}',
                           const Color(0xFF0F766E),
                         ),
                         (
                           'المستحق عليه',
-                          '${person.dueOnYou} درهم',
+                          '${person.dueOnYou} ${AppSettings.currencySuffix}',
                           const Color(0xFFB45309),
                         ),
                         (
@@ -3522,6 +3520,8 @@ class _PersonDetailsScreenState extends State<PersonDetailsScreen> {
                       items: const [],
                     ),
                   ],
+                ),
+              ),
                 ),
               ),
             ),
@@ -3636,8 +3636,8 @@ class _PersonHighlightBar extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final highlights = <(String, String, IconData)>[
-      ('له', '${person.dueToYou.toStringAsFixed(0)} درهم', Icons.south_west_rounded),
-      ('عليه', '${person.dueOnYou.toStringAsFixed(0)} درهم', Icons.north_east_rounded),
+      ('له', '${person.dueToYou.toStringAsFixed(0)} ${AppSettings.currencySuffix}', Icons.south_west_rounded),
+      ('عليه', '${person.dueOnYou.toStringAsFixed(0)} ${AppSettings.currencySuffix}', Icons.north_east_rounded),
       ('المستندات', '${person.documentsCount}', Icons.folder_outlined),
     ];
     return Container(
@@ -3720,10 +3720,9 @@ class _ActionShortcutCard extends StatelessWidget {
       width: double.infinity,
       padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: const Color(0xFFDCE5EF)),
-      ),
+            color: AppTheme.surface,
+            borderRadius: BorderRadius.circular(AppTheme.rField),
+          ),
       child: Row(
         textDirection: TextDirection.rtl,
         crossAxisAlignment: CrossAxisAlignment.start,
@@ -3775,8 +3774,8 @@ class _ActionShortcutCard extends StatelessWidget {
                         minimumSize: const Size(0, 34),
                         padding: const EdgeInsets.symmetric(horizontal: 10),
                         shape: RoundedRectangleBorder(
-                          borderRadius: BorderRadius.circular(10),
-                        ),
+          borderRadius: BorderRadius.circular(AppTheme.rField),
+        ),
                       ),
                     ),
                     if (onSecondaryTap != null && secondaryLabel != null) ...[
@@ -3791,8 +3790,8 @@ class _ActionShortcutCard extends StatelessWidget {
                           ),
                           foregroundColor: color,
                           shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(10),
-                          ),
+          borderRadius: BorderRadius.circular(AppTheme.rField),
+        ),
                         ),
                         child: Text(secondaryLabel!),
                       ),
@@ -3819,10 +3818,9 @@ class _EmptyActionState extends StatelessWidget {
       width: double.infinity,
       padding: const EdgeInsets.all(14),
       decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: const Color(0xFFDCE5EF)),
-      ),
+            color: AppTheme.surface,
+            borderRadius: BorderRadius.circular(AppTheme.rField),
+          ),
       child: Text(
         message,
         textAlign: TextAlign.right,
@@ -3854,9 +3852,8 @@ class _SearchInput extends StatelessWidget {
     return Container(
       width: double.infinity,
       decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: const Color(0xFFE2E8F0)),
+        color: AppTheme.field,
+        borderRadius: BorderRadius.circular(AppTheme.rField),
       ),
       child: TextField(
         controller: controller,
@@ -3864,7 +3861,10 @@ class _SearchInput extends StatelessWidget {
         onChanged: onChanged,
         decoration: InputDecoration(
           hintText: hint,
-          hintStyle: const TextStyle(color: Color(0xFF94A3B8), fontSize: 13),
+          hintStyle: const TextStyle(color: AppTheme.muted, fontSize: 13),
+          // الحاوية أعلاه هي التي ترسم الخلفية المستديرة؛ لولا إطفاء
+          // التعبئة هنا لرسمت السِمة تعبئة مربّعة الزوايا فوقها.
+          filled: false,
           border: InputBorder.none,
           suffixIcon: const Icon(
             Icons.search_rounded,
@@ -3941,10 +3941,9 @@ class _CreateTypeChoiceCard extends StatelessWidget {
         constraints: const BoxConstraints(minHeight: 142),
         padding: const EdgeInsets.all(12),
         decoration: BoxDecoration(
-          color: Colors.white,
-          borderRadius: BorderRadius.circular(10),
-          border: Border.all(color: const Color(0xFFDDE2E7)),
-        ),
+            color: AppTheme.surfaceInner,
+            borderRadius: BorderRadius.circular(AppTheme.rInner),
+          ),
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
@@ -4019,10 +4018,9 @@ class _CreateActionSection extends StatelessWidget {
     return Container(
       padding: const EdgeInsets.all(10),
       decoration: BoxDecoration(
-        color: const Color(0xFFF1F3F5),
-        borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: const Color(0xFFE2E6EA)),
-      ),
+            color: AppTheme.surface,
+            borderRadius: BorderRadius.circular(AppTheme.rField),
+          ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
@@ -4075,10 +4073,9 @@ class _CreateActionSection extends StatelessWidget {
                     vertical: 10,
                   ),
                   decoration: BoxDecoration(
-                    color: Colors.white,
-                    borderRadius: BorderRadius.circular(9),
-                    border: Border.all(color: const Color(0xFFDDE2E7)),
-                  ),
+            color: AppTheme.surfaceInner,
+            borderRadius: BorderRadius.circular(AppTheme.rInner),
+          ),
                   child: Row(
                     textDirection: TextDirection.rtl,
                     children: [
@@ -4149,10 +4146,9 @@ class _PersonQuickAddTile extends StatelessWidget {
         height: 76,
         padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 8),
         decoration: BoxDecoration(
-          color: const Color(0xFFF8FAFC),
-          borderRadius: BorderRadius.circular(14),
-          border: Border.all(color: const Color(0xFFE2E8F0)),
-        ),
+            color: AppTheme.surface,
+            borderRadius: BorderRadius.circular(AppTheme.rField),
+          ),
         child: Column(
           mainAxisAlignment: MainAxisAlignment.center,
           children: [
@@ -4208,193 +4204,45 @@ class _PersonCard extends StatelessWidget {
     final typeLine = person.additionalCategoryNames.isEmpty
         ? person.categoryName
         : '${person.categoryName} + ${person.additionalCategoryNames.join(' + ')}';
-    return Material(
-      color: Colors.transparent,
-      borderRadius: BorderRadius.circular(15),
-      child: InkWell(
-        onTap: onTap,
-        borderRadius: BorderRadius.circular(15),
-        child: Container(
-          height: 94,
-          padding: const EdgeInsetsDirectional.fromSTEB(11, 10, 4, 10),
-          decoration: BoxDecoration(
-            color: Colors.white,
-            borderRadius: BorderRadius.circular(15),
-            border: Border.all(color: const Color(0xFFE6ECF3)),
-            boxShadow: const [
-              BoxShadow(
-                color: Color(0x0D0F172A),
-                blurRadius: 10,
-                offset: Offset(0, 3),
-              ),
-            ],
-          ),
-          child: Row(
-            textDirection: TextDirection.rtl,
-            children: [
-              Container(
-                width: 46,
-                height: 46,
-                decoration: BoxDecoration(
-                  color: person.badgeColor.withValues(alpha: 0.12),
-                  borderRadius: BorderRadius.circular(12),
-                ),
-                child: Icon(
-                  _personCardTypeIcon(person.typeKey),
-                  color: person.badgeColor,
-                  size: 23,
-                ),
-              ),
-              const SizedBox(width: 10),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    Row(
-                      children: [
-                        if (person.isPinned)
-                          const Padding(
-                            padding: EdgeInsets.only(left: 4),
-                            child: Icon(
-                              Icons.push_pin_rounded,
-                              size: 13,
-                              color: Color(0xFFF59E0B),
-                            ),
-                          ),
-                        if (person.isFrozen)
-                          const Padding(
-                            padding: EdgeInsets.only(left: 4),
-                            child: Icon(
-                              Icons.block_rounded,
-                              size: 13,
-                              color: Color(0xFF64748B),
-                            ),
-                          ),
-                        Expanded(
-                          child: Text(
-                            person.fullName,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: const TextStyle(
-                              fontSize: 13.5,
-                              fontWeight: FontWeight.w900,
-                              color: Color(0xFF0F172A),
-                            ),
-                          ),
-                        ),
-                        Container(
-                          width: 7,
-                          height: 7,
-                          margin: const EdgeInsets.only(left: 6),
-                          decoration: BoxDecoration(
-                            color: person.badgeColor,
-                            shape: BoxShape.circle,
-                          ),
-                        ),
-                      ],
-                    ),
-                    const SizedBox(height: 5),
-                    Text(
-                      typeLine,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: TextStyle(
-                        fontSize: 10,
-                        fontWeight: FontWeight.w700,
-                        color: person.badgeColor,
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-              const SizedBox(width: 6),
-              SizedBox(
-                width: 108,
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  mainAxisAlignment: MainAxisAlignment.center,
-                  children: [
-                    Text(
-                      // يُعرض الطرف غير الصفري في السطر البارز، فلا تتصدّر
-                      // البطاقة قيمة "له : 0 درهم" بلا معنى بينما المبلغ
-                      // الفعلي مدفون في السطر الثاني.
-                      person.dueToYou > 0
-                          ? 'له : ${person.dueToYou.toStringAsFixed(0)} درهم'
-                          : person.dueOnYou > 0
-                          ? 'عليه : ${person.dueOnYou.toStringAsFixed(0)} درهم'
-                          : 'مستندات : ${person.documentsCount}',
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
-                        fontSize: 10.5,
-                        fontWeight: FontWeight.w900,
-                        color: Color(0xFF0F172A),
-                      ),
-                    ),
-                    const SizedBox(height: 6),
-                    Text(
-                      person.dueToYou > 0 && person.dueOnYou > 0
-                          ? 'عليه : ${person.dueOnYou.toStringAsFixed(0)} درهم'
-                          : 'مستندات : ${person.documentsCount}',
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
-                        fontSize: 9.5,
-                        fontWeight: FontWeight.w700,
-                        color: Color(0xFF64748B),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-              const SizedBox(width: 4),
-              const Icon(
-                Icons.chevron_right_rounded,
-                color: Color(0xFF94A3B8),
-                size: 22,
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-  }
-}
+    final currency = AppSettings.currencySuffix;
 
-class _PeopleCardStat extends StatelessWidget {
-  const _PeopleCardStat({
-    required this.icon,
-    required this.value,
-    required this.label,
-  });
+    // كانت البطاقة تعرض "مستندات : 0" مرتين حين لا توجد مستحقات، لأن
+    // السطرين يسقطان على نفس البديل. الآن تُبنى قائمة القيم ذات المعنى
+    // فقط، وتعرض البطاقة الموحَّدة أول قيمتين منها.
+    final stats = <String>[
+      if (person.dueToYou > 0)
+        'له : ${person.dueToYou.toStringAsFixed(0)} $currency',
+      if (person.dueOnYou > 0)
+        'عليه : ${person.dueOnYou.toStringAsFixed(0)} $currency',
+      if (person.documentsCount > 0) 'مستندات : ${person.documentsCount}',
+    ];
 
-  final IconData icon;
-  final int value;
-  final String label;
-
-  @override
-  Widget build(BuildContext context) {
-    return Expanded(
-      child: Row(
-        mainAxisAlignment: MainAxisAlignment.center,
-        children: [
-          Icon(icon, size: 15, color: const Color(0xFF64748B)),
-          const SizedBox(width: 4),
-          Flexible(
-            child: Text(
-              '$label $value',
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: const TextStyle(
-                fontSize: 9.5,
-                color: Color(0xFF475569),
-                fontWeight: FontWeight.w700,
-              ),
+    // بطاقة القائمة الموحَّدة نفسها المستعملة في الالتزامات الشخصية
+    // والمشتركة.
+    return AppEntityCard(
+      icon: _personCardTypeIcon(person.typeKey),
+      iconColor: person.badgeColor,
+      title: person.fullName,
+      subtitle: typeLine,
+      statusColor: person.badgeColor,
+      stats: stats,
+      leadingBadges: [
+        if (person.isPinned)
+          const Padding(
+            padding: EdgeInsets.only(left: 4),
+            child: Icon(
+              Icons.push_pin_rounded,
+              size: 13,
+              color: Color(0xFFF59E0B),
             ),
           ),
-        ],
-      ),
+        if (person.isFrozen)
+          const Padding(
+            padding: EdgeInsets.only(left: 4),
+            child: Icon(Icons.block_rounded, size: 13, color: AppTheme.muted),
+          ),
+      ],
+      onTap: onTap,
     );
   }
 }
@@ -4445,149 +4293,85 @@ class _SummaryPanel extends StatelessWidget {
     }
 
     final followUpCount = person.openTasks;
-    final isRtl = textDirection == TextDirection.rtl;
-    // ملاحظة: CrossAxisAlignment.start يُحلّ أصلًا إلى اليمين داخل اتجاه
-    // rtl. الشرط السابق (isRtl ? end : start) كان يعكسه مرتين فيُحاذي كل
-    // عناوين البطاقات وقيمها إلى اليسار داخل بطاقة عربية.
-    const crossAxis = CrossAxisAlignment.start;
-    final textAlign = isRtl ? TextAlign.right : TextAlign.left;
     final rows = [
-      ('تاريخ الإنشاء', person.createdAt),
-      ('الاسم', person.fullName),
-      ('الجنسية', detailValue(const ['الجنسية'])),
-      ('تاريخ الميلاد', detailValue(const ['تاريخ الميلاد'])),
+      ('الاسم', person.fullName, Icons.person_outline_rounded),
       (
         'التصنيف',
         person.additionalCategoryNames.isEmpty
             ? person.categoryName
             : '${person.categoryName} + ${person.additionalCategoryNames.join(' + ')}',
+        Icons.category_outlined,
       ),
-      ('رقم الهاتف', detailValue(const ['رقم الهاتف'], fallback: 'غير متوفر')),
-      ('الحالة', person.badge),
-      ('آخر تحديث', person.lastUpdate),
+      ('الحالة', person.badge, Icons.verified_user_outlined),
+      (
+        'رقم الهاتف',
+        detailValue(const ['رقم الهاتف'], fallback: 'غير متوفر'),
+        Icons.phone_outlined,
+      ),
+      ('الجنسية', detailValue(const ['الجنسية']), Icons.flag_outlined),
+      (
+        'تاريخ الميلاد',
+        detailValue(const ['تاريخ الميلاد']),
+        Icons.cake_outlined,
+      ),
+      ('تاريخ الإنشاء', person.createdAt, Icons.event_outlined),
+      ('آخر تحديث', person.lastUpdate, Icons.edit_note_rounded),
+      (
+        'ملاحظات',
+        person.extraNote.isEmpty ? '-' : person.extraNote,
+        Icons.notes_rounded,
+      ),
     ];
 
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.all(14),
-      decoration: BoxDecoration(
-        gradient: const LinearGradient(
-          begin: Alignment.topRight,
-          end: Alignment.bottomLeft,
-          colors: [Color(0xFFF8FBFF), Color(0xFFFFFFFF)],
+    // نفس بطاقة تفاصيل الالتزام الشخصي بالضبط: بطاقة رمادية واحدة، وصفوف
+    // يفصلها خط أبيض رفيع. كانت هنا بطاقة متدرّجة بحدّ زرقاء وظل، وكل صف
+    // فيها صندوق رمادي مستقل — شكل لا يشبه أي صفحة تفاصيل أخرى.
+    return AppDetailsCard(
+      title: 'بطاقة الملخص',
+      icon: Icons.badge_outlined,
+      color: const Color(0xFF7C3AED),
+      children: [
+        for (final row in rows)
+          AppDetailRow(label: row.$1, value: row.$2, icon: row.$3),
+        const SizedBox(height: AppTheme.sMd),
+        Wrap(
+          spacing: 8,
+          runSpacing: 8,
+          textDirection: textDirection,
+          children: [
+            _metricPill(
+              'المستحق له',
+              '${person.dueToYou} ${AppSettings.currencySuffix}',
+              const Color(0xFFDCFCE7),
+              const Color(0xFF166534),
+            ),
+            _metricPill(
+              'المستحق عليه',
+              '${person.dueOnYou} ${AppSettings.currencySuffix}',
+              const Color(0xFFFFEDD5),
+              const Color(0xFF9A3412),
+            ),
+            _metricPill(
+              'المهام المفتوحة',
+              '${person.openTasks}',
+              const Color(0xFFE0F2FE),
+              const Color(0xFF0C4A6E),
+            ),
+            _metricPill(
+              'تحتاج متابعة',
+              '$followUpCount',
+              const Color(0xFFEDE9FE),
+              const Color(0xFF5B21B6),
+            ),
+            _metricPill(
+              'المستندات',
+              '${person.documentsCount}',
+              const Color(0xFFFCE7F3),
+              const Color(0xFF9D174D),
+            ),
+          ],
         ),
-        borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: const Color(0xFFD1E1F5)),
-        boxShadow: const [
-          BoxShadow(
-            color: Color(0x140F172A),
-            blurRadius: 10,
-            offset: Offset(0, 4),
-          ),
-        ],
-      ),
-      child: Column(
-        crossAxisAlignment: crossAxis,
-        children: [
-          Text(
-            'بطاقة الملخص',
-            textAlign: textAlign,
-            style: const TextStyle(
-              fontSize: 13,
-              fontWeight: FontWeight.w900,
-              color: Color(0xFF0B4A73),
-            ),
-          ),
-          const SizedBox(height: 10),
-          ...rows.map((item) => _line(item.$1, item.$2, textDirection)),
-          const SizedBox(height: 8),
-          Wrap(
-            spacing: 8,
-            runSpacing: 8,
-            textDirection: textDirection,
-            children: [
-              _metricPill(
-                'المستحق له',
-                '${person.dueToYou} درهم',
-                const Color(0xFFDCFCE7),
-                const Color(0xFF166534),
-              ),
-              _metricPill(
-                'المستحق عليه',
-                '${person.dueOnYou} درهم',
-                const Color(0xFFFFEDD5),
-                const Color(0xFF9A3412),
-              ),
-              _metricPill(
-                'المهام المفتوحة',
-                '${person.openTasks}',
-                const Color(0xFFE0F2FE),
-                const Color(0xFF0C4A6E),
-              ),
-              _metricPill(
-                'تحتاج متابعة',
-                '$followUpCount',
-                const Color(0xFFEDE9FE),
-                const Color(0xFF5B21B6),
-              ),
-              _metricPill(
-                'المستندات',
-                '${person.documentsCount}',
-                const Color(0xFFFCE7F3),
-                const Color(0xFF9D174D),
-              ),
-            ],
-          ),
-          const SizedBox(height: 10),
-          _line(
-            'ملاحظات',
-            person.extraNote.isEmpty ? '-' : person.extraNote,
-            textDirection,
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _line(String title, String value, TextDirection textDirection) {
-    final isRtl = textDirection == TextDirection.rtl;
-    final textAlign = isRtl ? TextAlign.right : TextAlign.left;
-    return Container(
-      width: double.infinity,
-      margin: const EdgeInsets.only(bottom: 6),
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-      decoration: BoxDecoration(
-        color: const Color(0xFFF8FAFC),
-        borderRadius: BorderRadius.circular(10),
-        border: Border.all(color: const Color(0xFFE2E8F0)),
-      ),
-      child: Row(
-        textDirection: textDirection,
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Expanded(
-            child: Text(
-              value,
-              textAlign: textAlign,
-              style: const TextStyle(
-                fontSize: 12,
-                color: Color(0xFF0F172A),
-                fontWeight: FontWeight.w700,
-              ),
-            ),
-          ),
-          const SizedBox(width: 10),
-          Text(
-            title,
-            textAlign: textAlign,
-            style: const TextStyle(
-              fontSize: 11,
-              color: Color(0xFF475569),
-              fontWeight: FontWeight.w800,
-            ),
-          ),
-        ],
-      ),
+      ],
     );
   }
 
@@ -4631,10 +4415,9 @@ class _SummaryStatsPanel extends StatelessWidget {
         width: double.infinity,
         padding: const EdgeInsets.all(12),
         decoration: BoxDecoration(
-          color: Colors.white,
-          borderRadius: BorderRadius.circular(12),
-          border: Border.all(color: const Color(0xFFDCE5EF)),
-        ),
+            color: AppTheme.surface,
+            borderRadius: BorderRadius.circular(AppTheme.rField),
+          ),
         child: Column(
           crossAxisAlignment: crossAxis,
           children: [
@@ -4724,10 +4507,9 @@ class _SubSectionsPanel extends StatelessWidget {
                 width: double.infinity,
                 padding: const EdgeInsets.all(10),
                 decoration: BoxDecoration(
-                  color: Colors.white,
-                  borderRadius: BorderRadius.circular(12),
-                  border: Border.all(color: const Color(0xFFDCE5EF)),
-                ),
+            color: AppTheme.surface,
+            borderRadius: BorderRadius.circular(AppTheme.rField),
+          ),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.end,
                   children: [
@@ -4788,10 +4570,9 @@ class _DynamicLinkedDataCard extends StatelessWidget {
       width: double.infinity,
       padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: const Color(0xFFDCE5EF)),
-      ),
+            color: AppTheme.surface,
+            borderRadius: BorderRadius.circular(AppTheme.rField),
+          ),
       child: Column(
         crossAxisAlignment: crossAxis,
         children: [
@@ -4859,10 +4640,9 @@ class _AlertSectionsCard extends StatelessWidget {
       width: double.infinity,
       padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: const Color(0xFFDCE5EF)),
-      ),
+            color: AppTheme.surface,
+            borderRadius: BorderRadius.circular(AppTheme.rField),
+          ),
       child: const Column(
         crossAxisAlignment: CrossAxisAlignment.end,
         children: [
@@ -4909,10 +4689,9 @@ class _ActivityLogCard extends StatelessWidget {
       width: double.infinity,
       padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: const Color(0xFFDCE5EF)),
-      ),
+            color: AppTheme.surface,
+            borderRadius: BorderRadius.circular(AppTheme.rField),
+          ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
@@ -5036,49 +4815,6 @@ class _HorizontalTabs extends StatelessWidget {
   }
 }
 
-class _HintBlock extends StatelessWidget {
-  const _HintBlock({required this.title, required this.content});
-
-  final String title;
-  final String content;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.all(10),
-      decoration: BoxDecoration(
-        color: const Color(0xFFF8FAFC),
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: const Color(0xFFDCE5EF)),
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.end,
-        children: [
-          Text(
-            title,
-            style: const TextStyle(
-              fontSize: 12,
-              color: Color(0xFF0F172A),
-              fontWeight: FontWeight.w800,
-            ),
-          ),
-          const SizedBox(height: 4),
-          Text(
-            content,
-            textAlign: TextAlign.right,
-            style: const TextStyle(
-              fontSize: 11,
-              color: Color(0xFF334155),
-              fontWeight: FontWeight.w600,
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
 class _TypeFilterDef {
   const _TypeFilterDef(this.key, this.label, this.color);
 
@@ -5121,204 +4857,6 @@ class _ScopeChip extends StatelessWidget {
             fontWeight: FontWeight.w800,
             color: selected ? Colors.white : const Color(0xFF334155),
           ),
-        ),
-      ),
-    );
-  }
-}
-
-class _ScopeFilterRect extends StatelessWidget {
-  const _ScopeFilterRect({
-    required this.label,
-    required this.count,
-    required this.icon,
-    required this.color,
-    required this.selected,
-    required this.onTap,
-  });
-
-  final String label;
-  final int count;
-  final IconData icon;
-  final Color color;
-  final bool selected;
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    return InkWell(
-      onTap: onTap,
-      borderRadius: BorderRadius.circular(12),
-      child: Container(
-        constraints: const BoxConstraints(minHeight: 40),
-        padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 9),
-        decoration: BoxDecoration(
-          color: selected ? color : Colors.white,
-          borderRadius: BorderRadius.circular(12),
-          border: Border.all(
-            color: selected ? color : const Color(0xFFDCE5EF),
-            width: selected ? 1.4 : 1,
-          ),
-        ),
-        child: Row(
-          children: [
-            Icon(icon, size: 16, color: selected ? Colors.white : color),
-            const SizedBox(width: 6),
-            Expanded(
-              child: Text(
-                label,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                style: TextStyle(
-                  fontSize: 11,
-                  fontWeight: FontWeight.w800,
-                  color: selected ? Colors.white : const Color(0xFF334155),
-                ),
-              ),
-            ),
-            const SizedBox(width: 6),
-            Container(
-              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
-              decoration: BoxDecoration(
-                color: selected
-                    ? Colors.white.withValues(alpha: 0.22)
-                    : const Color(0xFFF1F5F9),
-                borderRadius: BorderRadius.circular(8),
-              ),
-              child: Text(
-                '$count',
-                style: TextStyle(
-                  fontSize: 10,
-                  fontWeight: FontWeight.w900,
-                  color: selected ? Colors.white : color,
-                ),
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-}
-
-class _SplitScopeCategoryTab extends StatelessWidget {
-  const _SplitScopeCategoryTab({
-    required this.label,
-    required this.count,
-    required this.icon,
-    required this.color,
-    required this.selected,
-    required this.onLabelTap,
-    required this.onArrowTap,
-  });
-
-  final String label;
-  final int count;
-  final IconData icon;
-  final Color color;
-  final bool selected;
-  final VoidCallback onLabelTap;
-  final VoidCallback onArrowTap;
-
-  @override
-  Widget build(BuildContext context) {
-    final baseBorder = selected
-        ? const Color(0xFFBFD2E6)
-        : const Color(0xFFDCE5EF);
-    final textColor = const Color(0xFF334155);
-    final badgeBackground = const Color(0xFFF1F5F9);
-
-    return Container(
-      width: 176,
-      decoration: BoxDecoration(
-        borderRadius: BorderRadius.circular(14),
-        border: Border.all(color: baseBorder, width: selected ? 1.4 : 1),
-        boxShadow: selected
-            ? const [
-                BoxShadow(
-                  color: Color(0x140F172A),
-                  blurRadius: 10,
-                  offset: Offset(0, 3),
-                ),
-              ]
-            : null,
-      ),
-      child: ClipRRect(
-        borderRadius: BorderRadius.circular(13),
-        child: Row(
-          children: [
-            Expanded(
-              child: Material(
-                color: Colors.white,
-                child: InkWell(
-                  onTap: onLabelTap,
-                  child: Padding(
-                    padding: const EdgeInsets.symmetric(
-                      horizontal: 10,
-                      vertical: 9,
-                    ),
-                    child: Row(
-                      children: [
-                        Icon(icon, size: 16, color: color),
-                        const SizedBox(width: 6),
-                        Expanded(
-                          child: Text(
-                            label,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: TextStyle(
-                              fontSize: 11,
-                              fontWeight: FontWeight.w800,
-                              color: textColor,
-                            ),
-                          ),
-                        ),
-                        const SizedBox(width: 6),
-                        Container(
-                          padding: const EdgeInsets.symmetric(
-                            horizontal: 6,
-                            vertical: 1,
-                          ),
-                          decoration: BoxDecoration(
-                            color: badgeBackground,
-                            borderRadius: BorderRadius.circular(8),
-                          ),
-                          child: Text(
-                            '$count',
-                            style: TextStyle(
-                              fontSize: 10,
-                              fontWeight: FontWeight.w900,
-                              color: color,
-                            ),
-                          ),
-                        ),
-                      ],
-                    ),
-                  ),
-                ),
-              ),
-            ),
-            Container(
-              width: 36,
-              decoration: BoxDecoration(
-                color: const Color(0xFFF8FAFC),
-                border: Border(
-                  right: BorderSide(color: const Color(0xFFDCE5EF)),
-                ),
-              ),
-              child: Material(
-                color: Colors.transparent,
-                child: InkWell(
-                  onTap: onArrowTap,
-                  child: Icon(
-                    Icons.keyboard_arrow_down_rounded,
-                    size: 18,
-                    color: const Color(0xFF0F172A),
-                  ),
-                ),
-              ),
-            ),
-          ],
         ),
       ),
     );

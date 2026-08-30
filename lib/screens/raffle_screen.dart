@@ -109,14 +109,12 @@ class _RaffleScreenState extends State<RaffleScreen>
         -(winnerIndex * sectionAngle + (sectionAngle / 2));
     final normalizedOffset = _positiveAngle(offsetToWinnerCenter);
     final targetRotation =
-      _currentRotation + (totalTurns * 2 * pi) + normalizedOffset;
+        _currentRotation + (totalTurns * 2 * pi) + normalizedOffset;
 
-    _rotationAnimation = Tween<double>(
-      begin: _currentRotation,
-      end: targetRotation,
-    ).animate(
-      CurvedAnimation(parent: _spinController, curve: Curves.easeOutQuart),
-    );
+    _rotationAnimation =
+        Tween<double>(begin: _currentRotation, end: targetRotation).animate(
+          CurvedAnimation(parent: _spinController, curve: Curves.easeOutQuart),
+        );
 
     setState(() {
       _winner = null;
@@ -238,7 +236,10 @@ class _RaffleScreenState extends State<RaffleScreen>
             if (_winner != null) ...[
               const SizedBox(height: 10),
               Container(
-                padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 10),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 14,
+                  vertical: 10,
+                ),
                 decoration: BoxDecoration(
                   color: const Color(0xFF0F172A),
                   borderRadius: BorderRadius.circular(14),

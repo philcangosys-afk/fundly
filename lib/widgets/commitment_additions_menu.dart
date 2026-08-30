@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart';
 import '../config/commitment_additions_config.dart';
+import 'shared/app_design.dart';
 
 /// Widget to display commitment additions menu with logical and additional options
 class CommitmentAdditionsMenu extends StatefulWidget {
@@ -42,7 +43,9 @@ class _CommitmentAdditionsMenuState extends State<CommitmentAdditionsMenu> {
         ),
         decoration: const BoxDecoration(
           color: Color(0xFFF8FAFC),
-          borderRadius: BorderRadius.vertical(top: Radius.circular(28)),
+          borderRadius: BorderRadius.vertical(
+            top: Radius.circular(AppTheme.rCard),
+          ),
         ),
         padding: const EdgeInsets.fromLTRB(14, 14, 14, 18),
         child: SafeArea(
@@ -187,9 +190,8 @@ class _CommitmentAdditionsMenuState extends State<CommitmentAdditionsMenu> {
                       vertical: 10,
                     ),
                     decoration: BoxDecoration(
-                      color: const Color(0xFFF8FAFC),
-                      borderRadius: BorderRadius.circular(12),
-                      border: Border.all(color: const Color(0xFFE2E8F0)),
+                      color: AppTheme.surface,
+                      borderRadius: BorderRadius.circular(AppTheme.rField),
                     ),
                     child: const Text(
                       'الشرح: استخدم الإضافات الأساسية في أغلب الحالات، أما الخيارات الإضافية فاضغط على “مزيد من الإضافات” عندما تحتاج إلى تصنيفات أكثر دقة.',
@@ -417,7 +419,7 @@ Future<AdditionType?> showCommitmentAdditionsMenu({
     isScrollControlled: true,
     backgroundColor: Colors.white,
     shape: const RoundedRectangleBorder(
-      borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+      borderRadius: BorderRadius.vertical(top: Radius.circular(AppTheme.rCard)),
     ),
     builder: (context) => DraggableScrollableSheet(
       initialChildSize: 0.7,
