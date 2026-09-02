@@ -12,6 +12,7 @@ import '../widgets/management_dashboard_chrome.dart';
 import '../widgets/detail_page_chrome.dart';
 import '../widgets/shared/app_design.dart';
 import '../widgets/shared/app_filter_sheet.dart';
+import '../widgets/shared/category_picker_sheet.dart';
 import '../widgets/shared/followup_center_sheet.dart';
 import '../widgets/shared/module_shared_widgets.dart';
 import '../widgets/shared/measured_pinned_header.dart';
@@ -1311,18 +1312,13 @@ class _PersonalCommitmentsScreenState extends State<PersonalCommitmentsScreen> {
   }
 
   /// هل يُعرض هذا الحقل الآن؟
-  ///
-  /// التصنيف الفرعي لا يظهر إلا بعد اختيار التصنيف الرئيسي: قائمته مشتقّة
-  /// من الرئيسي أصلًا، فعرضها قبله يعني قائمة فارغة تربك المستخدم.
   static bool _isFieldVisible(
     _FinancialField field,
     Map<String, TextEditingController> controllers,
   ) {
-    if (field.label != 'التصنيف الفرعي') return true;
-    final main = controllers['التصنيف الرئيسي']?.text.trim() ?? '';
-    if (main.isEmpty) return false;
-    // "+ إضافة أخرى" في الرئيسي: لا فرعي إلا بعد كتابة اسم التصنيف الجديد.
-    return true;
+    // التصنيف الفرعي لم يعد حقلًا مستقلًا: صار جزءًا من منتقي التصنيف
+    // الواحد، فإظهاره هنا يعني سؤال المستخدم مرتين عن الشيء نفسه.
+    return field.label != 'التصنيف الفرعي';
   }
 
   Future<void> _openFinancialEntryForm(_FinancialEntryForm form) async {
@@ -1336,8 +1332,6 @@ class _PersonalCommitmentsScreenState extends State<PersonalCommitmentsScreen> {
         if (field.kind == _FinancialFieldKind.select)
           '${field.label} (مخصص)': TextEditingController(),
     };
-    final customSubcategoryController = TextEditingController();
-    final customMainCategoryController = TextEditingController();
     XFile? attachment;
     var isSaving = false;
     var showAdditionalFields = false;
@@ -1596,10 +1590,6 @@ class _PersonalCommitmentsScreenState extends State<PersonalCommitmentsScreen> {
                               controllers[field.label]!,
                               entryLabel: form.label,
                               controllers: controllers,
-                              customMainCategoryController:
-                                  customMainCategoryController,
-                              customSubcategoryController:
-                                  customSubcategoryController,
                               setModalState: setModalState,
                               savedPeopleNames: savedPeopleNames,
                             ),
@@ -1664,10 +1654,6 @@ class _PersonalCommitmentsScreenState extends State<PersonalCommitmentsScreen> {
                                       controllers[field.label]!,
                                       entryLabel: form.label,
                                       controllers: controllers,
-                                      customMainCategoryController:
-                                          customMainCategoryController,
-                                      customSubcategoryController:
-                                          customSubcategoryController,
                                       setModalState: setModalState,
                                       savedPeopleNames: savedPeopleNames,
                                     ),
@@ -1721,10 +1707,6 @@ class _PersonalCommitmentsScreenState extends State<PersonalCommitmentsScreen> {
                                         form,
                                         controllers,
                                         attachment,
-                                        customMainCategory:
-                                            customMainCategoryController.text,
-                                        customSubcategory:
-                                            customSubcategoryController.text,
                                       );
                                       if (context.mounted) {
                                         Navigator.pop(context);
@@ -1785,8 +1767,6 @@ class _PersonalCommitmentsScreenState extends State<PersonalCommitmentsScreen> {
       for (final controller in controllers.values) {
         controller.dispose();
       }
-      customMainCategoryController.dispose();
-      customSubcategoryController.dispose();
     });
   }
 
@@ -1814,8 +1794,6 @@ class _PersonalCommitmentsScreenState extends State<PersonalCommitmentsScreen> {
     TextEditingController controller, {
     required String entryLabel,
     required Map<String, TextEditingController> controllers,
-    required TextEditingController customMainCategoryController,
-    required TextEditingController customSubcategoryController,
     required StateSetter setModalState,
     List<String> savedPeopleNames = const [],
   }) {
@@ -1884,22 +1862,46 @@ class _PersonalCommitmentsScreenState extends State<PersonalCommitmentsScreen> {
         },
       );
     }
+    // حقل التصنيف الواحد: يحلّ محلّ قائمتَي "التصنيف الرئيسي" و"الفرعي".
+    // المستخدم في الغالب يعرف الفرعي مباشرة ("تطبيقات توصيل") ولا يريد أن
+    // يتذكّر تحت أي رئيسي يقع، فصارت قائمة واحدة قابلة للبحث تُبيّن لكل
+    // بند: أهو رئيسي أم فرعي وممّن.
+    if (field.label == 'التصنيف الرئيسي') {
+      final mainController = controllers['التصنيف الرئيسي']!;
+      final subController = controllers['التصنيف الفرعي'];
+      return CategoryPickerField(
+        title: 'التصنيف',
+        required: field.required,
+        // الغرامة تصنيفها الرئيسي واحد ("غرامات")، فالمعنى كله في الفرعي
+        // (مرور/حكومية/مالية...) ولذلك يبقى إلزاميًا كما كان قبل التوحيد.
+        requireSub: entryLabel == 'غرامة',
+        allowCustom: field.allowCustom,
+        accent: const Color(0xFF1677FF),
+        main: mainController.text,
+        sub: subController?.text,
+        groups: [
+          for (final main in field.options)
+            CategoryGroup(
+              main: main,
+              subs: _subcategoriesForEntry(entryLabel, main)
+                  .where((sub) => sub != '+ إضافة أخرى')
+                  .toList(growable: false),
+            ),
+        ],
+        onChanged: (picked) => setModalState(() {
+          mainController.text = picked.main;
+          subController?.text = picked.sub ?? '';
+        }),
+      );
+    }
     if (field.kind == _FinancialFieldKind.select) {
-      final mainCategoryValue = controllers['التصنيف الرئيسي']?.text ?? '';
-      final effectiveMainCategory = mainCategoryValue == '+ إضافة أخرى'
-          ? customMainCategoryController.text.trim()
-          : mainCategoryValue;
-      final options = field.label == 'التصنيف الفرعي'
-          ? _subcategoriesForEntry(
-              entryLabel,
-              effectiveMainCategory,
-            )
-          : [
-              ...field.options,
-              if (field.allowCustom &&
-                  !field.options.contains('+ إضافة أخرى'))
-                '+ إضافة أخرى',
-            ];
+      // التصنيفان (الرئيسي والفرعي) لهما منتقيهما الخاص أعلاه، فما يصل
+      // إلى هنا هو بقية القوائم فقط.
+      final options = [
+        ...field.options,
+        if (field.allowCustom && !field.options.contains('+ إضافة أخرى'))
+          '+ إضافة أخرى',
+      ];
       final value = options.contains(controller.text) ? controller.text : null;
 
       return Column(
@@ -1919,18 +1921,8 @@ class _PersonalCommitmentsScreenState extends State<PersonalCommitmentsScreen> {
                   ),
                 )
                 .toList(),
-            onChanged: (selected) {
-              setModalState(() {
-                controller.text = selected ?? '';
-                if (field.label == 'التصنيف الرئيسي') {
-                  controllers['التصنيف الفرعي']?.clear();
-                  customMainCategoryController.clear();
-                  customSubcategoryController.clear();
-                } else if (selected != '+ إضافة أخرى') {
-                  customSubcategoryController.clear();
-                }
-              });
-            },
+            onChanged: (selected) =>
+                setModalState(() => controller.text = selected ?? ''),
             validator: (selected) {
               if (field.required &&
                   (selected == null || selected.trim().isEmpty)) {
@@ -1939,39 +1931,9 @@ class _PersonalCommitmentsScreenState extends State<PersonalCommitmentsScreen> {
               return null;
             },
           ),
-          if (field.label == 'التصنيف الرئيسي' &&
-              controller.text == '+ إضافة أخرى') ...[
-            const SizedBox(height: 12),
-            TextFormField(
-              controller: customMainCategoryController,
-              decoration: _expenseInputDecoration(
-                'اسم التصنيف الرئيسي الجديد',
-                Icons.add_rounded,
-              ),
-              validator: (text) => text == null || text.trim().isEmpty
-                  ? 'يرجى إدخال اسم التصنيف الرئيسي'
-                  : null,
-            ),
-          ],
-          if (field.label == 'التصنيف الفرعي' &&
-              controller.text == '+ إضافة أخرى') ...[
-            const SizedBox(height: 12),
-            TextFormField(
-              controller: customSubcategoryController,
-              decoration: _expenseInputDecoration(
-                'اسم التصنيف الجديد',
-                Icons.add_rounded,
-              ),
-              validator: (text) => text == null || text.trim().isEmpty
-                  ? 'يرجى إدخال اسم التصنيف الجديد'
-                  : null,
-            ),
-          ],
-          // بقية القوائم (طريقة الدفع، التكرار، ...) تحصل على نفس الحقل
-          // النصّي عند اختيار "+ إضافة أخرى".
-          if (field.label != 'التصنيف الرئيسي' &&
-              field.label != 'التصنيف الفرعي' &&
-              controller.text == '+ إضافة أخرى' &&
+          // القوائم (طريقة الدفع، التكرار، ...) تحصل على حقل نصّي عند
+          // اختيار "+ إضافة أخرى".
+          if (controller.text == '+ إضافة أخرى' &&
               controllers['${field.label} (مخصص)'] != null) ...[
             const SizedBox(height: 12),
             TextFormField(
@@ -2054,10 +2016,6 @@ class _PersonalCommitmentsScreenState extends State<PersonalCommitmentsScreen> {
     _FinancialEntryForm form,
     Map<String, TextEditingController> controllers,
     XFile? attachment,
-    {
-    String? customMainCategory,
-    String? customSubcategory,
-  }
   ) async {
     String valueFor(bool Function(_FinancialField field) predicate) {
       for (final field in form.fields) {
@@ -2080,14 +2038,6 @@ class _PersonalCommitmentsScreenState extends State<PersonalCommitmentsScreen> {
           field.label: controllers[field.label]!.text.trim(),
     };
 
-    final trimmedMain = (customMainCategory ?? '').trim();
-    final trimmedSub = (customSubcategory ?? '').trim();
-    if (details['التصنيف الرئيسي'] == '+ إضافة أخرى' && trimmedMain.isNotEmpty) {
-      details['التصنيف الرئيسي'] = trimmedMain;
-    }
-    if (details['التصنيف الفرعي'] == '+ إضافة أخرى' && trimmedSub.isNotEmpty) {
-      details['التصنيف الفرعي'] = trimmedSub;
-    }
     // بقية القوائم: تُستبدل "+ إضافة أخرى" بالقيمة التي كتبها المستخدم.
     for (final field in form.fields) {
       if (field.kind != _FinancialFieldKind.select) continue;
@@ -2270,10 +2220,22 @@ class _PersonalCommitmentsScreenState extends State<PersonalCommitmentsScreen> {
               ),
             ),
           ),
-          // صف "الفئات" يبقى مثبَّتًا في الأعلى عند التمرير.
-          // (الآلية السابقة كانت تفترض ارتفاعًا ثابتًا فتسبّبت في شاشة
-          // بيضاء؛ MeasuredPinnedHeader يقيس الارتفاع الفعلي وقت التشغيل
-          // ويعرض المحتوى بحجمه الطبيعي إلى أن يكتمل القياس.)
+          // عنوان "الفئات" يمرّ مع الصفحة، وشريط الشرائح وحده هو الذي
+          // يثبت في الأعلى.
+          SliverToBoxAdapter(
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(12, 14, 12, 6),
+              child: const Text(
+                'الفئات',
+                textAlign: TextAlign.right,
+                style: TextStyle(
+                  fontSize: 13,
+                  fontWeight: FontWeight.w900,
+                  color: Color(0xFF334155),
+                ),
+              ),
+            ),
+          ),
           MeasuredPinnedHeader(
             background: AppTheme.page,
             child: Padding(
@@ -2829,7 +2791,7 @@ class _PersonalCommitmentsScreenState extends State<PersonalCommitmentsScreen> {
     final duesTotal = groups[0].total; // الاستحقاقات
     final tasksTotal = groups[3].total + groups[4].total; // المهام + المواعيد
     final renewalsTotal = groups[2].total; // التجديدات والانتهاءات
-    const accent = Color(0xFF1D4ED8);
+    const accent = Color(0xFF2563EB);
     final metrics = [
       ('مستحقات', duesTotal, Icons.payments_outlined, const Color(0xFF2563EB)),
       ('مهام', tasksTotal, Icons.task_alt_rounded, const Color(0xFF07835C)),
@@ -3002,34 +2964,28 @@ class _PersonalCommitmentsScreenState extends State<PersonalCommitmentsScreen> {
           ),
         );
       }).toList(),
+      // بلا مستطيل حول الكلمة: بقية الشاشات تعرض الكلمة والسهم فقط، وكان
+      // هذا الزر وحده داخل صندوق أزرق فيبدو مختلفًا عن أخواته.
       child: Directionality(
         textDirection: TextDirection.rtl,
-        child: Container(
-          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
-          decoration: BoxDecoration(
-            color: const Color(0xFFEFF6FF),
-            borderRadius: BorderRadius.circular(11),
-            border: Border.all(color: const Color(0xFFD6E6FE)),
-          ),
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              Text(
-                _selectedSort,
-                style: const TextStyle(
-                  fontSize: 10.5,
-                  fontWeight: FontWeight.w800,
-                  color: Color(0xFF2563EB),
-                ),
-              ),
-              const SizedBox(width: 3),
-              const Icon(
-                Icons.keyboard_arrow_down_rounded,
-                size: 16,
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            Text(
+              _selectedSort,
+              style: const TextStyle(
+                fontSize: 10.5,
+                fontWeight: FontWeight.w800,
                 color: Color(0xFF2563EB),
               ),
-            ],
-          ),
+            ),
+            const SizedBox(width: 2),
+            const Icon(
+              Icons.keyboard_arrow_down_rounded,
+              size: 16,
+              color: Color(0xFF2563EB),
+            ),
+          ],
         ),
       ),
     );

@@ -5,12 +5,11 @@ class HomeStrings {
 
   static const homeTagline = 'أموالك، أصولك، التزاماتك وعلاقاتك في لوحة واحدة';
   static const searchHint = 'أبحث عن أي شيء';
-  static const filterLabel = 'فلتر';
 
   static const summaryTitle = 'الملخص الشامل';
-  static const summarySubtitle = 'أعرف أمورك بضغطة زر';
+  static const summarySubtitle = 'عرض جميع بياناتك هنا';
 
-  static const pinHint = 'ثبّت العناصر المهمة للوصول السريع';
+  static const pinHint = 'ثبت هنا الفئات التي تستخدمها بشكل متكرر';
 
   static const manageTitle = 'أدر أموالك وأملاكك باحترافية';
 

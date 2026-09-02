@@ -1,4 +1,5 @@
 import 'dart:convert';
+import 'dart:typed_data';
 import 'dart:ui' as ui;
 
 import 'package:flutter/material.dart';
@@ -10,6 +11,7 @@ import '../data/app_reminders_store.dart';
 import '../data/delegations_repository.dart';
 import '../data/project_assets_repository.dart';
 import '../data/user_signature_store.dart';
+import '../data/user_stamp_store.dart';
 import 'signature_settings_screen.dart';
 import '../widgets/shared/app_design.dart';
 
@@ -55,6 +57,9 @@ class _DocumentTemplatesScreenState extends State<DocumentTemplatesScreen> {
   bool _loading = true;
   List<List<Offset>> _signature = const [];
 
+  /// صورة الختم المحفوظة (إن وُجدت) — تُعرض مع التوقيع في النموذج.
+  Uint8List? _stamp;
+
   @override
   void initState() {
     super.initState();
@@ -67,6 +72,7 @@ class _DocumentTemplatesScreenState extends State<DocumentTemplatesScreen> {
     // ومعها مؤشر السحب نفسه.
     setState(() => _loading = _savedRecords.isEmpty);
     final signature = await UserSignatureStore.load();
+    final stamp = await UserStampStore.load();
     var records = <DocumentRecordEntry>[];
     try {
       records = await _repository.fetchDocuments();
@@ -91,11 +97,7 @@ class _DocumentTemplatesScreenState extends State<DocumentTemplatesScreen> {
             // المعرّف يجب أن يكون فريدًا: شخصان بنفس الاسم كانا سيُنتجان
             // خيارين بنفس القيمة، وهو ما يُسقط القائمة المنسدلة بتأكيد
             // داخلي فور اختيار أحدهما.
-            targets.add((
-              kind: 'شخص/جهة',
-              label: name,
-              id: 'person:$index:$name',
-            ));
+            targets.add((kind: 'شخص/جهة', label: name, id: 'person:$index:$name'));
           }
         }
       }
@@ -119,9 +121,11 @@ class _DocumentTemplatesScreenState extends State<DocumentTemplatesScreen> {
     setState(() {
       _savedRecords = records;
       _signature = signature;
+      _stamp = stamp;
       _linkTargets = targets;
       _loading = false;
     });
+  
   }
 
   Future<void> _openTemplate(String type) async {
@@ -155,9 +159,7 @@ class _DocumentTemplatesScreenState extends State<DocumentTemplatesScreen> {
             ),
             decoration: const BoxDecoration(
               color: Colors.white,
-              borderRadius: BorderRadius.vertical(
-                top: Radius.circular(AppTheme.rCard),
-              ),
+              borderRadius: BorderRadius.vertical(top: Radius.circular(AppTheme.rCard)),
             ),
             child: SingleChildScrollView(
               child: Directionality(
@@ -220,11 +222,13 @@ class _DocumentTemplatesScreenState extends State<DocumentTemplatesScreen> {
                     ),
                     const SizedBox(height: 9),
                     _textField(controllers['ملاحظات']!, 'ملاحظات', maxLines: 3),
-                    if (_signature.isNotEmpty) ...[
+                    if (_signature.isNotEmpty || _stamp != null) ...[
                       SwitchListTile.adaptive(
                         contentPadding: EdgeInsets.zero,
-                        title: const Text('إضافة توقيعي إلى النموذج'),
-                        subtitle: const Text('اختياري ويمكن تعطيله لكل نموذج'),
+                        title: const Text('إضافة توقيعي وختمي إلى النموذج'),
+                        subtitle: const Text(
+                          'اختياري ويمكن تعطيله لكل نموذج',
+                        ),
                         value: includeSignature,
                         onChanged: (value) =>
                             setSheetState(() => includeSignature = value),
@@ -237,15 +241,17 @@ class _DocumentTemplatesScreenState extends State<DocumentTemplatesScreen> {
                             border: Border.all(color: const Color(0xFFE2E8F0)),
                             borderRadius: BorderRadius.circular(10),
                           ),
-                          child: CustomPaint(
-                            painter: UserSignaturePainter(_signature),
-                          ),
+                          child: _signature.isEmpty && _stamp != null
+                              ? Image.memory(_stamp!, fit: BoxFit.contain)
+                              : CustomPaint(
+                                  painter: UserSignaturePainter(_signature),
+                                ),
                         ),
                     ] else
                       ListTile(
                         contentPadding: EdgeInsets.zero,
                         leading: const Icon(Icons.draw_outlined),
-                        title: const Text('لا يوجد توقيع محفوظ'),
+                        title: const Text('لا يوجد توقيع أو ختم محفوظ'),
                         trailing: TextButton(
                           onPressed: () async {
                             await Navigator.of(context).push(
@@ -254,11 +260,15 @@ class _DocumentTemplatesScreenState extends State<DocumentTemplatesScreen> {
                               ),
                             );
                             final signature = await UserSignatureStore.load();
+                            final stamp = await UserStampStore.load();
                             if (!mounted) return;
-                            setState(() => _signature = signature);
+                            setState(() {
+                              _signature = signature;
+                              _stamp = stamp;
+                            });
                             setSheetState(() {});
                           },
-                          child: const Text('إضافة توقيع'),
+                          child: const Text('إضافة توقيع أو ختم'),
                         ),
                       ),
                     const SizedBox(height: 12),
@@ -421,9 +431,13 @@ class _DocumentTemplatesScreenState extends State<DocumentTemplatesScreen> {
       if ((record.linkedLabel ?? '').isNotEmpty)
         'مرتبط بـ': '${record.linkedKind}: ${record.linkedLabel}',
     };
-    final signature = record.fields['includeSignature'] == '1'
+    final withSignature = record.fields['includeSignature'] == '1';
+    final signature = withSignature
         ? await UserSignatureStore.load()
         : <List<Offset>>[];
+    // الختم المحفوظ في صفحة "التوقيع الإلكتروني والختم" يظهر بجانب
+    // التوقيع، فلا يبقى الختم صورة محفوظة لا تُستخدم في شيء.
+    final stamp = withSignature ? await UserStampStore.load() : null;
     if (!mounted) return;
     final previewKey = GlobalKey();
 
@@ -466,17 +480,56 @@ class _DocumentTemplatesScreenState extends State<DocumentTemplatesScreen> {
                             ),
                           ),
                         ),
-                    if (signature.isNotEmpty) ...[
+                    if (signature.isNotEmpty || stamp != null) ...[
                       const SizedBox(height: 16),
-                      const Text(
-                        'التوقيع',
-                        style: TextStyle(fontWeight: FontWeight.w800),
-                      ),
-                      SizedBox(
-                        height: 82,
-                        child: CustomPaint(
-                          painter: UserSignaturePainter(signature),
-                        ),
+                      Row(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          if (signature.isNotEmpty)
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  const Text(
+                                    'التوقيع',
+                                    style: TextStyle(
+                                      fontWeight: FontWeight.w800,
+                                    ),
+                                  ),
+                                  SizedBox(
+                                    height: 82,
+                                    child: CustomPaint(
+                                      painter: UserSignaturePainter(signature),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          if (signature.isNotEmpty && stamp != null)
+                            const SizedBox(width: 12),
+                          if (stamp != null)
+                            Expanded(
+                              child: Column(
+                                crossAxisAlignment: CrossAxisAlignment.start,
+                                children: [
+                                  const Text(
+                                    'الختم',
+                                    style: TextStyle(
+                                      fontWeight: FontWeight.w800,
+                                    ),
+                                  ),
+                                  SizedBox(
+                                    height: 82,
+                                    child: Image.memory(
+                                      stamp,
+                                      fit: BoxFit.contain,
+                                      alignment: Alignment.centerRight,
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                        ],
                       ),
                     ],
                   ],
@@ -531,9 +584,9 @@ class _DocumentTemplatesScreenState extends State<DocumentTemplatesScreen> {
       await AppRemindersStore.remove(id);
     } catch (_) {
       if (!mounted) return;
-      ScaffoldMessenger.of(
-        context,
-      ).showSnackBar(const SnackBar(content: Text('تعذّر حذف النموذج')));
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('تعذّر حذف النموذج')),
+      );
       return;
     }
     await _load();
@@ -604,119 +657,108 @@ class _DocumentTemplatesScreenState extends State<DocumentTemplatesScreen> {
       body: _loading
           ? const Center(child: CircularProgressIndicator())
           : Directionality(
-              textDirection: TextDirection.rtl,
-              child: RefreshIndicator(
-                onRefresh: _load,
-                child: ListView(
-                  padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
-                  children: [
-                    const Text(
-                      'اختر نموذجًا جاهزًا واملأ بياناته',
-                      style: TextStyle(
-                        fontSize: 17,
-                        fontWeight: FontWeight.w900,
-                        color: Color(0xFF0F172A),
-                      ),
-                    ),
-                    const SizedBox(height: 12),
-                    GridView.count(
-                      shrinkWrap: true,
-                      physics: const NeverScrollableScrollPhysics(),
-                      crossAxisCount: 2,
-                      childAspectRatio: 1.5,
-                      crossAxisSpacing: 10,
-                      mainAxisSpacing: 10,
-                      children: _templateFields.keys
-                          .map(
-                            (type) => Material(
-                              color: Colors.white,
-                              borderRadius: BorderRadius.circular(10),
-                              child: InkWell(
-                                onTap: () => _openTemplate(type),
-                                borderRadius: BorderRadius.circular(10),
-                                child: Container(
-                                  padding: const EdgeInsets.all(12),
-                                  decoration: BoxDecoration(
-                                    border: Border.all(
-                                      color: const Color(0xFFE2E8F0),
-                                    ),
-                                    borderRadius: BorderRadius.circular(10),
-                                  ),
-                                  child: Column(
-                                    mainAxisAlignment: MainAxisAlignment.center,
-                                    children: [
-                                      Icon(
-                                        _templateIcons[type],
-                                        color: const Color(0xFF0F6AA8),
-                                      ),
-                                      const SizedBox(height: 7),
-                                      Text(
-                                        type,
-                                        textAlign: TextAlign.center,
-                                        style: const TextStyle(
-                                          fontWeight: FontWeight.w800,
-                                        ),
-                                      ),
-                                    ],
-                                  ),
-                                ),
-                              ),
-                            ),
-                          )
-                          .toList(growable: false),
-                    ),
-                    if (_savedRecords.isNotEmpty) ...[
-                      const SizedBox(height: 22),
-                      const Text(
-                        'النماذج المحفوظة',
-                        style: TextStyle(
-                          fontSize: 16,
-                          fontWeight: FontWeight.w900,
-                        ),
-                      ),
-                      const SizedBox(height: 8),
-                      for (final record in _savedRecords)
-                        Card(
-                          child: ListTile(
-                            leading: Icon(
-                              _templateIcons[record.docType] ??
-                                  Icons.description_outlined,
-                            ),
-                            title: Text(record.docType),
-                            subtitle: Text(
-                              [
-                                (record.fields['تاريخ الانتهاء'] ?? '').isEmpty
-                                    ? 'بدون تاريخ انتهاء'
-                                    : 'ينتهي: ${record.fields['تاريخ الانتهاء']}',
-                                if ((record.linkedLabel ?? '').isNotEmpty)
-                                  '${record.linkedKind}: ${record.linkedLabel}',
-                              ].join('  •  '),
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                            ),
-                            trailing: PopupMenuButton<String>(
-                              onSelected: (action) {
-                                if (action == 'share') _shareRecord(record);
-                                if (action == 'delete') _deleteRecord(record);
-                              },
-                              itemBuilder: (_) => const [
-                                PopupMenuItem(
-                                  value: 'share',
-                                  child: Text('مشاركة'),
-                                ),
-                                PopupMenuItem(
-                                  value: 'delete',
-                                  child: Text('حذف'),
-                                ),
-                              ],
-                            ),
-                          ),
-                        ),
-                    ],
-                  ],
-                ),
+        textDirection: TextDirection.rtl,
+        child: RefreshIndicator(
+          onRefresh: _load,
+          child: ListView(
+          padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
+          children: [
+            const Text(
+              'اختر نموذجًا جاهزًا واملأ بياناته',
+              style: TextStyle(
+                fontSize: 17,
+                fontWeight: FontWeight.w900,
+                color: Color(0xFF0F172A),
               ),
             ),
+            const SizedBox(height: 12),
+            GridView.count(
+              shrinkWrap: true,
+              physics: const NeverScrollableScrollPhysics(),
+              crossAxisCount: 2,
+              childAspectRatio: 1.5,
+              crossAxisSpacing: 10,
+              mainAxisSpacing: 10,
+              children: _templateFields.keys
+                  .map(
+                    (type) => Material(
+                      color: Colors.white,
+                      borderRadius: BorderRadius.circular(10),
+                      child: InkWell(
+                        onTap: () => _openTemplate(type),
+                        borderRadius: BorderRadius.circular(10),
+                        child: Container(
+                          padding: const EdgeInsets.all(12),
+                          decoration: BoxDecoration(
+                            border: Border.all(color: const Color(0xFFE2E8F0)),
+                            borderRadius: BorderRadius.circular(10),
+                          ),
+                          child: Column(
+                            mainAxisAlignment: MainAxisAlignment.center,
+                            children: [
+                              Icon(
+                                _templateIcons[type],
+                                color: const Color(0xFF0F6AA8),
+                              ),
+                              const SizedBox(height: 7),
+                              Text(
+                                type,
+                                textAlign: TextAlign.center,
+                                style: const TextStyle(
+                                  fontWeight: FontWeight.w800,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ),
+                  )
+                  .toList(growable: false),
+            ),
+            if (_savedRecords.isNotEmpty) ...[
+              const SizedBox(height: 22),
+              const Text(
+                'النماذج المحفوظة',
+                style: TextStyle(fontSize: 16, fontWeight: FontWeight.w900),
+              ),
+              const SizedBox(height: 8),
+              for (final record in _savedRecords)
+                Card(
+                  child: ListTile(
+                    leading: Icon(
+                      _templateIcons[record.docType] ??
+                          Icons.description_outlined,
+                    ),
+                    title: Text(record.docType),
+                    subtitle: Text(
+                      [
+                        (record.fields['تاريخ الانتهاء'] ?? '').isEmpty
+                            ? 'بدون تاريخ انتهاء'
+                            : 'ينتهي: ${record.fields['تاريخ الانتهاء']}',
+                        if ((record.linkedLabel ?? '').isNotEmpty)
+                          '${record.linkedKind}: ${record.linkedLabel}',
+                      ].join('  •  '),
+                      maxLines: 1,
+                      overflow: TextOverflow.ellipsis,
+                    ),
+                    trailing: PopupMenuButton<String>(
+                      onSelected: (action) {
+                        if (action == 'share') _shareRecord(record);
+                        if (action == 'delete') _deleteRecord(record);
+                      },
+                      itemBuilder: (_) => const [
+                        PopupMenuItem(value: 'share', child: Text('مشاركة')),
+                        PopupMenuItem(value: 'delete', child: Text('حذف')),
+                      ],
+                    ),
+                  ),
+                ),
+            ],
+          ],
+        ),
+        ),
+      ),
     );
   }
 }

@@ -1,3 +1,4 @@
+import 'dart:async';
 import 'dart:convert';
 
 import 'package:flutter/material.dart';
@@ -28,7 +29,11 @@ const _propertyAnnexLabels = [
 ];
 
 class ProjectsActivitiesScreen extends StatefulWidget {
-  const ProjectsActivitiesScreen({super.key});
+  /// الفئة المفتوحة عند الدخول: تسمح لاختصارات الصفحة الرئيسية بفتح
+  /// العقارات أو الأنشطة مباشرةً بدل فتح "الكل" ثم البحث يدويًا.
+  final String initialFilter;
+
+  const ProjectsActivitiesScreen({super.key, this.initialFilter = 'all'});
 
   @override
   State<ProjectsActivitiesScreen> createState() =>
@@ -38,7 +43,7 @@ class ProjectsActivitiesScreen extends StatefulWidget {
 class _ProjectsActivitiesScreenState extends State<ProjectsActivitiesScreen> {
   final TextEditingController _searchController = TextEditingController();
   final ProjectAssetsRepository _repository = SupabaseProjectAssetsRepository();
-  String _selectedFilter = 'all';
+  late String _selectedFilter = widget.initialFilter;
   String _selectedSort = 'الأحدث أولاً';
   bool _isLoadingRemote = true;
 
@@ -575,7 +580,8 @@ class _ProjectsActivitiesScreenState extends State<ProjectsActivitiesScreen> {
   /// مركز المتابعة بالقالب الموحَّد نفسه المستعمل في بقية الوحدات.
   ///
   /// كان زر "المزيد" هنا يفتح نافذة **فلترة** لا علاقة لها بالمتابعة.
-  void _openFollowUpSheet(List<_AssetItem> assets) {
+  /// مجموعات مركز المتابعة — مصدر واحد للبطاقة المصغّرة ولنافذة "المزيد".
+  List<FollowUpGroup> _followUpGroups(List<_AssetItem> assets) {
     FollowUpEntry entryFor(_AssetItem item, String trailing) => FollowUpEntry(
       title: item.title,
       subtitle: item.subType.isEmpty ? item.status : item.subType,
@@ -587,10 +593,7 @@ class _ProjectsActivitiesScreenState extends State<ProjectsActivitiesScreen> {
 
     String percent(double value) => '${(value * 100).round()}%';
 
-    showFollowUpCenterSheet(
-      context: context,
-      accent: const Color(0xFF047857),
-      groups: [
+    return [
         FollowUpGroup(
           title: 'الدفعات',
           icon: Icons.payments_outlined,
@@ -687,7 +690,17 @@ class _ProjectsActivitiesScreenState extends State<ProjectsActivitiesScreen> {
             ),
           ],
         ),
-      ],
+      ];
+  }
+
+  void _openFollowUpSheet(List<_AssetItem> assets) {
+    showFollowUpCenterSheet(
+      context: context,
+      accent: const Color(0xFF047857),
+      title: _selectedFilter == 'all'
+          ? 'مركز المتابعة'
+          : 'متابعة ${_filters.firstWhere((item) => item.key == _selectedFilter).label}',
+      groups: _followUpGroups(assets),
     );
   }
 
@@ -1240,9 +1253,11 @@ class _ProjectsActivitiesScreenState extends State<ProjectsActivitiesScreen> {
     );
     if (propertyType == null || !mounted) return;
 
-    final result = await Navigator.of(
-      context,
-    ).push<_PropertyDraft>(MaterialPageRoute(builder: (_) => const _AddPropertyStep1Screen()));
+    final result = await Navigator.of(context).push<_PropertyDraft>(
+      MaterialPageRoute(
+        builder: (_) => _AddPropertyStep1Screen(propertyType: propertyType),
+      ),
+    );
     if (result == null || !mounted) return;
     final unitsLabel = result.units.isEmpty
         ? 'بدون وحدات'
@@ -1274,7 +1289,12 @@ class _ProjectsActivitiesScreenState extends State<ProjectsActivitiesScreen> {
       contracts: const [],
       tasks: const [],
       alerts: const [],
-      logs: ['تمت إضافة العقار بـ $unitsLabel'],
+      // المرافق المختارة تُحفظ في ملحقات العقار وتظهر في تفاصيله.
+      annexes: {for (final facility in result.facilities) facility: 1},
+      logs: [
+        'تمت إضافة العقار بـ $unitsLabel'
+            '${result.facilities.isEmpty ? '' : ' ومرافق: ${result.facilities.join('، ')}'}',
+      ],
       createdAt: DateTime.now(),
       units: result.units,
       mapLink: result.mapLink,
@@ -1473,41 +1493,39 @@ class _ProjectsActivitiesScreenState extends State<ProjectsActivitiesScreen> {
                         : 'متابعة ${_filters.firstWhere((item) => item.key == _selectedFilter).label}',
                     accentColor: const Color(0xFF047857),
                     onMore: () => _openFollowUpSheet(selectedAssets),
+                    // المؤشرات الثلاثة مبنية من مجموعات مركز المتابعة
+                    // نفسها — كالالتزامات الشخصية، فتتطابق الأرقام بين
+                    // البطاقة المصغّرة ونافذة "المزيد".
                     metrics: [
-                      ManagementMetricData(
-                        label: 'دفعات للمتابعة',
-                        count: selectedAssets
-                            .where((item) => item.paymentProgress < 0.7)
-                            .length,
-                        icon: Icons.payments_outlined,
-                        color: const Color(0xFFB56A09),
-                      ),
-                      ManagementMetricData(
-                        label: 'مستندات للمتابعة',
-                        count: selectedAssets
-                            .where((item) => item.documentsProgress < 0.8)
-                            .length,
-                        icon: Icons.badge_outlined,
-                        color: const Color(0xFF0F6AA8),
-                      ),
-                      ManagementMetricData(
-                        label: 'عقود للمتابعة',
-                        count: selectedAssets
-                            .where(
-                              (item) =>
-                                  item.contracts.isNotEmpty &&
-                                  item.needsAttention,
-                            )
-                            .length,
-                        icon: Icons.description_outlined,
-                        color: const Color(0xFFC73E4D),
-                      ),
+                      for (final group in _followUpGroups(
+                        selectedAssets,
+                      ).take(3))
+                        ManagementMetricData(
+                          label: group.title,
+                          count: group.total,
+                          icon: group.icon,
+                          color: group.color,
+                        ),
                     ],
                   ),
                 ),
               ),
             ),
-            // صف "الفئات" يبقى مثبَّتًا في الأعلى عند التمرير.
+            // عنوان "الفئات" يمرّ مع الصفحة، وشريط الشرائح وحده يثبت.
+            SliverToBoxAdapter(
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(16, 14, 16, 6),
+                child: const Text(
+                  'الفئات',
+                  textAlign: TextAlign.right,
+                  style: TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w900,
+                    color: Color(0xFF334155),
+                  ),
+                ),
+              ),
+            ),
             MeasuredPinnedHeader(
               child: Padding(
                 padding: const EdgeInsets.fromLTRB(16, 14, 16, 8),
@@ -1653,6 +1671,10 @@ class ProjectAssetDetailsScreen extends StatefulWidget {
 
 class _ProjectAssetDetailsScreenState extends State<ProjectAssetDetailsScreen> {
   final TextEditingController _searchController = TextEditingController();
+
+  /// نوع الوحدة المفتوح من بطاقة "الوحدات" (null = عرض كل الوحدات،
+  /// و[_kVacantUnitsKey] = الشاغرة فقط).
+  String? _openUnitType;
   int _selectedTab = 0;
   int _selectedSecondaryTab = 0;
   late _AssetItem _item;
@@ -2896,118 +2918,31 @@ class _ProjectAssetDetailsScreenState extends State<ProjectAssetDetailsScreen> {
   ];
 
   void _addUnit() {
-    String type = _kUnitApartment;
-    final numberCtrl = TextEditingController();
-    showModalBottomSheet<void>(
-      context: context,
-      isScrollControlled: true,
-      backgroundColor: Colors.transparent,
-      builder: (context) {
-        return StatefulBuilder(
-          builder: (context, setModalState) {
-            return SafeArea(
-              top: false,
-              child: Container(
-                padding: EdgeInsets.only(
-                  left: 16,
-                  right: 16,
-                  top: 14,
-                  bottom: MediaQuery.of(context).viewInsets.bottom + 16,
-                ),
-                decoration: const BoxDecoration(
-                  color: Colors.white,
-                  borderRadius: BorderRadius.vertical(top: Radius.circular(22)),
-                ),
-                child: Directionality(
-                  textDirection: TextDirection.rtl,
-                  child: Column(
-                    mainAxisSize: MainAxisSize.min,
-                    crossAxisAlignment: CrossAxisAlignment.stretch,
-                    children: [
-                      const Text(
-                        'إضافة وحدة جديدة',
-                        style: TextStyle(
-                          fontSize: 16,
-                          fontWeight: FontWeight.w900,
-                          color: Color(0xFF0F172A),
-                        ),
-                      ),
-                      const SizedBox(height: 12),
-                      const Align(
-                        alignment: Alignment.centerRight,
-                        child: Text(
-                          'نوع الوحدة',
-                          style: TextStyle(
-                            fontSize: 12,
-                            fontWeight: FontWeight.w800,
-                            color: Color(0xFF334155),
-                          ),
-                        ),
-                      ),
-                      const SizedBox(height: 8),
-                      Row(
-                        children: [
-                          for (final t in _kUnitTypes) ...[
-                            Expanded(
-                              child: _UnitTypeChoice(
-                                label: t,
-                                icon: _unitTypeIcon(t),
-                                selected: type == t,
-                                onTap: () => setModalState(() => type = t),
-                              ),
-                            ),
-                            if (t != _kUnitTypes.last)
-                              const SizedBox(width: 8),
-                          ],
-                        ],
-                      ),
-                      const SizedBox(height: 12),
-                      TextField(
-                        controller: numberCtrl,
-                        textAlign: TextAlign.right,
-                        decoration: _propertyInputDecoration('رقم الوحدة'),
-                      ),
-                      const SizedBox(height: 16),
-                      ElevatedButton(
-                        onPressed: () {
-                          final unit = _PropertyUnit(
-                            type: type,
-                            name: _defaultUnitName(type),
-                            unitNumber: numberCtrl.text.trim(),
-                            rooms: _unitTypeRoomsFor(type, 0),
-                          );
-                          _updateItem(
-                            _item.copyWith(
-                              units: [..._item.units, unit],
-                              logs: [
-                                'تمت إضافة وحدة ($type) رقم ${numberCtrl.text.trim()}',
-                                ..._item.logs,
-                              ],
-                            ),
-                          );
-                          Navigator.of(context).pop();
-                        },
-                        style: ElevatedButton.styleFrom(
-                          backgroundColor: _kPropertyColor,
-                          foregroundColor: Colors.white,
-                          minimumSize: const Size.fromHeight(48),
-                          shape: RoundedRectangleBorder(
-                            borderRadius: BorderRadius.circular(12),
-                          ),
-                        ),
-                        child: const Text(
-                          '+ إضافة',
-                          style: TextStyle(fontWeight: FontWeight.w800),
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
+    // شاشة "إضافة الوحدات والمرافق العامة" الكاملة بدل نافذة النوع
+    // والرقم القديمة: قائمة ثابتة يمينًا ونموذج يسارًا وحفظ لكل نوع
+    // ومسودة تلقائية كل دقيقتين.
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => _UnitsEntryScreen(
+          assetKey: _item.id ?? _item.title,
+          existingUnits: _item.units,
+          existingAnnexes: _item.annexes,
+          onCommit: (newUnits, annexes, logLine) {
+            final mergedAnnexes = {..._item.annexes};
+            annexes.forEach(
+              (key, value) =>
+                  mergedAnnexes[key] = (mergedAnnexes[key] ?? 0) + value,
+            );
+            _updateItem(
+              _item.copyWith(
+                units: [..._item.units, ...newUnits],
+                annexes: mergedAnnexes,
+                logs: [logLine, ..._item.logs],
               ),
             );
           },
-        );
-      },
+        ),
+      ),
     );
   }
 
@@ -3223,32 +3158,6 @@ class _ProjectAssetDetailsScreenState extends State<ProjectAssetDetailsScreen> {
                         ),
                       ),
                     ),
-                  const Divider(height: 1, color: Color(0xFFEEF2F7)),
-                  _AssetHighlightBarRow(
-                    accentColor: _kPropertyColor,
-                    tiles: [
-                      _AssetHighlightTile(
-                        Icons.home_work_outlined,
-                        '${item.apartmentsCount}',
-                        'شقق',
-                      ),
-                      _AssetHighlightTile(
-                        Icons.single_bed_rounded,
-                        '${item.studiosCount}',
-                        'استديو',
-                      ),
-                      _AssetHighlightTile(
-                        Icons.storefront_outlined,
-                        '${item.shopsCount}',
-                        'محلات',
-                      ),
-                      _AssetHighlightTile(
-                        Icons.meeting_room_outlined,
-                        '${item.vacantUnitsCount}',
-                        'شاغرة',
-                      ),
-                    ],
-                  ),
                 ],
               ),
             ),
@@ -3284,6 +3193,14 @@ class _ProjectAssetDetailsScreenState extends State<ProjectAssetDetailsScreen> {
     );
   }
 
+  /// هل تنتمي الوحدة إلى النوع (أو الحالة) المفتوح من بطاقة الوحدات؟
+  bool _unitMatchesOpenType(_PropertyUnit unit) {
+    final open = _openUnitType;
+    if (open == null) return true;
+    if (open == _kVacantUnitsKey) return unit.status == 'شاغرة';
+    return unit.type == open;
+  }
+
   Widget _buildRealEstateTabContent(_AssetItem item) {
     switch (_selectedTab) {
       case 0: // الوحدات
@@ -3299,22 +3216,54 @@ class _ProjectAssetDetailsScreenState extends State<ProjectAssetDetailsScreen> {
         return Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            for (final entry in groups.entries) ...[
-              _MultiUnitContractCard(
-                units: entry.value,
-                contract: _activeContractForUnit(entry.value.first.unitKey)!,
-                onTap: () => _openMultiUnitContractSummary(entry.value),
+            // تركيبة العقار: عدد كل نوع وحدة + الشاغر، مبنية من الوحدات
+            // نفسها فتشمل أي نوع يُضاف لاحقًا. كانت أعلى الصفحة بعيدة عن
+            // الوحدات التي تصفها.
+            _UnitsCompositionCard(
+              units: item.units,
+              selectedType: _openUnitType,
+              // الضغط على نوع يفتح وحداته أسفل البطاقة، والضغط عليه ثانية
+              // يعيد عرض كل الوحدات.
+              onSelectType: (type) => setState(
+                () => _openUnitType = _openUnitType == type ? null : type,
               ),
-              const SizedBox(height: 8),
-            ],
-            for (var i = 0; i < item.units.length; i++) ...[
-              if (!groupedUnitKeys.contains(item.units[i].unitKey)) ...[
-                _UnitCard(
-                  unit: item.units[i],
-                  onToggleStatus: () => _toggleUnitStatus(i),
-                  onTap: () => _openUnitDetails(i),
+            ),
+            const SizedBox(height: 10),
+            // عند فتح نوع معيّن تُعرض وحداته وحدها (بما فيها المشمولة بعقد
+            // متعدد الوحدات)، وإلا فالعرض الكامل كما هو.
+            if (_openUnitType != null) ...[
+              for (var i = 0; i < item.units.length; i++) ...[
+                if (_unitMatchesOpenType(item.units[i])) ...[
+                  _UnitCard(
+                    unit: item.units[i],
+                    onToggleStatus: () => _toggleUnitStatus(i),
+                    onTap: () => _openUnitDetails(i),
+                  ),
+                  const SizedBox(height: 8),
+                ],
+              ],
+              if (!item.units.any(_unitMatchesOpenType))
+                const _DetailHintCard(
+                  message: 'لا توجد وحدات من هذا النوع حاليًا.',
+                ),
+            ] else ...[
+              for (final entry in groups.entries) ...[
+                _MultiUnitContractCard(
+                  units: entry.value,
+                  contract: _activeContractForUnit(entry.value.first.unitKey)!,
+                  onTap: () => _openMultiUnitContractSummary(entry.value),
                 ),
                 const SizedBox(height: 8),
+              ],
+              for (var i = 0; i < item.units.length; i++) ...[
+                if (!groupedUnitKeys.contains(item.units[i].unitKey)) ...[
+                  _UnitCard(
+                    unit: item.units[i],
+                    onToggleStatus: () => _toggleUnitStatus(i),
+                    onTap: () => _openUnitDetails(i),
+                  ),
+                  const SizedBox(height: 8),
+                ],
               ],
             ],
           ],
@@ -6098,88 +6047,72 @@ class _PropertyAnnexesEditor extends StatelessWidget {
 const String _kUnitApartment = 'شقة';
 const String _kUnitStudio = 'استديو';
 const String _kUnitShop = 'محل';
-const List<String> _kUnitTypes = [_kUnitApartment, _kUnitStudio, _kUnitShop];
+const String _kUnitOffice = 'مكتب';
+const String _kUnitWarehouse = 'مستودع';
+const String _kUnitRoom = 'غرفة';
+const String _kUnitParking = 'موقف';
+const String _kUnitFullFloor = 'دور كامل';
+const String _kUnitShowroom = 'معرض';
+const String _kUnitMezzanine = 'ميزانين';
+const List<String> _kUnitTypes = [
+  _kUnitApartment,
+  _kUnitStudio,
+  _kUnitFullFloor,
+  _kUnitRoom,
+  _kUnitShop,
+  _kUnitOffice,
+  _kUnitShowroom,
+  _kUnitMezzanine,
+  _kUnitWarehouse,
+  _kUnitParking,
+];
 
-/// هل يملك هذا النوع عدد غرف قابلًا للإدخال؟ (الاستديو لا يملك).
-bool _unitTypeHasRooms(String type) => type == _kUnitApartment;
+/// هل يملك هذا النوع عدد غرف قابلًا للإدخال؟ (الشقة والمكتب فقط).
+bool _unitTypeHasRooms(String type) =>
+    type == _kUnitApartment || type == _kUnitOffice || type == _kUnitFullFloor;
 
-/// هل هذا النوع سكني (له دورات مياه وموقف)؟ الاستديو والشقة نعم، المحل لا.
+/// هل لهذا النوع دورات مياه وموقف؟ السكني والمكتب نعم، أما المحل
+/// والمستودع والموقف فلا.
 bool _unitTypeIsResidential(String type) =>
-    type == _kUnitApartment || type == _kUnitStudio;
+    type == _kUnitApartment ||
+    type == _kUnitStudio ||
+    type == _kUnitRoom ||
+    type == _kUnitOffice ||
+    type == _kUnitFullFloor;
 
-/// عدد الغرف المنطقي المخزَّن لكل نوع: الاستديو غرفة واحدة دائمًا.
+/// عدد الغرف المنطقي المخزَّن لكل نوع: الاستديو والغرفة غرفة واحدة دائمًا.
 int _unitTypeRoomsFor(String type, int enteredRooms) {
-  if (type == _kUnitStudio) return 1;
-  if (type == _kUnitApartment) return enteredRooms;
+  if (type == _kUnitStudio || type == _kUnitRoom) return 1;
+  if (type == _kUnitApartment ||
+      type == _kUnitOffice ||
+      type == _kUnitFullFloor) {
+    return enteredRooms;
+  }
   return 0;
 }
 
-String _defaultUnitName(String type) {
-  if (type == _kUnitShop) return 'محل جديد';
-  if (type == _kUnitStudio) return 'استديو جديد';
-  return 'شقة جديدة';
-}
-
 IconData _unitTypeIcon(String type) {
-  if (type == _kUnitShop) return Icons.storefront_rounded;
-  if (type == _kUnitStudio) return Icons.single_bed_rounded;
-  return Icons.apartment_rounded;
-}
-
-/// خيار اختيار نوع الوحدة (شقة/استديو/محل) على هيئة بطاقة قابلة للنقر.
-class _UnitTypeChoice extends StatelessWidget {
-  const _UnitTypeChoice({
-    required this.label,
-    required this.icon,
-    required this.selected,
-    required this.onTap,
-  });
-
-  final String label;
-  final IconData icon;
-  final bool selected;
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    return InkWell(
-      onTap: onTap,
-      borderRadius: BorderRadius.circular(12),
-      child: Container(
-        padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 6),
-        decoration: BoxDecoration(
-          color: selected
-              ? _kPropertyColor.withValues(alpha: 0.10)
-              : Colors.white,
-          borderRadius: BorderRadius.circular(12),
-          border: Border.all(
-            color: selected ? _kPropertyColor : const Color(0xFFE2E8F0),
-            width: selected ? 1.6 : 1,
-          ),
-        ),
-        child: Column(
-          mainAxisSize: MainAxisSize.min,
-          children: [
-            Icon(
-              icon,
-              size: 20,
-              color: selected ? _kPropertyColor : const Color(0xFF94A3B8),
-            ),
-            const SizedBox(height: 5),
-            Text(
-              label,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: TextStyle(
-                fontSize: 11.5,
-                fontWeight: selected ? FontWeight.w900 : FontWeight.w700,
-                color: selected ? _kPropertyColor : const Color(0xFF64748B),
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
+  switch (type) {
+    case _kUnitShop:
+      return Icons.storefront_rounded;
+    case _kUnitStudio:
+      return Icons.single_bed_rounded;
+    case _kUnitOffice:
+      return Icons.business_center_rounded;
+    case _kUnitWarehouse:
+      return Icons.warehouse_rounded;
+    case _kUnitRoom:
+      return Icons.meeting_room_rounded;
+    case _kUnitParking:
+      return Icons.local_parking_rounded;
+    case _kUnitFullFloor:
+      return Icons.layers_rounded;
+    case _kUnitMezzanine:
+      return Icons.unfold_less_double_rounded;
+    case _kUnitShowroom:
+      return Icons.store_mall_directory_rounded;
+    default:
+      return Icons.apartment_rounded;
   }
 }
 
@@ -6190,8 +6123,12 @@ class _PropertyUnit {
     this.unitNumber = '',
     this.area = '',
     this.rooms = 0,
+    this.halls = 0,
+    this.balconies = 0,
     this.bathrooms = 0,
+    this.parkingCount = 0,
     this.hasParking = false,
+    this.notes = '',
     this.status = 'شاغرة',
   });
 
@@ -6200,8 +6137,15 @@ class _PropertyUnit {
   final String unitNumber;
   final String area;
   final int rooms;
+
+  /// عدد الصالات والبلكونات وموقف السيارات الخاصة والملاحظات — من نموذج
+  /// "إضافة الوحدات والمرافق العامة".
+  final int halls;
+  final int balconies;
   final int bathrooms;
+  final int parkingCount;
   final bool hasParking;
+  final String notes;
   final String status;
 
   /// معرّف مستقر لهذه الوحدة داخل العقار، يُستخدم للربط مع عقود/دفعات
@@ -6216,8 +6160,12 @@ class _PropertyUnit {
     String? unitNumber,
     String? area,
     int? rooms,
+    int? halls,
+    int? balconies,
     int? bathrooms,
+    int? parkingCount,
     bool? hasParking,
+    String? notes,
     String? status,
   }) => _PropertyUnit(
     type: type ?? this.type,
@@ -6225,8 +6173,12 @@ class _PropertyUnit {
     unitNumber: unitNumber ?? this.unitNumber,
     area: area ?? this.area,
     rooms: rooms ?? this.rooms,
+    halls: halls ?? this.halls,
+    balconies: balconies ?? this.balconies,
     bathrooms: bathrooms ?? this.bathrooms,
+    parkingCount: parkingCount ?? this.parkingCount,
     hasParking: hasParking ?? this.hasParking,
+    notes: notes ?? this.notes,
     status: status ?? this.status,
   );
 
@@ -6236,8 +6188,12 @@ class _PropertyUnit {
     'unitNumber': unitNumber,
     'area': area,
     'rooms': rooms,
+    'halls': halls,
+    'balconies': balconies,
     'bathrooms': bathrooms,
+    'parkingCount': parkingCount,
     'hasParking': hasParking,
+    'notes': notes,
     'status': status,
   };
 
@@ -6247,8 +6203,12 @@ class _PropertyUnit {
     unitNumber: (map['unitNumber'] ?? '').toString(),
     area: (map['area'] ?? '').toString(),
     rooms: (map['rooms'] as num?)?.toInt() ?? 0,
+    halls: (map['halls'] as num?)?.toInt() ?? 0,
+    balconies: (map['balconies'] as num?)?.toInt() ?? 0,
     bathrooms: (map['bathrooms'] as num?)?.toInt() ?? 0,
+    parkingCount: (map['parkingCount'] as num?)?.toInt() ?? 0,
     hasParking: map['hasParking'] == true,
+    notes: (map['notes'] ?? '').toString(),
     status: (map['status'] ?? 'شاغرة').toString(),
   );
 }
@@ -6461,6 +6421,7 @@ class _PropertyDraft {
     required this.mapLink,
     required this.quickAddEnabled,
     required this.units,
+    this.facilities = const [],
   });
 
   final String description;
@@ -6468,6 +6429,9 @@ class _PropertyDraft {
   final String mapLink;
   final bool quickAddEnabled;
   final List<_PropertyUnit> units;
+
+  /// المرافق العامة المختارة في خطوة البيانات — تُحفظ في ملحقات العقار.
+  final List<String> facilities;
 }
 
 // ============================================================
@@ -6621,8 +6585,7 @@ class _PropertyOwnershipStepScreenState
 }
 
 // ============================================================
-// خطوة 0-ب: نوع العقار — شبكة الأنواع كما في الفيديو المرجعي، مضافًا إليها
-// "استديو" ليطابق أنواع الوحدات المدعومة داخل العقار.
+// خطوة 0-ب: نوع العقار — شبكة الأنواع كما في الفيديو المرجعي.
 // ============================================================
 const List<Map<String, dynamic>> _propertyTypeOptions = [
   {'label': 'شقة', 'icon': Icons.apartment_rounded},
@@ -6715,20 +6678,26 @@ class _PropertyTypeGridScreenState extends State<_PropertyTypeGridScreen> {
                         children: [
                           Icon(
                             icon,
-                            size: 28,
+                            size: 30,
                             color: selected
                                 ? _kPropertyColor
                                 : const Color(0xFF64748B),
                           ),
                           const SizedBox(height: 8),
-                          Text(
-                            label,
-                            style: TextStyle(
-                              fontSize: 12,
-                              fontWeight: FontWeight.w800,
-                              color: selected
-                                  ? _kPropertyColor
-                                  : const Color(0xFF334155),
+                          Padding(
+                            padding: const EdgeInsets.symmetric(horizontal: 4),
+                            child: Text(
+                              label,
+                              textAlign: TextAlign.center,
+                              maxLines: 2,
+                              overflow: TextOverflow.ellipsis,
+                              style: TextStyle(
+                                fontSize: 13.5,
+                                fontWeight: FontWeight.w800,
+                                color: selected
+                                    ? _kPropertyColor
+                                    : const Color(0xFF172033),
+                              ),
                             ),
                           ),
                         ],
@@ -6739,7 +6708,7 @@ class _PropertyTypeGridScreenState extends State<_PropertyTypeGridScreen> {
               ),
             ),
             Padding(
-              padding: const EdgeInsets.fromLTRB(16, 0, 16, 24),
+              padding: const EdgeInsets.fromLTRB(16, 0, 16, 20),
               child: ElevatedButton(
                 onPressed: _selected == null
                     ? null
@@ -6766,8 +6735,120 @@ class _PropertyTypeGridScreenState extends State<_PropertyTypeGridScreen> {
   }
 }
 
+
+/// المرافق العامة المنطقية لكل نوع عقار — لا يُعرض مسبح مع "محل" ولا
+/// نادٍ رياضي مع "مستودع"؛ كل نوع يقترح مرافقه المعقولة فقط.
+List<String> _facilitiesForPropertyType(String type) {
+  switch (type) {
+    case 'عمارة':
+    case 'مجمع تجاري':
+      return const [
+        'مواقف سيارات عامة',
+        'المصعد',
+        'الدرج',
+        'المداخل / اللوبي',
+        'الممرات',
+        'السطح',
+        'غرفة الحارس',
+        'غرفة الكهرباء',
+        'غرفة الاتصالات',
+        'غرفة المياه والمضخات',
+        'خزانات المياه',
+        'غرفة النفايات',
+        'النادي الرياضي',
+        'المسبح',
+        'غرفة الخدمات',
+        'ميزانين',
+        'أخرى',
+      ];
+    case 'شقة':
+    case 'استديو':
+    case 'دور':
+    case 'غرفة':
+      return const [
+        'مواقف سيارات عامة',
+        'المصعد',
+        'الدرج',
+        'المداخل / اللوبي',
+        'الممرات',
+        'السطح',
+        'خزانات المياه',
+        'النادي الرياضي',
+        'المسبح',
+        'غرفة الخدمات',
+        'أخرى',
+      ];
+    case 'فيلا':
+    case 'شاليه':
+    case 'شاليهات':
+      return const [
+        'مواقف سيارات عامة',
+        'الحوش / الساحة',
+        'السطح',
+        'الدرج',
+        'غرفة الحارس',
+        'غرفة الكهرباء',
+        'خزانات المياه',
+        'المسبح',
+        'غرفة الخدمات',
+        'أخرى',
+      ];
+    case 'محل':
+    case 'معرض':
+      return const [
+        'مواقف سيارات عامة',
+        'المداخل / اللوبي',
+        'الممرات',
+        'غرفة الكهرباء',
+        'ميزانين',
+        'مستودع تخزين',
+        'غرفة الخدمات',
+        'أخرى',
+      ];
+    case 'مستودع':
+      return const [
+        'مواقف سيارات عامة',
+        'مكتب إداري',
+        'ميزانين',
+        'غرفة الكهرباء',
+        'غرفة الخدمات',
+        'غرفة الحارس',
+        'أخرى',
+      ];
+    case 'محطة':
+      return const [
+        'مواقف سيارات عامة',
+        'مكتب إداري',
+        'غرفة الكهرباء',
+        'خزانات المياه',
+        'مستودع تخزين',
+        'غرفة الخدمات',
+        'غرفة الحارس',
+        'أخرى',
+      ];
+    case 'أرض':
+      return const [
+        'الحوش / الساحة',
+        'غرفة الحارس',
+        'خزانات المياه',
+        'أخرى',
+      ];
+    default:
+      return const [
+        'مواقف سيارات عامة',
+        'غرفة الكهرباء',
+        'غرفة الخدمات',
+        'أخرى',
+      ];
+  }
+}
+
 class _AddPropertyStep1Screen extends StatefulWidget {
-  const _AddPropertyStep1Screen();
+  const _AddPropertyStep1Screen({required this.propertyType});
+
+  /// نوع العقار المختار في الخطوة السابقة — يظهر أعلى الشاشة وتُبنى عليه
+  /// قائمة المرافق العامة المنطقية.
+  final String propertyType;
 
   @override
   State<_AddPropertyStep1Screen> createState() =>
@@ -6775,6 +6856,8 @@ class _AddPropertyStep1Screen extends StatefulWidget {
 }
 
 class _AddPropertyStep1ScreenState extends State<_AddPropertyStep1Screen> {
+  /// المرافق العامة المختارة لهذا العقار.
+  final Set<String> _facilities = {};
   final _descriptionCtrl = TextEditingController();
   final _addressCtrl = TextEditingController();
   final _mapLinkCtrl = TextEditingController();
@@ -6836,7 +6919,9 @@ class _AddPropertyStep1ScreenState extends State<_AddPropertyStep1Screen> {
           ),
         ),
       );
-      if (result != null && mounted) Navigator.of(context).pop(result);
+      if (result != null && mounted) {
+        Navigator.of(context).pop(_withFacilities(result));
+      }
       return;
     }
 
@@ -6852,8 +6937,20 @@ class _AddPropertyStep1ScreenState extends State<_AddPropertyStep1Screen> {
         ),
       ),
     );
-    if (result != null && mounted) Navigator.of(context).pop(result);
+    if (result != null && mounted) {
+      Navigator.of(context).pop(_withFacilities(result));
+    }
   }
+
+  /// يضمّ المرافق المختارة إلى المسودة العائدة من شاشات المراجعة.
+  _PropertyDraft _withFacilities(_PropertyDraft draft) => _PropertyDraft(
+    description: draft.description,
+    address: draft.address,
+    mapLink: draft.mapLink,
+    quickAddEnabled: draft.quickAddEnabled,
+    units: draft.units,
+    facilities: _facilities.toList(growable: false),
+  );
 
   @override
   Widget build(BuildContext context) {
@@ -6885,6 +6982,112 @@ class _AddPropertyStep1ScreenState extends State<_AddPropertyStep1Screen> {
         child: ListView(
           padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
           children: [
+            // نوع العقار المختار — في الأعلى على اليمين وبخط واضح.
+            Align(
+              alignment: AlignmentDirectional.centerStart,
+              child: Container(
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 14,
+                  vertical: 9,
+                ),
+                decoration: BoxDecoration(
+                  color: _kPropertyColor.withValues(alpha: 0.08),
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(color: _kPropertyColor, width: 1.2),
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    const Icon(
+                      Icons.home_work_rounded,
+                      size: 20,
+                      color: _kPropertyColor,
+                    ),
+                    const SizedBox(width: 8),
+                    Text(
+                      'نوع العقار: ${widget.propertyType}',
+                      style: const TextStyle(
+                        fontSize: 15,
+                        fontWeight: FontWeight.w900,
+                        color: _kPropertyColor,
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+            const SizedBox(height: 14),
+            // المرافق العامة المنطقية لهذا النوع فقط: محل بلا مسبح،
+            // ومستودع بمكتب إداري وميزانين... حسب علاقات كل نوع.
+            _propertyFieldLabel('المرافق العامة (اختياري)'),
+            const SizedBox(height: 8),
+            Wrap(
+              spacing: 8,
+              runSpacing: 8,
+              children: [
+                for (final facility in _facilitiesForPropertyType(
+                  widget.propertyType,
+                ))
+                  Builder(
+                    builder: (context) {
+                      final selected = _facilities.contains(facility);
+                      return InkWell(
+                        key: ValueKey('property-facility-$facility'),
+                        onTap: () => setState(() {
+                          if (!_facilities.remove(facility)) {
+                            _facilities.add(facility);
+                          }
+                        }),
+                        borderRadius: BorderRadius.circular(12),
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 11,
+                            vertical: 8,
+                          ),
+                          decoration: BoxDecoration(
+                            color: selected
+                                ? _kPropertyColor.withValues(alpha: 0.08)
+                                : Colors.white,
+                            borderRadius: BorderRadius.circular(12),
+                            border: Border.all(
+                              color: selected
+                                  ? _kPropertyColor
+                                  : const Color(0xFFE1E7EF),
+                              width: selected ? 1.5 : 1,
+                            ),
+                          ),
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            children: [
+                              Icon(
+                                selected
+                                    ? Icons.check_circle_rounded
+                                    : Icons.add_circle_outline_rounded,
+                                size: 16,
+                                color: selected
+                                    ? _kPropertyColor
+                                    : const Color(0xFF94A3B8),
+                              ),
+                              const SizedBox(width: 6),
+                              Text(
+                                facility,
+                                style: TextStyle(
+                                  fontSize: 12,
+                                  fontWeight: FontWeight.w800,
+                                  color: selected
+                                      ? _kPropertyColor
+                                      : const Color(0xFF172033),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      );
+                    },
+                  ),
+              ],
+            ),
+            const SizedBox(height: 18),
             _propertyFieldLabel('الوصف'),
             const SizedBox(height: 6),
             TextField(
@@ -7041,26 +7244,49 @@ class _AddPropertyStep1ScreenState extends State<_AddPropertyStep1Screen> {
 
 Widget _propertyFieldLabel(String text) => Align(
   alignment: Alignment.centerRight,
-  child: Text(
-    text,
-    textAlign: TextAlign.right,
-    style: const TextStyle(
-      fontSize: 12,
-      fontWeight: FontWeight.w800,
-      color: Color(0xFF334155),
+  child: Padding(
+    padding: const EdgeInsets.only(right: 2),
+    child: Text(
+      text,
+      textAlign: TextAlign.right,
+      style: const TextStyle(
+        fontSize: 12.5,
+        fontWeight: FontWeight.w800,
+        color: Color(0xFF334155),
+      ),
     ),
   ),
 );
 
-InputDecoration _propertyInputDecoration(String hint) => InputDecoration(
-  hintText: hint,
-  filled: true,
-  fillColor: Colors.white,
-  border: OutlineInputBorder(
-    borderRadius: BorderRadius.circular(12),
-    borderSide: const BorderSide(color: Color(0xFFDCE5EF)),
-  ),
-);
+/// حقول شاشات "إضافة عقار / نشاط تجاري / معدة".
+///
+/// كانت تُملأ بالأبيض فوق صفحة بيضاء، وتعرّف `border` وحده — بينما Flutter
+/// يستعمل `enabledBorder` في الحالة العادية، وسِمة التطبيق تجعله بلا حدّ.
+/// النتيجة: حقول لا يُرى لها أثر إطلاقًا، فلا يعرف المستخدم أين يكتب.
+/// الآن هي بنفس شكل حقول التطبيق كلها: ممتلئة برمادي فاتح، نصف قطر موحّد،
+/// وحدّ يظهر بلون التمييز عند التركيز.
+InputDecoration _propertyInputDecoration(String hint) {
+  OutlineInputBorder border([Color? color]) => OutlineInputBorder(
+    borderRadius: BorderRadius.circular(AppTheme.rField),
+    borderSide: color == null
+        ? BorderSide.none
+        : BorderSide(color: color, width: 1.4),
+  );
+
+  return InputDecoration(
+    hintText: hint,
+    hintStyle: const TextStyle(fontSize: 12.5, color: AppTheme.muted),
+    filled: true,
+    fillColor: AppTheme.field,
+    contentPadding: const EdgeInsets.symmetric(horizontal: 14, vertical: 14),
+    border: border(),
+    enabledBorder: border(),
+    disabledBorder: border(),
+    focusedBorder: border(const Color(0xFF047857)),
+    errorBorder: border(AppTheme.danger),
+    focusedErrorBorder: border(AppTheme.danger),
+  );
+}
 
 /// يحاول استخراج الإحداثيات (خط العرض، خط الطول) من رابط خرائط جوجل الذي
 /// يلصقه المستخدم — يدعم صيغ "@lat,lng"، "q=lat,lng"، "ll=lat,lng"،
@@ -8096,6 +8322,170 @@ class _AssetHighlightTile {
   final IconData icon;
   final String value;
   final String label;
+}
+
+/// مفتاح "الشاغرة" داخل بطاقة الوحدات — حالة لا نوع.
+const String _kVacantUnitsKey = '__vacant';
+
+/// بطاقة "الوحدات" أعلى تبويب الوحدات: عدد كل نوع موجود فعلًا + الشاغر،
+/// محسوبة من الوحدات نفسها فتشمل أي نوع جديد (مستودع، مكتب، غرفة...).
+/// والضغط على أي نوع يفتح وحداته أسفل البطاقة.
+class _UnitsCompositionCard extends StatelessWidget {
+  const _UnitsCompositionCard({
+    required this.units,
+    required this.selectedType,
+    required this.onSelectType,
+  });
+
+  final List<_PropertyUnit> units;
+  final String? selectedType;
+  final ValueChanged<String> onSelectType;
+
+  @override
+  Widget build(BuildContext context) {
+    final counts = <String, int>{};
+    for (final unit in units) {
+      counts[unit.type] = (counts[unit.type] ?? 0) + 1;
+    }
+    final vacant = units.where((u) => u.status == 'شاغرة').length;
+    final entries =
+        <({IconData icon, String value, String label, Color color, String key})>[
+          for (final type in _kUnitTypes)
+            if ((counts[type] ?? 0) > 0)
+              (
+                icon: _unitTypeIcon(type),
+                value: '${counts[type]}',
+                label: type,
+                color: _kPropertyColor,
+                key: type,
+              ),
+          // أي نوع قديم محفوظ خارج القائمة الحالية لا يختفي من العدّ.
+          for (final entry in counts.entries)
+            if (!_kUnitTypes.contains(entry.key))
+              (
+                icon: Icons.dashboard_customize_rounded,
+                value: '${entry.value}',
+                label: entry.key,
+                color: _kPropertyColor,
+                key: entry.key,
+              ),
+          (
+            icon: Icons.meeting_room_outlined,
+            value: '$vacant',
+            label: 'شاغرة',
+            color: const Color(0xFFD97706),
+            key: _kVacantUnitsKey,
+          ),
+        ];
+
+    return Container(
+      decoration: BoxDecoration(
+        color: AppTheme.surface,
+        borderRadius: BorderRadius.circular(AppTheme.rField),
+      ),
+      padding: const EdgeInsets.fromLTRB(12, 10, 12, 12),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Row(
+            children: [
+              const Icon(
+                Icons.grid_view_rounded,
+                size: 16,
+                color: _kPropertyColor,
+              ),
+              const SizedBox(width: 6),
+              const Expanded(
+                child: Text(
+                  'الوحدات',
+                  style: TextStyle(
+                    fontSize: 12.5,
+                    fontWeight: FontWeight.w900,
+                    color: Color(0xFF0F172A),
+                  ),
+                ),
+              ),
+              Text(
+                selectedType == null
+                    ? '${units.length} وحدة'
+                    : 'اضغط مرة أخرى لعرض الكل',
+                style: const TextStyle(
+                  fontSize: 11,
+                  fontWeight: FontWeight.w800,
+                  color: Color(0xFF64748B),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 10),
+          Wrap(
+            spacing: 8,
+            runSpacing: 8,
+            children: [
+              for (final entry in entries)
+                Material(
+                  color: selectedType == entry.key
+                      ? entry.color.withValues(alpha: 0.12)
+                      : Colors.white,
+                  borderRadius: BorderRadius.circular(12),
+                  clipBehavior: Clip.antiAlias,
+                  child: InkWell(
+                    onTap: () => onSelectType(entry.key),
+                    child: Container(
+                      decoration: BoxDecoration(
+                        borderRadius: BorderRadius.circular(12),
+                        border: Border.all(
+                          color: selectedType == entry.key
+                              ? entry.color
+                              : Colors.transparent,
+                          width: 1.2,
+                        ),
+                      ),
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 10,
+                        vertical: 8,
+                      ),
+                      child: Row(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(entry.icon, size: 15, color: entry.color),
+                          const SizedBox(width: 6),
+                          Text(
+                            entry.value,
+                            style: TextStyle(
+                              fontSize: 12.5,
+                              fontWeight: FontWeight.w900,
+                              color: entry.color,
+                            ),
+                          ),
+                          const SizedBox(width: 4),
+                          Text(
+                            entry.label,
+                            style: const TextStyle(
+                              fontSize: 10.5,
+                              fontWeight: FontWeight.w700,
+                              color: Color(0xFF475569),
+                            ),
+                          ),
+                          const SizedBox(width: 3),
+                          Icon(
+                            selectedType == entry.key
+                                ? Icons.expand_less_rounded
+                                : Icons.expand_more_rounded,
+                            size: 15,
+                            color: const Color(0xFF94A3B8),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ),
+                ),
+            ],
+          ),
+        ],
+      ),
+    );
+  }
 }
 
 class _AssetHighlightBarRow extends StatelessWidget {
@@ -11480,4 +11870,562 @@ class _AddEquipmentScreenState extends State<_AddEquipmentScreen> {
       ),
     );
   }
+}
+
+// ============================================================
+// شاشة "إضافة الوحدات والمرافق العامة" — حسب ملف "ادخال الوحدات":
+// القائمة على اليمين ثابتة (أنواع الوحدات ثم المرافق العامة)، والضغط على
+// أي بند يفتح نموذجه في اللوحة على اليسار. لكل نوع زر حفظ خاص به، ومسودة
+// تُحفظ تلقائيًا كل دقيقتين حتى لا تضيع الإدخالات الكثيرة.
+// ============================================================
+
+const List<String> _kFacilityLabels = [
+  'مواقف سيارات عامة',
+  'المصعد',
+  'الدرج',
+  'المداخل / اللوبي',
+  'الممرات',
+  'السطح',
+  'الحوش / الساحة',
+  'غرفة الحارس',
+  'غرفة الكهرباء',
+  'غرفة الاتصالات',
+  'غرفة المياه والمضخات',
+  'خزانات المياه',
+  'غرفة النفايات',
+  'النادي الرياضي',
+  'المسبح',
+  'غرفة الخدمات',
+  'أخرى',
+];
+
+/// حقول نموذج نوع واحد (وحدة أو مرفق) — تبقى حيّة عند التنقل بين الأنواع.
+class _UnitEntryForm {
+  final count = TextEditingController();
+  final name = TextEditingController();
+  final firstNumber = TextEditingController(text: '1');
+  final area = TextEditingController();
+  final rooms = TextEditingController();
+  final halls = TextEditingController();
+  final balconies = TextEditingController();
+  final bathrooms = TextEditingController();
+  final parking = TextEditingController();
+  final notes = TextEditingController();
+  bool quickAdd = true;
+
+  void dispose() {
+    for (final controller in controllers) {
+      controller.dispose();
+    }
+  }
+
+  List<TextEditingController> get controllers => [
+    count,
+    name,
+    firstNumber,
+    area,
+    rooms,
+    halls,
+    balconies,
+    bathrooms,
+    parking,
+    notes,
+  ];
+
+  Map<String, dynamic> toDraft() => {
+    'count': count.text,
+    'name': name.text,
+    'firstNumber': firstNumber.text,
+    'area': area.text,
+    'rooms': rooms.text,
+    'halls': halls.text,
+    'balconies': balconies.text,
+    'bathrooms': bathrooms.text,
+    'parking': parking.text,
+    'notes': notes.text,
+    'quickAdd': quickAdd,
+  };
+
+  void restore(Map<String, dynamic> draft) {
+    count.text = (draft['count'] ?? '').toString();
+    name.text = (draft['name'] ?? '').toString();
+    firstNumber.text = (draft['firstNumber'] ?? '1').toString();
+    area.text = (draft['area'] ?? '').toString();
+    rooms.text = (draft['rooms'] ?? '').toString();
+    halls.text = (draft['halls'] ?? '').toString();
+    balconies.text = (draft['balconies'] ?? '').toString();
+    bathrooms.text = (draft['bathrooms'] ?? '').toString();
+    parking.text = (draft['parking'] ?? '').toString();
+    notes.text = (draft['notes'] ?? '').toString();
+    quickAdd = draft['quickAdd'] != false;
+  }
+}
+
+class _UnitsEntryScreen extends StatefulWidget {
+  const _UnitsEntryScreen({
+    required this.assetKey,
+    required this.existingUnits,
+    required this.existingAnnexes,
+    required this.onCommit,
+  });
+
+  /// معرّف ثابت للعقار تُخزَّن به المسودة محليًا.
+  final String assetKey;
+  final List<_PropertyUnit> existingUnits;
+  final Map<String, int> existingAnnexes;
+
+  /// يُستدعى عند كل حفظ نوع: وحدات جديدة تُضاف، ومرافق تُحدَّث أعدادها،
+  /// وسطر سجل يوثّق ما حدث (يشمل ملاحظات المرافق).
+  final void Function(
+    List<_PropertyUnit> newUnits,
+    Map<String, int> annexes,
+    String logLine,
+  )
+  onCommit;
+
+  @override
+  State<_UnitsEntryScreen> createState() => _UnitsEntryScreenState();
+}
+
+class _UnitsEntryScreenState extends State<_UnitsEntryScreen> {
+  final Map<String, _UnitEntryForm> _forms = {};
+  String _selected = _kUnitApartment;
+  Timer? _autoSaveTimer;
+  DateTime? _lastAutoSave;
+  final Set<String> _savedTypes = {};
+
+  static const _draftPrefix = 'units_entry_draft_v1_';
+
+  bool get _isFacility => _kFacilityLabels.contains(_selected);
+
+  _UnitEntryForm get _form => _forms.putIfAbsent(_selected, _UnitEntryForm.new);
+
+  @override
+  void initState() {
+    super.initState();
+    _restoreDraft();
+    // حفظ تلقائي كل دقيقتين — مع عدد كبير من الوحدات لا يضيع المدخل
+    // شيئًا لو خرج أو انقطع التطبيق.
+    _autoSaveTimer = Timer.periodic(
+      const Duration(minutes: 2),
+      (_) => _saveDraft(),
+    );
+  }
+
+  @override
+  void dispose() {
+    _autoSaveTimer?.cancel();
+    // حفظ أخير عند الخروج بدل انتظار الدورة القادمة.
+    _saveDraft();
+    for (final form in _forms.values) {
+      form.dispose();
+    }
+    super.dispose();
+  }
+
+  Future<void> _saveDraft() async {
+    try {
+      // تُلتقط القيم قبل أي await: عند الاستدعاء من dispose تكون الحقول
+      // على وشك التخلص منها، فلا يصح قراءتها بعد الانتظار.
+      final data = {
+        for (final entry in _forms.entries) entry.key: entry.value.toDraft(),
+      };
+      final prefs = await SharedPreferences.getInstance();
+      await prefs.setString(
+        '$_draftPrefix${widget.assetKey}',
+        jsonEncode(data),
+      );
+      if (!mounted) return;
+      setState(() => _lastAutoSave = DateTime.now());
+    } catch (_) {
+      // فشل الحفظ المحلي لا يوقف الإدخال.
+    }
+  }
+
+  Future<void> _restoreDraft() async {
+    try {
+      final prefs = await SharedPreferences.getInstance();
+      final raw = prefs.getString('$_draftPrefix${widget.assetKey}');
+      if (raw == null || raw.isEmpty) return;
+      final decoded = jsonDecode(raw);
+      if (decoded is! Map) return;
+      for (final entry in decoded.entries) {
+        if (entry.value is Map) {
+          _forms
+              .putIfAbsent(entry.key.toString(), _UnitEntryForm.new)
+              .restore(Map<String, dynamic>.from(entry.value as Map));
+        }
+      }
+      if (mounted) setState(() {});
+    } catch (_) {
+      // مسودة تالفة تُتجاهل.
+    }
+  }
+
+  Future<void> _clearDraftFor(String type) async {
+    // بعد حفظ النوع في العقار تُصفَّر خاناته حتى لا يُضاف مرتين بالخطأ.
+    _forms[type]?.dispose();
+    _forms.remove(type);
+    await _saveDraft();
+  }
+
+  int _intOf(TextEditingController controller) =>
+      int.tryParse(controller.text.trim()) ?? 0;
+
+  /// حفظ النوع المفتوح: وحدات تُولَّد وتُضاف للعقار، ومرفق يُحدَّث عدده.
+  void _commitSelected() {
+    final form = _form;
+    final type = _selected;
+    final count = _intOf(form.count);
+    if (count <= 0) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('أدخل العدد أولًا')),
+      );
+      return;
+    }
+
+    if (_isFacility) {
+      final note = form.notes.text.trim();
+      widget.onCommit(
+        const [],
+        {type: count},
+        'تمت إضافة مرفق: $type (العدد $count)'
+        '${note.isEmpty ? '' : ' — $note'}',
+      );
+    } else {
+      final first = int.tryParse(form.firstNumber.text.trim()) ?? 1;
+      final baseName = form.name.text.trim().isEmpty
+          ? type
+          : form.name.text.trim();
+      final showFull = type == _kUnitApartment || type == _kUnitFullFloor;
+      final units = <_PropertyUnit>[
+        for (var i = 0; i < count; i++)
+          _PropertyUnit(
+            type: type,
+            name: count == 1 ? baseName : '$baseName ${first + i}',
+            unitNumber: '${first + i}',
+            area: form.area.text.trim(),
+            rooms: _unitTypeRoomsFor(type, _intOf(form.rooms)),
+            halls: showFull ? _intOf(form.halls) : 0,
+            balconies: showFull ? _intOf(form.balconies) : 0,
+            bathrooms: _unitTypeIsResidential(type)
+                ? _intOf(form.bathrooms)
+                : 0,
+            parkingCount: _unitTypeIsResidential(type)
+                ? _intOf(form.parking)
+                : 0,
+            hasParking:
+                _unitTypeIsResidential(type) && _intOf(form.parking) > 0,
+            notes: form.notes.text.trim(),
+          ),
+      ];
+      widget.onCommit(
+        units,
+        const {},
+        'تمت إضافة $count × $type من نموذج إدخال الوحدات',
+      );
+    }
+    setState(() {
+      _savedTypes.add(type);
+    });
+    _clearDraftFor(type);
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(content: Text('تم حفظ $type في العقار')),
+    );
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Directionality(
+      textDirection: TextDirection.rtl,
+      child: Scaffold(
+        backgroundColor: AppTheme.page,
+        appBar: AppBar(
+          title: const Text(
+            'إضافة الوحدات والمرافق العامة',
+            style: TextStyle(fontSize: 15, fontWeight: FontWeight.w900),
+          ),
+          centerTitle: true,
+          backgroundColor: AppTheme.page,
+          surfaceTintColor: Colors.transparent,
+          elevation: 0,
+          leading: IconButton(
+            onPressed: () => Navigator.of(context).pop(),
+            icon: const Icon(Icons.arrow_forward_ios_rounded, size: 18),
+          ),
+          actions: [
+            // زر حفظ المسودة يدويًا — نفس ما يفعله المؤقّت كل دقيقتين.
+            IconButton(
+              key: const ValueKey('units-entry-save-draft'),
+              tooltip: 'حفظ المسودة الآن',
+              onPressed: _saveDraft,
+              icon: const Icon(Icons.save_outlined, size: 20),
+            ),
+          ],
+        ),
+        body: Column(
+          children: [
+            if (_lastAutoSave != null)
+              Container(
+                width: double.infinity,
+                color: const Color(0xFFE7F3F0),
+                padding: const EdgeInsets.symmetric(
+                  horizontal: 14,
+                  vertical: 5,
+                ),
+                child: Text(
+                  'آخر حفظ تلقائي للمسودة: '
+                  '${_lastAutoSave!.hour.toString().padLeft(2, '0')}:${_lastAutoSave!.minute.toString().padLeft(2, '0')}'
+                  ' — يتكرر كل دقيقتين',
+                  style: const TextStyle(
+                    fontSize: 10.5,
+                    fontWeight: FontWeight.w700,
+                    color: Color(0xFF087F6A),
+                  ),
+                ),
+              ),
+            Expanded(
+              child: Row(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  // القائمة الثابتة على اليمين: الوحدات ثم المرافق.
+                  SizedBox(width: 128, child: _buildTypesList()),
+                  const VerticalDivider(width: 1, color: Color(0xFFE3E9EB)),
+                  // اللوحة على اليسار: نموذج النوع المفتوح.
+                  Expanded(child: _buildFormPanel()),
+                ],
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  Widget _buildTypesList() {
+    Widget entry(String label, {required bool facility}) {
+      final selected = _selected == label;
+      final existingCount = facility
+          ? (widget.existingAnnexes[label] ?? 0)
+          : widget.existingUnits.where((u) => u.type == label).length;
+      return InkWell(
+        key: ValueKey('units-entry-type-$label'),
+        onTap: () => setState(() => _selected = label),
+        child: Container(
+          color: selected
+              ? const Color(0xFF047857).withValues(alpha: 0.08)
+              : Colors.transparent,
+          padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 11),
+          child: Row(
+            children: [
+              Icon(
+                facility
+                    ? Icons.apartment_outlined
+                    : _unitTypeIcon(label),
+                size: 15,
+                color: selected
+                    ? const Color(0xFF047857)
+                    : AppTheme.muted,
+              ),
+              const SizedBox(width: 6),
+              Expanded(
+                child: Text(
+                  label,
+                  maxLines: 2,
+                  overflow: TextOverflow.ellipsis,
+                  style: TextStyle(
+                    fontSize: 10.5,
+                    height: 1.25,
+                    fontWeight: selected ? FontWeight.w900 : FontWeight.w700,
+                    color: selected
+                        ? const Color(0xFF047857)
+                        : AppTheme.title,
+                  ),
+                ),
+              ),
+              if (existingCount > 0 || _savedTypes.contains(label))
+                Text(
+                  '$existingCount',
+                  style: const TextStyle(
+                    fontSize: 9.5,
+                    fontWeight: FontWeight.w900,
+                    color: Color(0xFF087F6A),
+                  ),
+                ),
+            ],
+          ),
+        ),
+      );
+    }
+
+    Widget header(String text) => Padding(
+      padding: const EdgeInsets.fromLTRB(10, 12, 10, 4),
+      child: Text(
+        text,
+        style: const TextStyle(
+          fontSize: 10,
+          fontWeight: FontWeight.w900,
+          color: AppTheme.muted,
+        ),
+      ),
+    );
+
+    return ListView(
+      padding: const EdgeInsets.only(bottom: 24),
+      children: [
+        header('الوحدات'),
+        for (final type in const [
+          _kUnitApartment,
+          _kUnitStudio,
+          _kUnitFullFloor,
+          _kUnitOffice,
+          _kUnitShop,
+          _kUnitShowroom,
+          _kUnitMezzanine,
+          _kUnitWarehouse,
+          _kUnitParking,
+        ])
+          entry(type, facility: false),
+        const Divider(height: 16),
+        header('المرافق العامة'),
+        for (final facility in _kFacilityLabels)
+          entry(facility, facility: true),
+      ],
+    );
+  }
+
+  Widget _buildFormPanel() {
+    final form = _form;
+    final type = _selected;
+    final facility = _isFacility;
+    // موقف السيارات (كوحدة) والمرافق: العدد والملاحظات فقط.
+    final countOnly = facility || type == _kUnitParking;
+    final hasRooms = _unitTypeHasRooms(type);
+    final residential = _unitTypeIsResidential(type);
+    final showFull = type == _kUnitApartment || type == _kUnitFullFloor;
+
+    Widget field(
+      String label,
+      TextEditingController controller, {
+      bool number = true,
+      int maxLines = 1,
+    }) {
+      return Padding(
+        padding: const EdgeInsets.only(bottom: 10),
+        child: TextField(
+          controller: controller,
+          keyboardType: number ? TextInputType.number : TextInputType.text,
+          maxLines: maxLines,
+          textAlign: TextAlign.right,
+          decoration: _propertyInputDecorationShared(label),
+        ),
+      );
+    }
+
+    final first = int.tryParse(form.firstNumber.text.trim()) ?? 1;
+    final count = _intOf(form.count);
+
+    return ListView(
+      key: ValueKey('units-entry-form-$type'),
+      padding: const EdgeInsets.fromLTRB(14, 14, 14, 28),
+      children: [
+        Row(
+          children: [
+            Icon(
+              facility ? Icons.apartment_outlined : _unitTypeIcon(type),
+              size: 18,
+              color: const Color(0xFF047857),
+            ),
+            const SizedBox(width: 7),
+            Expanded(
+              child: Text(
+                facility ? 'مرفق: $type' : 'إعدادات $type',
+                style: const TextStyle(
+                  fontSize: 14,
+                  fontWeight: FontWeight.w900,
+                  color: Color(0xFF0F172A),
+                ),
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 12),
+        field(facility ? 'العدد' : 'عدد ($type)', form.count),
+        if (!countOnly) ...[
+          SwitchListTile.adaptive(
+            contentPadding: EdgeInsets.zero,
+            dense: true,
+            title: const Text(
+              'تفعيل الإضافة السريعة',
+              style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.w800),
+            ),
+            subtitle: const Text(
+              'سنعبّئ الوحدات تلقائيًا حسب الإعدادات التالية، والتفاصيل تُطبَّق على كل الوحدات. بلا تفعيل يكون الإدخال يدويًا وحدة وحدة.',
+              style: TextStyle(fontSize: 10.5, height: 1.4),
+            ),
+            value: form.quickAdd,
+            onChanged: (value) => setState(() => form.quickAdd = value),
+          ),
+          const SizedBox(height: 6),
+          field('اسم $type', form.name, number: false),
+          field('رقم أول $type', form.firstNumber),
+          if (count > 0)
+            Padding(
+              padding: const EdgeInsets.only(bottom: 10),
+              child: Text(
+                'الترقيم من $first إلى ${first + count - 1}',
+                style: const TextStyle(
+                  fontSize: 11,
+                  fontWeight: FontWeight.w700,
+                  color: Color(0xFF64748B),
+                ),
+              ),
+            ),
+          field('مساحة كل وحدة', form.area),
+          if (hasRooms) field('عدد الغرف', form.rooms),
+          if (showFull) field('عدد الصالات', form.halls),
+          if (showFull) field('عدد البلكونات', form.balconies),
+          if (residential) field('عدد الحمامات', form.bathrooms),
+          if (residential)
+            field('عدد مواقف السيارات الخاصة', form.parking),
+        ],
+        field('الملاحظات', form.notes, number: false, maxLines: 3),
+        const SizedBox(height: 6),
+        FilledButton.icon(
+          key: ValueKey('units-entry-commit-$type'),
+          onPressed: _commitSelected,
+          icon: const Icon(Icons.check_rounded, size: 18),
+          label: Text(facility ? 'إضافة المرفق' : 'إضافة $type'),
+          style: FilledButton.styleFrom(
+            backgroundColor: const Color(0xFF047857),
+            foregroundColor: Colors.white,
+            minimumSize: const Size.fromHeight(46),
+            shape: RoundedRectangleBorder(
+              borderRadius: BorderRadius.circular(AppTheme.rField),
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+/// زخرفة حقول شاشة إدخال الوحدات — حدود ظاهرة على نمط حقول العقارات.
+InputDecoration _propertyInputDecorationShared(String label) {
+  OutlineInputBorder border([Color? color]) => OutlineInputBorder(
+    borderRadius: BorderRadius.circular(AppTheme.rField),
+    borderSide: color == null
+        ? BorderSide.none
+        : BorderSide(color: color, width: 1.4),
+  );
+  return InputDecoration(
+    labelText: label,
+    filled: true,
+    fillColor: AppTheme.field,
+    isDense: true,
+    contentPadding: const EdgeInsets.symmetric(horizontal: 12, vertical: 12),
+    border: border(),
+    enabledBorder: border(),
+    focusedBorder: border(const Color(0xFF047857)),
+  );
 }

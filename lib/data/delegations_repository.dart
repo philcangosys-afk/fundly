@@ -10,22 +10,149 @@ import 'app_session.dart';
 class DelegationRecord {
   /// نطاقات التفويض — تطابق وحدات التطبيق الفعلية، فلا يُمنح تفويض على
   /// شيء غير موجود.
+  /// النطاقات الرئيسية — بأسمائها الحقيقية كما تظهر في التطبيق نفسه،
+  /// فلا يُمنح تفويض على قسم باسم مختصر لا وجود له في الواجهة.
   static const scopes = [
+    'كل الأقسام',
     'الالتزامات الشخصية',
     'الالتزامات المشتركة',
-    'العقارات والأنشطة',
-    'الأشخاص والجهات',
+    'إدارة الأشخاص والجهات',
+    'العقارات/الأنشطة التجارية/المعدات وأخرى',
     'المحافظ والمدفوعات',
-    'المستندات والتقارير',
+    'قوالب المستندات والتقارير والأرشيف',
+    'التنبيهات والكلندر ومراكز المتابعة',
+    'الإعدادات والتفويضات',
   ];
 
-  static const allPermissions = [
+  /// الأقسام الفرعية لكل نطاق رئيسي — تتيح تفويضًا أدقّ من "قسم كامل":
+  /// مثلاً تفويض على "المعدات" وحدها داخل العقارات والأنشطة.
+  static const subScopes = <String, List<String>>{
+    'الالتزامات الشخصية': [
+      'مالية',
+      'مستند',
+      'التنظيم والمتابعة',
+      'نمط الحياة',
+    ],
+    'الالتزامات المشتركة': [
+      'مالية',
+      'مستند',
+      'التنظيم والمتابعة',
+      'نمط الحياة',
+    ],
+    'إدارة الأشخاص والجهات': [
+      'الأفراد',
+      'الجهات والشركات',
+      'المستحقات والمدفوعات',
+      'مستندات الأشخاص والجهات',
+    ],
+    'العقارات/الأنشطة التجارية/المعدات وأخرى': [
+      'العقارات',
+      'الأنشطة التجارية',
+      'المعدات',
+      'العقود والإيجارات',
+    ],
+    'المحافظ والمدفوعات': [
+      'المحافظ',
+      'الحركات والتحويلات',
+      'المدفوعات المجدولة',
+    ],
+    'قوالب المستندات والتقارير والأرشيف': [
+      'قوالب المستندات والإيصالات',
+      'التقارير',
+      'الأرشيف',
+    ],
+    'التنبيهات والكلندر ومراكز المتابعة': [
+      'مركز التنبيهات',
+      'الكلندر الذكي',
+      'مراكز المتابعة',
+    ],
+    'الإعدادات والتفويضات': [
+      'الإعدادات العامة',
+      'التوقيع الإلكتروني والختم',
+      'منح تفويضات فرعية',
+    ],
+  };
+
+  /// الصلاحيات الأساسية بترتيب تصاعدي: اختيار صلاحية يعني ضمنًا كل ما
+  /// دونها (لا يُعقل "حذف" بلا "عرض")، وهذا هو تسلسل الصلاحيات.
+  static const orderedPermissions = [
     'عرض البيانات',
     'إضافة السجلات',
     'تعديل السجلات',
     'حذف السجلات',
-    'الموافقة على الطلبات',
   ];
+
+  /// صلاحيات إضافية مستقلة عن التسلسل، لكنها تتطلب "عرض البيانات".
+  static const extraPermissions = [
+    'الموافقة على الطلبات',
+    'تنفيذ المدفوعات والتحويلات',
+    'تصدير ومشاركة التقارير',
+    'إدارة المستندات والمرفقات',
+    'إدارة التنبيهات والمتابعة',
+    'منح تفويض فرعي',
+  ];
+
+  static const allPermissions = [
+    ...orderedPermissions,
+    ...extraPermissions,
+  ];
+
+  /// مستويات جاهزة تختصر الاختيار وتوضّح التدرّج.
+  static const permissionLevels = <String, List<String>>{
+    'اطّلاع فقط': ['عرض البيانات'],
+    'إدخال وتعديل': ['عرض البيانات', 'إضافة السجلات', 'تعديل السجلات'],
+    'إدارة كاملة': allPermissions,
+  };
+
+  /// يضيف كل الصلاحيات الأدنى للصلاحية المختارة (التسلسل)، ويضمن
+  /// "عرض البيانات" مع أي صلاحية إضافية.
+  static Set<String> applyHierarchy(Set<String> selected) {
+    final result = <String>{...selected};
+    var highest = -1;
+    for (var i = 0; i < orderedPermissions.length; i++) {
+      if (result.contains(orderedPermissions[i])) highest = i;
+    }
+    for (var i = 0; i <= highest; i++) {
+      result.add(orderedPermissions[i]);
+    }
+    if (result.isNotEmpty) result.add('عرض البيانات');
+    return result;
+  }
+
+  /// النطاق يُخزَّن نصًا واحدًا: "الرئيسي" أو "الرئيسي — فرع، فرع".
+  static const scopeSeparator = ' — ';
+
+  static String composeScope(String main, Iterable<String> subs) {
+    final list = subs.where((s) => s.trim().isNotEmpty).toList(growable: false);
+    if (list.isEmpty) return main;
+    return '$main$scopeSeparator${list.join('، ')}';
+  }
+
+  static String mainScopeOf(String? scope) {
+    if (scope == null || scope.trim().isEmpty) return scopes.first;
+    final main = scope.split(scopeSeparator).first.trim();
+    // أسماء قديمة محفوظة قبل توحيد المسميات الحقيقية.
+    const legacy = {
+      'العقارات والأنشطة': 'العقارات/الأنشطة التجارية/المعدات وأخرى',
+      'الأشخاص والجهات': 'إدارة الأشخاص والجهات',
+      'المستندات والتقارير': 'قوالب المستندات والتقارير والأرشيف',
+    };
+    final mapped = legacy[main] ?? main;
+    return scopes.contains(mapped) ? mapped : scopes.first;
+  }
+
+  static List<String> subScopesOf(String? scope) {
+    if (scope == null || !scope.contains(scopeSeparator)) return const [];
+    final main = mainScopeOf(scope);
+    final available = subScopes[main] ?? const <String>[];
+    return scope
+        .split(scopeSeparator)
+        .last
+        .split('،')
+        .map((part) => part.trim())
+        .where((part) => available.contains(part))
+        .toList(growable: false);
+  }
 
   final String? id;
   final String delegateName;
@@ -53,7 +180,8 @@ class DelegationRecord {
   // تخزين الحالة كحقل مستقل يجعلها تتقادم: تفويض انتهى أمس يبقى "نشطًا"
   // إلى أن يفتح أحدهم الصفحة ويحدّثه يدويًا.
 
-  bool get isEnded => endDate != null && endDate!.isBefore(DateTime.now());
+  bool get isEnded =>
+      endDate != null && endDate!.isBefore(DateTime.now());
 
   bool get isScheduled =>
       !isPaused && startDate != null && startDate!.isAfter(DateTime.now());

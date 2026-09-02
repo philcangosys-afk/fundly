@@ -582,7 +582,10 @@ class _PeopleManagementScreenState extends State<PeopleManagementScreen> {
   ///
   /// كان زر "المزيد" هنا يفتح نافذة **فلترة** لا علاقة لها بالمتابعة، فيرى
   /// المستخدم شيئًا مختلفًا تمامًا عمّا يراه في الالتزامات.
-  void _openFollowUpSheet(List<_PersonItem> people) {
+  /// مجموعات مركز المتابعة — مصدر واحد للبطاقة المصغّرة ولنافذة "المزيد"
+  /// معًا، فلا تختلف الأرقام بينهما كما كان يحدث حين كانت كل واحدة تُحسب
+  /// من استعلام مستقل.
+  List<FollowUpGroup> _followUpGroups(List<_PersonItem> people) {
     FollowUpEntry entryFor(_PersonItem person, String trailing) => FollowUpEntry(
       title: person.fullName,
       subtitle: person.categoryName,
@@ -594,10 +597,7 @@ class _PeopleManagementScreenState extends State<PeopleManagementScreen> {
       onTap: () => _openPersonDetails(person),
     );
 
-    showFollowUpCenterSheet(
-      context: context,
-      accent: const Color(0xFF7C3AED),
-      groups: [
+    return [
         FollowUpGroup(
           title: 'المستحقات',
           icon: Icons.account_balance_wallet_outlined,
@@ -690,7 +690,17 @@ class _PeopleManagementScreenState extends State<PeopleManagementScreen> {
             ),
           ],
         ),
-      ],
+      ];
+  }
+
+  void _openFollowUpSheet(List<_PersonItem> people) {
+    showFollowUpCenterSheet(
+      context: context,
+      accent: const Color(0xFF7C3AED),
+      title: _selectedTypeKey == 'all'
+          ? 'مركز المتابعة'
+          : 'متابعة ${_activeSearchFilterLabel()}',
+      groups: _followUpGroups(people),
     );
   }
 
@@ -1485,50 +1495,40 @@ class _PeopleManagementScreenState extends State<PeopleManagementScreen> {
                         // (متأخر/مستعجل/قريب) ولا all_people/all_entities،
                         // فكان الرأس يقول "الكل" بينما القائمة مُصفّاة.
                         : 'متابعة ${_activeSearchFilterLabel()}',
-                    accentColor: const Color(0xFF047857),
+                    // نفس لون الوحدة ونفس المؤشرات الثلاثة المبنية من
+                    // مجموعات مركز المتابعة نفسها — كالالتزامات الشخصية.
+                    accentColor: const Color(0xFF7C3AED),
                     onMore: () => _openFollowUpSheet(selectedPeople),
                     metrics: [
-                      ManagementMetricData(
-                        label: 'وثائق للمتابعة',
-                        count: selectedPeople
-                            .where(
-                              (person) => person.statusNote.contains('مستند'),
-                            )
-                            .length,
-                        icon: Icons.description_outlined,
-                        color: const Color(0xFFC73E4D),
-                      ),
-                      ManagementMetricData(
-                        label: 'مهام مفتوحة',
-                        count: selectedPeople.fold<int>(
-                          0,
-                          (count, person) => count + person.openTasks,
+                      for (final group in _followUpGroups(
+                        selectedPeople,
+                      ).take(3))
+                        ManagementMetricData(
+                          label: group.title,
+                          count: group.total,
+                          icon: group.icon,
+                          color: group.color,
                         ),
-                        icon: Icons.task_alt_rounded,
-                        color: const Color(0xFFB56A09),
-                      ),
-                      ManagementMetricData(
-                        label: 'مستحقات لك',
-                        count: selectedPeople
-                            .where((person) => person.dueToYou > 0)
-                            .length,
-                        icon: Icons.call_received_rounded,
-                        color: const Color(0xFF07835C),
-                      ),
-                      ManagementMetricData(
-                        label: 'مستحقات عليك',
-                        count: selectedPeople
-                            .where((person) => person.dueOnYou > 0)
-                            .length,
-                        icon: Icons.call_made_rounded,
-                        color: const Color(0xFF7956A8),
-                      ),
                     ],
                   ),
                 ),
               ),
             ),
-            // صف "الفئات" يبقى مثبَّتًا في الأعلى عند التمرير.
+            // عنوان "الفئات" يمرّ مع الصفحة، وشريط الشرائح وحده يثبت.
+            SliverToBoxAdapter(
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(16, 14, 16, 6),
+                child: const Text(
+                  'الفئات',
+                  textAlign: TextAlign.right,
+                  style: TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w900,
+                    color: Color(0xFF334155),
+                  ),
+                ),
+              ),
+            ),
             MeasuredPinnedHeader(
               child: Padding(
                 padding: const EdgeInsets.fromLTRB(16, 8, 16, 8),

@@ -1064,7 +1064,21 @@ class _SharedCommitmentsScreenState extends State<SharedCommitmentsScreen> {
                 ),
               ),
             ),
-            // صف "الفئات" يبقى مثبَّتًا في الأعلى عند التمرير.
+            // عنوان "الفئات" يمرّ مع الصفحة، وشريط الشرائح وحده يثبت.
+            SliverToBoxAdapter(
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(12, 14, 12, 6),
+                child: const Text(
+                  'الفئات',
+                  textAlign: TextAlign.right,
+                  style: TextStyle(
+                    fontSize: 13,
+                    fontWeight: FontWeight.w900,
+                    color: Color(0xFF334155),
+                  ),
+                ),
+              ),
+            ),
             MeasuredPinnedHeader(
               background: AppTheme.page,
               child: Padding(
