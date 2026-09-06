@@ -1,4 +1,6 @@
-import 'package:flutter/material.dart';
+import 'package:flutter/material.dart' hide Text, Align;
+import '../l10n/tr_widgets.dart';
+import '../l10n/app_language.dart';
 
 class EntryOverviewTile {
   const EntryOverviewTile({
@@ -46,7 +48,7 @@ class EntryOverviewCard extends StatelessWidget {
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
               Row(
-                textDirection: TextDirection.rtl,
+                textDirection: AppTr.uiDir,
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
                   Expanded(

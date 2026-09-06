@@ -1,4 +1,6 @@
-import 'package:flutter/material.dart';
+import 'package:flutter/material.dart' hide Text, Align;
+import '../l10n/tr_widgets.dart';
+import '../l10n/app_language.dart';
 
 import '../data/app_settings.dart';
 import '../data/home_dashboard_service.dart';
@@ -158,7 +160,7 @@ class _NotificationsCenterScreenState extends State<NotificationsCenterScreen> {
           if (_alerts.isNotEmpty)
             PopupMenuButton<String>(
               key: const ValueKey('notifications-read-menu'),
-              tooltip: 'التحكم بالتنبيهات',
+              tooltip: AppTr.tr('التحكم بالتنبيهات'),
               icon: const Icon(Icons.done_all_rounded),
               onSelected: (value) async {
                 if (value == 'read') {
@@ -178,10 +180,10 @@ class _NotificationsCenterScreenState extends State<NotificationsCenterScreen> {
                 );
               },
               itemBuilder: (context) => [
-                const PopupMenuItem(
+                PopupMenuItem(
                   value: 'read',
                   child: Directionality(
-                    textDirection: TextDirection.rtl,
+                    textDirection: AppTr.uiDir,
                     child: Row(
                       children: [
                         Icon(Icons.done_all_rounded, size: 19),
@@ -191,10 +193,10 @@ class _NotificationsCenterScreenState extends State<NotificationsCenterScreen> {
                     ),
                   ),
                 ),
-                const PopupMenuItem(
+                PopupMenuItem(
                   value: 'unread',
                   child: Directionality(
-                    textDirection: TextDirection.rtl,
+                    textDirection: AppTr.uiDir,
                     child: Row(
                       children: [
                         Icon(Icons.mark_email_unread_outlined, size: 19),
@@ -209,7 +211,7 @@ class _NotificationsCenterScreenState extends State<NotificationsCenterScreen> {
         ],
       ),
       body: Directionality(
-        textDirection: TextDirection.rtl,
+        textDirection: AppTr.uiDir,
         child: _isLoading
             ? const Center(child: CircularProgressIndicator())
             : ListView(

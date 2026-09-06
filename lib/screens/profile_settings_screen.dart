@@ -1,4 +1,6 @@
-import 'package:flutter/material.dart';
+import 'package:flutter/material.dart' hide Text, Align;
+import '../l10n/tr_widgets.dart';
+import '../l10n/app_language.dart';
 
 import '../data/app_settings.dart';
 import '../widgets/shared/app_design.dart';
@@ -56,7 +58,7 @@ class ProfileSettingsScreen extends StatelessWidget {
         scrolledUnderElevation: 0,
       ),
       body: Directionality(
-        textDirection: TextDirection.rtl,
+        textDirection: AppTr.uiDir,
         child: ListView(
           padding: const EdgeInsets.fromLTRB(16, 8, 16, 28),
           children: [

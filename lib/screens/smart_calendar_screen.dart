@@ -1,4 +1,6 @@
-import 'package:flutter/material.dart';
+import 'package:flutter/material.dart' hide Text, Align;
+import '../l10n/tr_widgets.dart';
+import '../l10n/app_language.dart';
 
 import '../data/calendar_items_store.dart';
 import '../data/home_dashboard_service.dart';
@@ -194,11 +196,11 @@ class _SmartCalendarScreenState extends State<SmartCalendarScreen> {
       isScrollControlled: true,
       backgroundColor: Colors.white,
       shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(20)),
+        borderRadius: BorderRadius.vertical(top: Radius.circular(AppTheme.rCard)),
       ),
       builder: (sheetContext) => StatefulBuilder(
         builder: (context, setSheetState) => Directionality(
-          textDirection: TextDirection.rtl,
+          textDirection: AppTr.uiDir,
           child: Padding(
             padding: EdgeInsets.fromLTRB(
               20,
@@ -260,8 +262,8 @@ class _SmartCalendarScreenState extends State<SmartCalendarScreen> {
                   TextField(
                     key: const ValueKey('calendar-record-title'),
                     controller: titleController,
-                    decoration: const InputDecoration(
-                      labelText: 'العنوان *',
+                    decoration: InputDecoration(
+                      labelText: AppTr.tr('العنوان *'),
                       border: OutlineInputBorder(),
                     ),
                   ),
@@ -270,8 +272,8 @@ class _SmartCalendarScreenState extends State<SmartCalendarScreen> {
                     controller: descriptionController,
                     minLines: 2,
                     maxLines: 4,
-                    decoration: const InputDecoration(
-                      labelText: 'التفاصيل',
+                    decoration: InputDecoration(
+                      labelText: AppTr.tr('التفاصيل'),
                       border: OutlineInputBorder(),
                     ),
                   ),
@@ -318,8 +320,8 @@ class _SmartCalendarScreenState extends State<SmartCalendarScreen> {
                   const SizedBox(height: 10),
                   DropdownButtonFormField<String>(
                     initialValue: priority,
-                    decoration: const InputDecoration(
-                      labelText: 'الأولوية',
+                    decoration: InputDecoration(
+                      labelText: AppTr.tr('الأولوية'),
                       border: OutlineInputBorder(),
                     ),
                     items: const ['منخفضة', 'متوسطة', 'عالية']
@@ -336,8 +338,8 @@ class _SmartCalendarScreenState extends State<SmartCalendarScreen> {
                   const SizedBox(height: 10),
                   DropdownButtonFormField<int>(
                     initialValue: remindBeforeDays,
-                    decoration: const InputDecoration(
-                      labelText: 'التذكير قبل الموعد',
+                    decoration: InputDecoration(
+                      labelText: AppTr.tr('التذكير قبل الموعد'),
                       border: OutlineInputBorder(),
                     ),
                     items:
@@ -363,8 +365,8 @@ class _SmartCalendarScreenState extends State<SmartCalendarScreen> {
                     controller: notesController,
                     minLines: 2,
                     maxLines: 3,
-                    decoration: const InputDecoration(
-                      labelText: 'ملاحظات',
+                    decoration: InputDecoration(
+                      labelText: AppTr.tr('ملاحظات'),
                       border: OutlineInputBorder(),
                     ),
                   ),
@@ -475,7 +477,7 @@ class _SmartCalendarScreenState extends State<SmartCalendarScreen> {
                   Row(
                     children: [
                       IconButton(
-                        tooltip: 'السنة السابقة',
+                        tooltip: AppTr.tr('السنة السابقة'),
                         onPressed: () => setDialogState(() => selectedYear--),
                         icon: const Icon(Icons.chevron_right_rounded),
                       ),
@@ -491,7 +493,7 @@ class _SmartCalendarScreenState extends State<SmartCalendarScreen> {
                         ),
                       ),
                       IconButton(
-                        tooltip: 'السنة التالية',
+                        tooltip: AppTr.tr('السنة التالية'),
                         onPressed: () => setDialogState(() => selectedYear++),
                         icon: const Icon(Icons.chevron_left_rounded),
                       ),
@@ -657,9 +659,9 @@ class _SmartCalendarScreenState extends State<SmartCalendarScreen> {
     return Container(
       padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
-        color: AppTheme.surface,
-        borderRadius: BorderRadius.circular(AppTheme.rField),
-      ),
+            color: AppTheme.surface,
+            borderRadius: BorderRadius.circular(AppTheme.rField),
+          ),
       child: Column(
         children: [
           Row(
@@ -804,9 +806,9 @@ class _SmartCalendarScreenState extends State<SmartCalendarScreen> {
     return Container(
       margin: const EdgeInsets.only(bottom: 8),
       decoration: BoxDecoration(
-        color: AppTheme.surface,
-        borderRadius: BorderRadius.circular(AppTheme.rField),
-      ),
+            color: AppTheme.surface,
+            borderRadius: BorderRadius.circular(AppTheme.rField),
+          ),
       child: ListTile(
         onTap: record == null ? () => _openItem(item) : null,
         leading: Container(
@@ -857,7 +859,7 @@ class _SmartCalendarScreenState extends State<SmartCalendarScreen> {
         trailing: record == null
             ? const Icon(Icons.arrow_back_ios_new_rounded, size: 16)
             : PopupMenuButton<String>(
-                tooltip: 'إجراءات العنصر',
+                tooltip: AppTr.tr('إجراءات العنصر'),
                 onSelected: (action) {
                   if (action == 'toggle') _toggleCompleted(record);
                   if (action == 'edit') _openRecordForm(record);
@@ -978,9 +980,9 @@ class _SmartCalendarScreenState extends State<SmartCalendarScreen> {
       margin: const EdgeInsets.only(top: 12),
       padding: const EdgeInsets.all(12),
       decoration: BoxDecoration(
-        color: AppTheme.surface,
-        borderRadius: BorderRadius.circular(AppTheme.rField),
-      ),
+            color: AppTheme.surface,
+            borderRadius: BorderRadius.circular(AppTheme.rField),
+          ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
@@ -1029,7 +1031,7 @@ class _SmartCalendarScreenState extends State<SmartCalendarScreen> {
       backgroundColor: AppTheme.page,
       appBar: AppBar(
         leading: IconButton(
-          tooltip: 'إغلاق',
+          tooltip: AppTr.tr('إغلاق'),
           onPressed: () => Navigator.pop(context),
           icon: const Icon(Icons.close_rounded),
         ),
@@ -1056,7 +1058,7 @@ class _SmartCalendarScreenState extends State<SmartCalendarScreen> {
       ),
       floatingActionButton: null,
       body: Directionality(
-        textDirection: TextDirection.rtl,
+        textDirection: AppTr.uiDir,
         child: _isLoading
             ? const Center(child: CircularProgressIndicator())
             : ListView(

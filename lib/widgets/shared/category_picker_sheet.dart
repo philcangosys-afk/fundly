@@ -1,4 +1,6 @@
-import 'package:flutter/material.dart';
+import 'package:flutter/material.dart' hide Text, Align;
+import '../../l10n/tr_widgets.dart';
+import '../../l10n/app_language.dart';
 
 import 'app_design.dart';
 
@@ -243,7 +245,7 @@ Future<CategoryPickResult?> showCategoryPickerSheet({
     isScrollControlled: true,
     backgroundColor: Colors.transparent,
     builder: (sheetContext) => Directionality(
-      textDirection: TextDirection.rtl,
+      textDirection: AppTr.uiDir,
       child: StatefulBuilder(
         builder: (context, setSheetState) {
           final query = searchController.text.trim();
@@ -303,7 +305,7 @@ Future<CategoryPickResult?> showCategoryPickerSheet({
                           ),
                         ),
                         AppIconButton(
-                          tooltip: 'إغلاق',
+                          tooltip: AppTr.tr('إغلاق'),
                           icon: Icons.close_rounded,
                           background: AppTheme.field,
                           color: AppTheme.chevron,
@@ -319,7 +321,7 @@ Future<CategoryPickResult?> showCategoryPickerSheet({
                       controller: searchController,
                       onChanged: (_) => setSheetState(() {}),
                       decoration: InputDecoration(
-                        hintText: 'ابحث باسم التصنيف',
+                        hintText: AppTr.tr('ابحث باسم التصنيف'),
                         prefixIcon: const Icon(Icons.search_rounded, size: 20),
                         filled: true,
                         fillColor: Colors.white,
@@ -436,13 +438,13 @@ Future<String?> _askCustomCategory(
   final name = await showDialog<String>(
     context: context,
     builder: (dialogContext) => Directionality(
-      textDirection: TextDirection.rtl,
+      textDirection: AppTr.uiDir,
       child: AlertDialog(
         title: const Text('تصنيف جديد'),
         content: TextField(
           controller: controller,
           autofocus: true,
-          decoration: const InputDecoration(labelText: 'اسم التصنيف'),
+          decoration: InputDecoration(labelText: AppTr.tr('اسم التصنيف')),
         ),
         actions: [
           TextButton(

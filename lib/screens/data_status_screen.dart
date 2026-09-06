@@ -1,4 +1,6 @@
-import 'package:flutter/material.dart';
+import 'package:flutter/material.dart' hide Text, Align;
+import '../l10n/tr_widgets.dart';
+import '../l10n/app_language.dart';
 import 'package:flutter/services.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
@@ -126,14 +128,14 @@ class _DataStatusScreenState extends State<DataStatusScreen> {
         title: const Text('حالة البيانات والاتصال'),
         actions: [
           IconButton(
-            tooltip: 'إعادة الفحص',
+            tooltip: AppTr.tr('إعادة الفحص'),
             onPressed: _running ? null : _run,
             icon: const Icon(Icons.refresh_rounded),
           ),
         ],
       ),
       body: Directionality(
-        textDirection: TextDirection.rtl,
+        textDirection: AppTr.uiDir,
         child: ListView(
           padding: const EdgeInsets.fromLTRB(
             AppTheme.pageInset,

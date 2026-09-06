@@ -1,4 +1,6 @@
-import 'package:flutter/material.dart';
+import 'package:flutter/material.dart' hide Text, Align;
+import '../../l10n/tr_widgets.dart';
+import '../../l10n/app_language.dart';
 
 import 'app_design.dart';
 
@@ -85,7 +87,7 @@ Future<void> showFollowUpCenterSheet({
     isScrollControlled: true,
     backgroundColor: Colors.transparent,
     builder: (sheetContext) => Directionality(
-      textDirection: TextDirection.rtl,
+      textDirection: AppTr.uiDir,
       child: FractionallySizedBox(
         heightFactor: 0.9,
         child: Container(
@@ -123,7 +125,7 @@ Future<void> showFollowUpCenterSheet({
                     // زر الخروج: كان الإغلاق بالسحب لأسفل فقط.
                     AppIconButton(
                       key: const ValueKey('followup-sheet-close'),
-                      tooltip: 'إغلاق',
+                      tooltip: AppTr.tr('إغلاق'),
                       icon: Icons.close_rounded,
                       background: AppTheme.field,
                       color: AppTheme.chevron,
@@ -386,7 +388,7 @@ void _openMetricSheet(
     isScrollControlled: true,
     backgroundColor: Colors.transparent,
     builder: (sheetContext) => Directionality(
-      textDirection: TextDirection.rtl,
+      textDirection: AppTr.uiDir,
       child: ConstrainedBox(
         constraints: BoxConstraints(
           maxHeight: MediaQuery.of(sheetContext).size.height * 0.62,
@@ -423,7 +425,7 @@ void _openMetricSheet(
                     _CountBadge(count: metric.count, color: group.color),
                     const SizedBox(width: AppTheme.sSm),
                     AppIconButton(
-                      tooltip: 'إغلاق',
+                      tooltip: AppTr.tr('إغلاق'),
                       icon: Icons.close_rounded,
                       background: AppTheme.field,
                       color: AppTheme.chevron,

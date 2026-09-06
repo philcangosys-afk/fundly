@@ -11,7 +11,7 @@ class ScopeCatalog {
   static const delegations = 'التفويضات';
   static const realEstate = 'العقارات';
   static const activities = 'الأنشطة التجارية';
-  static const equipment = 'المعدات';
+  static const equipment = 'آليات ومعدات';
 
   /// "عام" أولًا لأنه يشمل الجميع (يُعرض كمستطيل طويل في الأعلى).
   static const scopes = [

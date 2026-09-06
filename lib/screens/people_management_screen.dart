@@ -1,6 +1,8 @@
 import 'dart:convert';
 
-import 'package:flutter/material.dart';
+import 'package:flutter/material.dart' hide Text, Align;
+import '../l10n/tr_widgets.dart';
+import '../l10n/app_language.dart';
 import 'package:share_plus/share_plus.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
@@ -828,7 +830,7 @@ class _PeopleManagementScreenState extends State<PeopleManagementScreen> {
             ],
           ),
           child: Directionality(
-            textDirection: TextDirection.rtl,
+            textDirection: AppTr.uiDir,
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
@@ -870,7 +872,7 @@ class _PeopleManagementScreenState extends State<PeopleManagementScreen> {
                       ),
                     ),
                     IconButton(
-                      tooltip: 'إغلاق',
+                      tooltip: AppTr.tr('إغلاق'),
                       onPressed: () => Navigator.pop(sheetContext),
                       icon: const Icon(Icons.close_rounded),
                     ),
@@ -953,7 +955,7 @@ class _PeopleManagementScreenState extends State<PeopleManagementScreen> {
             ],
           ),
           child: Directionality(
-            textDirection: TextDirection.rtl,
+            textDirection: AppTr.uiDir,
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
@@ -995,7 +997,7 @@ class _PeopleManagementScreenState extends State<PeopleManagementScreen> {
                       ),
                     ),
                     IconButton(
-                      tooltip: 'إغلاق',
+                      tooltip: AppTr.tr('إغلاق'),
                       onPressed: () => Navigator.pop(sheetContext),
                       icon: const Icon(Icons.close_rounded),
                     ),
@@ -1111,7 +1113,7 @@ class _PeopleManagementScreenState extends State<PeopleManagementScreen> {
                   borderRadius: BorderRadius.vertical(top: Radius.circular(AppTheme.rCard)),
                 ),
                 child: Directionality(
-                  textDirection: TextDirection.rtl,
+                  textDirection: AppTr.uiDir,
                   child: Column(
                     crossAxisAlignment: CrossAxisAlignment.stretch,
                     children: [
@@ -1179,7 +1181,7 @@ class _PeopleManagementScreenState extends State<PeopleManagementScreen> {
                               Wrap(
                                 spacing: 8,
                                 runSpacing: 8,
-                                textDirection: TextDirection.rtl,
+                                textDirection: AppTr.uiDir,
                                 children: additionalOptions.map((option) {
                                   final selected = selectedAdditional
                                       .contains(option.label);
@@ -1326,7 +1328,7 @@ class _PeopleManagementScreenState extends State<PeopleManagementScreen> {
               borderRadius: BorderRadius.vertical(top: Radius.circular(AppTheme.rCard)),
             ),
             child: Directionality(
-              textDirection: TextDirection.rtl,
+              textDirection: AppTr.uiDir,
               child: Column(
                 mainAxisSize: MainAxisSize.min,
                 crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -1430,7 +1432,7 @@ class _PeopleManagementScreenState extends State<PeopleManagementScreen> {
   Widget _inputField(TextEditingController controller, String hint) {
     return TextField(
       controller: controller,
-      textDirection: TextDirection.rtl,
+      textDirection: AppTr.uiDir,
       decoration: InputDecoration(
         hintText: hint,
         border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
@@ -1453,7 +1455,7 @@ class _PeopleManagementScreenState extends State<PeopleManagementScreen> {
         backgroundColor: const Color(0xFF7C3AED),
       ),
       body: Directionality(
-        textDirection: TextDirection.rtl,
+        textDirection: AppTr.uiDir,
         child: CustomScrollView(
           slivers: [
             ManagementDashboardHeader(
@@ -1839,7 +1841,7 @@ class _PersonDetailsScreenState extends State<PersonDetailsScreen> {
       padding: const EdgeInsets.only(bottom: 8),
       child: TextField(
         controller: controller,
-        textDirection: TextDirection.rtl,
+        textDirection: AppTr.uiDir,
         decoration: InputDecoration(
           hintText: hint,
           border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
@@ -1877,7 +1879,7 @@ class _PersonDetailsScreenState extends State<PersonDetailsScreen> {
       // يجد فيها "إلغاء" في بقية التطبيق.
       builder: (context) {
         return Directionality(
-          textDirection: TextDirection.rtl,
+          textDirection: AppTr.uiDir,
           child: AlertDialog(
             title: const Text('حذف الشخص'),
             content: Text('هل تريد حذف ${_person.fullName}؟'),
@@ -2257,7 +2259,7 @@ class _PersonDetailsScreenState extends State<PersonDetailsScreen> {
                           : TextField(
                               controller: controllers[field.label],
                               readOnly: field.isDate,
-                              textDirection: TextDirection.rtl,
+                              textDirection: AppTr.uiDir,
                               keyboardType: field.isNumeric
                                   ? TextInputType.number
                                   : TextInputType.text,
@@ -2367,7 +2369,7 @@ class _PersonDetailsScreenState extends State<PersonDetailsScreen> {
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
       builder: (sheetContext) => Directionality(
-        textDirection: TextDirection.rtl,
+        textDirection: AppTr.uiDir,
         child: StatefulBuilder(
           builder: (context, setSheetState) => SafeArea(
             top: false,
@@ -2610,7 +2612,7 @@ class _PersonDetailsScreenState extends State<PersonDetailsScreen> {
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
       builder: (sheetContext) => Directionality(
-        textDirection: TextDirection.rtl,
+        textDirection: AppTr.uiDir,
         child: StatefulBuilder(
           builder: (context, setSheetState) => Padding(
             padding: EdgeInsets.only(
@@ -2649,8 +2651,8 @@ class _PersonDetailsScreenState extends State<PersonDetailsScreen> {
                     const SizedBox(height: 14),
                     DropdownButtonFormField<String>(
                       initialValue: kind,
-                      decoration: const InputDecoration(
-                        labelText: 'النوع',
+                      decoration: InputDecoration(
+                        labelText: AppTr.tr('النوع'),
                         border: OutlineInputBorder(),
                         isDense: true,
                       ),
@@ -2670,8 +2672,8 @@ class _PersonDetailsScreenState extends State<PersonDetailsScreen> {
                       const SizedBox(height: 10),
                       TextField(
                         controller: customKindCtrl,
-                        decoration: const InputDecoration(
-                          labelText: 'اكتب النوع',
+                        decoration: InputDecoration(
+                          labelText: AppTr.tr('اكتب النوع'),
                           border: OutlineInputBorder(),
                           isDense: true,
                         ),
@@ -2684,8 +2686,8 @@ class _PersonDetailsScreenState extends State<PersonDetailsScreen> {
                         keyboardType: const TextInputType.numberWithOptions(
                           decimal: true,
                         ),
-                        decoration: const InputDecoration(
-                          labelText: 'المبلغ',
+                        decoration: InputDecoration(
+                          labelText: AppTr.tr('المبلغ'),
                           border: OutlineInputBorder(),
                           isDense: true,
                         ),
@@ -2729,8 +2731,8 @@ class _PersonDetailsScreenState extends State<PersonDetailsScreen> {
                     const SizedBox(height: 10),
                     TextField(
                       controller: dateCtrl,
-                      decoration: const InputDecoration(
-                        labelText: 'التاريخ',
+                      decoration: InputDecoration(
+                        labelText: AppTr.tr('التاريخ'),
                         border: OutlineInputBorder(),
                         isDense: true,
                       ),
@@ -2739,8 +2741,8 @@ class _PersonDetailsScreenState extends State<PersonDetailsScreen> {
                     TextField(
                       controller: notesCtrl,
                       maxLines: 2,
-                      decoration: const InputDecoration(
-                        labelText: 'ملاحظات',
+                      decoration: InputDecoration(
+                        labelText: AppTr.tr('ملاحظات'),
                         border: OutlineInputBorder(),
                         isDense: true,
                       ),
@@ -3146,7 +3148,7 @@ class _PersonDetailsScreenState extends State<PersonDetailsScreen> {
                     child: Wrap(
                       spacing: 8,
                       runSpacing: 8,
-                      textDirection: TextDirection.rtl,
+                      textDirection: AppTr.uiDir,
                       children: group.actions
                           .map((action) {
                             return ActionChip(
@@ -3227,7 +3229,7 @@ class _PersonDetailsScreenState extends State<PersonDetailsScreen> {
                 Wrap(
                   spacing: 8,
                   runSpacing: 8,
-                  textDirection: TextDirection.rtl,
+                  textDirection: AppTr.uiDir,
                   children: List.generate(_mainTabs.length, (index) {
                     final selected = _selectedMainTab == index;
                     return ChoiceChip(
@@ -3249,7 +3251,7 @@ class _PersonDetailsScreenState extends State<PersonDetailsScreen> {
                 Wrap(
                   spacing: 8,
                   runSpacing: 8,
-                  textDirection: TextDirection.rtl,
+                  textDirection: AppTr.uiDir,
                   children: List.generate(_subTabs.length, (index) {
                     final selected = _selectedSubTab == index;
                     return ChoiceChip(
@@ -3317,13 +3319,13 @@ class _PersonDetailsScreenState extends State<PersonDetailsScreen> {
           ),
         ),
         leading: IconButton(
-          tooltip: 'رجوع',
+          tooltip: AppTr.tr('رجوع'),
           onPressed: () => Navigator.pop(context),
           icon: const Icon(Icons.arrow_back_ios_new_rounded, size: 20),
         ),
       ),
       body: Directionality(
-        textDirection: TextDirection.rtl,
+        textDirection: AppTr.uiDir,
         // CustomScrollView ليمكن تثبيت شريط التبويبات: بطاقة بيانات الفرد
         // تختفي عند النزول ويبقى شريط "الملخص / التنظيم / ..." ثابتًا.
         child: CustomScrollView(
@@ -3392,7 +3394,7 @@ class _PersonDetailsScreenState extends State<PersonDetailsScreen> {
                   if (selectedTab == 'الملخص') ...[
                     _SummaryPanel(
                       person: person,
-                      textDirection: TextDirection.rtl,
+                      textDirection: AppTr.uiDir,
                     ),
                     const SizedBox(height: 8),
                     // سجل كل ما أُضيف من زر "+ إضافة" بالإضافة إلى تاريخ
@@ -3409,7 +3411,7 @@ class _PersonDetailsScreenState extends State<PersonDetailsScreen> {
                   if (selectedTab == 'مالية')
                     _SummaryStatsPanel(
                       title: 'الملخص المالي',
-                      textDirection: TextDirection.rtl,
+                      textDirection: AppTr.uiDir,
                       blocks: [
                         (
                           'المستحق له',
@@ -3431,7 +3433,7 @@ class _PersonDetailsScreenState extends State<PersonDetailsScreen> {
                   if (selectedTab == 'متابعة وتخطيط') ...[
                     _SummaryStatsPanel(
                       title: 'متابعة وتخطيط',
-                      textDirection: TextDirection.rtl,
+                      textDirection: AppTr.uiDir,
                       blocks: [
                         (
                           'المهام المفتوحة',
@@ -3453,7 +3455,7 @@ class _PersonDetailsScreenState extends State<PersonDetailsScreen> {
                     const SizedBox(height: 8),
                     _SummaryStatsPanel(
                       title: 'البيانات الأساسية',
-                      textDirection: TextDirection.rtl,
+                      textDirection: AppTr.uiDir,
                       blocks: [
                         ('رقم الهاتف', phoneValue, const Color(0xFF0F172A)),
                         (
@@ -3473,7 +3475,7 @@ class _PersonDetailsScreenState extends State<PersonDetailsScreen> {
                     // (وليست تبويباً مستقلاً) بنفس منطق الالتزامات المشتركة.
                     _SummaryStatsPanel(
                       title: 'الملاحظات والتفويضات',
-                      textDirection: TextDirection.rtl,
+                      textDirection: AppTr.uiDir,
                       blocks: [
                         (
                           'ملاحظة',
@@ -3496,7 +3498,7 @@ class _PersonDetailsScreenState extends State<PersonDetailsScreen> {
                       icon: Icons.description_rounded,
                       color: const Color(0xFF7C3AED),
                       emptyText: 'لا توجد مستندات مرتبطة حتى الآن',
-                      textDirection: TextDirection.rtl,
+                      textDirection: AppTr.uiDir,
                       items: filteredDocuments,
                     ),
                   if (selectedTab == 'إضافة إجراء')
@@ -3516,7 +3518,7 @@ class _PersonDetailsScreenState extends State<PersonDetailsScreen> {
                       icon: Icons.place_outlined,
                       color: const Color(0xFF0EA5A4),
                       emptyText: 'لا توجد مواقع مضافة حتى الآن',
-                      textDirection: TextDirection.rtl,
+                      textDirection: AppTr.uiDir,
                       items: const [],
                     ),
                   ],
@@ -3618,7 +3620,7 @@ class _CompactPersonHeader extends StatelessWidget {
             ),
           ),
           const SizedBox(width: 4),
-          ThreeDotMenu(tooltip: 'خيارات', onAction: onAction),
+          ThreeDotMenu(tooltip: AppTr.tr('خيارات'), onAction: onAction),
         ],
       ),
     );
@@ -3724,7 +3726,7 @@ class _ActionShortcutCard extends StatelessWidget {
             borderRadius: BorderRadius.circular(AppTheme.rField),
           ),
       child: Row(
-        textDirection: TextDirection.rtl,
+        textDirection: AppTr.uiDir,
         crossAxisAlignment: CrossAxisAlignment.start,
         children: [
           Container(
@@ -3762,7 +3764,7 @@ class _ActionShortcutCard extends StatelessWidget {
                 ),
                 const SizedBox(height: 8),
                 Row(
-                  textDirection: TextDirection.rtl,
+                  textDirection: AppTr.uiDir,
                   children: [
                     ElevatedButton.icon(
                       onPressed: onTap,
@@ -3857,7 +3859,7 @@ class _SearchInput extends StatelessWidget {
       ),
       child: TextField(
         controller: controller,
-        textDirection: TextDirection.rtl,
+        textDirection: AppTr.uiDir,
         onChanged: onChanged,
         decoration: InputDecoration(
           hintText: hint,
@@ -3873,7 +3875,7 @@ class _SearchInput extends StatelessWidget {
           prefixIcon: IconButton(
             onPressed: onFilterTap,
             icon: const Icon(Icons.tune_rounded, color: Color(0xFF475569)),
-            tooltip: 'فلتر',
+            tooltip: AppTr.tr('فلتر'),
           ),
           contentPadding: const EdgeInsets.symmetric(
             horizontal: 12,
@@ -4077,7 +4079,7 @@ class _CreateActionSection extends StatelessWidget {
             borderRadius: BorderRadius.circular(AppTheme.rInner),
           ),
                   child: Row(
-                    textDirection: TextDirection.rtl,
+                    textDirection: AppTr.uiDir,
                     children: [
                       Container(
                         width: 34,
@@ -4276,11 +4278,12 @@ class _DetailHeaderCard extends StatelessWidget {
 class _SummaryPanel extends StatelessWidget {
   const _SummaryPanel({
     required this.person,
-    this.textDirection = TextDirection.rtl,
+    this.textDirection,
   });
 
   final _PersonItem person;
-  final TextDirection textDirection;
+  /// null = اتجاه الواجهة الحالي (عربي rtl / إنجليزي ltr).
+  final TextDirection? textDirection;
 
   @override
   Widget build(BuildContext context) {
@@ -4337,7 +4340,7 @@ class _SummaryPanel extends StatelessWidget {
         Wrap(
           spacing: 8,
           runSpacing: 8,
-          textDirection: textDirection,
+          textDirection: textDirection ?? AppTr.uiDir,
           children: [
             _metricPill(
               'المستحق له',
@@ -4394,23 +4397,24 @@ class _SummaryStatsPanel extends StatelessWidget {
   const _SummaryStatsPanel({
     required this.title,
     required this.blocks,
-    this.textDirection = TextDirection.rtl,
+    this.textDirection,
   });
 
   final String title;
   final List<(String, String, Color)> blocks;
-  final TextDirection textDirection;
+  /// null = اتجاه الواجهة الحالي (عربي rtl / إنجليزي ltr).
+  final TextDirection? textDirection;
 
   @override
   Widget build(BuildContext context) {
-    final isRtl = textDirection == TextDirection.rtl;
+    final isRtl = (textDirection ?? AppTr.uiDir) == TextDirection.rtl;
     final textAlign = isRtl ? TextAlign.right : TextAlign.left;
     // ملاحظة: CrossAxisAlignment.start يُحلّ أصلًا إلى اليمين داخل اتجاه
     // rtl. الشرط السابق (isRtl ? end : start) كان يعكسه مرتين فيُحاذي كل
     // عناوين البطاقات وقيمها إلى اليسار داخل بطاقة عربية.
     const crossAxis = CrossAxisAlignment.start;
     return Directionality(
-      textDirection: textDirection,
+      textDirection: textDirection ?? AppTr.uiDir,
       child: Container(
         width: double.infinity,
         padding: const EdgeInsets.all(12),
@@ -4548,7 +4552,7 @@ class _DynamicLinkedDataCard extends StatelessWidget {
     required this.color,
     required this.emptyText,
     required this.items,
-    this.textDirection = TextDirection.rtl,
+    this.textDirection,
   });
 
   final String title;
@@ -4556,11 +4560,12 @@ class _DynamicLinkedDataCard extends StatelessWidget {
   final Color color;
   final String emptyText;
   final List<String> items;
-  final TextDirection textDirection;
+  /// null = اتجاه الواجهة الحالي (عربي rtl / إنجليزي ltr).
+  final TextDirection? textDirection;
 
   @override
   Widget build(BuildContext context) {
-    final isRtl = textDirection == TextDirection.rtl;
+    final isRtl = (textDirection ?? AppTr.uiDir) == TextDirection.rtl;
     final textAlign = isRtl ? TextAlign.right : TextAlign.left;
     // ملاحظة: CrossAxisAlignment.start يُحلّ أصلًا إلى اليمين داخل اتجاه
     // rtl. الشرط السابق (isRtl ? end : start) كان يعكسه مرتين فيُحاذي كل
@@ -4577,7 +4582,7 @@ class _DynamicLinkedDataCard extends StatelessWidget {
         crossAxisAlignment: crossAxis,
         children: [
           Row(
-            textDirection: textDirection,
+            textDirection: textDirection ?? AppTr.uiDir,
             children: [
               Icon(icon, color: color, size: 18),
               const SizedBox(width: 8),
@@ -4608,7 +4613,7 @@ class _DynamicLinkedDataCard extends StatelessWidget {
                   (item) => Padding(
                     padding: const EdgeInsets.only(bottom: 6),
                     child: Row(
-                      textDirection: textDirection,
+                      textDirection: textDirection ?? AppTr.uiDir,
                       children: [
                         Icon(Icons.circle, size: 6, color: color),
                         const SizedBox(width: 8),
@@ -4718,7 +4723,7 @@ class _ActivityLogCard extends StatelessWidget {
                       (log) => Padding(
                         padding: const EdgeInsets.only(bottom: 6),
                         child: Row(
-                          textDirection: TextDirection.rtl,
+                          textDirection: AppTr.uiDir,
                           children: [
                             const Icon(
                               Icons.circle,
@@ -4763,7 +4768,7 @@ class _HorizontalTabs extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final textDirection = startFromLeft ? TextDirection.ltr : TextDirection.rtl;
+    final textDirection = startFromLeft ? TextDirection.ltr : AppTr.uiDir;
 
     return Directionality(
       textDirection: textDirection,

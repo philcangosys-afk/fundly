@@ -1,4 +1,6 @@
-import 'package:flutter/material.dart';
+import 'package:flutter/material.dart' hide Text, Align;
+import '../l10n/tr_widgets.dart';
+import '../l10n/app_language.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import '../widgets/commitment_additions_menu.dart';
 import '../config/commitment_additions_config.dart';
@@ -251,15 +253,15 @@ class _CommitmentDetailsExampleScreenState
                 TextField(
                   controller: amountController,
                   keyboardType: TextInputType.number,
-                  decoration: const InputDecoration(
-                    labelText: 'المبلغ',
+                  decoration: InputDecoration(
+                    labelText: AppTr.tr('المبلغ'),
                     suffixText: 'ر.س',
                   ),
                 ),
                 const SizedBox(height: 16),
                 DropdownButtonFormField<String>(
                   value: selectedMethod,
-                  decoration: const InputDecoration(labelText: 'طريقة الدفع'),
+                  decoration: InputDecoration(labelText: AppTr.tr('طريقة الدفع')),
                   items: ['نقدي', 'بنكي', 'بطاقة', 'تحويل', 'شيك', 'أخرى']
                       .map(
                         (method) => DropdownMenuItem(
@@ -273,7 +275,7 @@ class _CommitmentDetailsExampleScreenState
                 const SizedBox(height: 16),
                 TextField(
                   controller: notesController,
-                  decoration: const InputDecoration(labelText: 'ملاحظات'),
+                  decoration: InputDecoration(labelText: AppTr.tr('ملاحظات')),
                   maxLines: 3,
                 ),
               ],
@@ -365,7 +367,7 @@ class _CommitmentDetailsExampleScreenState
             children: [
               TextField(
                 controller: titleController,
-                decoration: const InputDecoration(labelText: 'العنوان'),
+                decoration: InputDecoration(labelText: AppTr.tr('العنوان')),
               ),
               const SizedBox(height: 16),
               ListTile(
@@ -455,12 +457,12 @@ class _CommitmentDetailsExampleScreenState
           children: [
             TextField(
               controller: titleController,
-              decoration: const InputDecoration(labelText: 'العنوان'),
+              decoration: InputDecoration(labelText: AppTr.tr('العنوان')),
             ),
             const SizedBox(height: 16),
             TextField(
               controller: contentController,
-              decoration: const InputDecoration(labelText: 'المحتوى'),
+              decoration: InputDecoration(labelText: AppTr.tr('المحتوى')),
               maxLines: 4,
             ),
           ],
@@ -534,20 +536,20 @@ class _CommitmentDetailsExampleScreenState
           children: [
             TextField(
               controller: nameController,
-              decoration: const InputDecoration(labelText: 'الاسم'),
+              decoration: InputDecoration(labelText: AppTr.tr('الاسم')),
             ),
             const SizedBox(height: 16),
             TextField(
               controller: roleController,
-              decoration: const InputDecoration(
-                labelText: 'الدور/العلاقة (اختياري)',
+              decoration: InputDecoration(
+                labelText: AppTr.tr('الدور/العلاقة (اختياري)'),
               ),
             ),
             const SizedBox(height: 16),
             TextField(
               controller: phoneController,
-              decoration: const InputDecoration(
-                labelText: 'رقم الهاتف (اختياري)',
+              decoration: InputDecoration(
+                labelText: AppTr.tr('رقم الهاتف (اختياري)'),
               ),
               keyboardType: TextInputType.phone,
             ),
@@ -604,13 +606,13 @@ class _CommitmentDetailsExampleScreenState
           children: [
             TextField(
               controller: addressController,
-              decoration: const InputDecoration(labelText: 'العنوان'),
+              decoration: InputDecoration(labelText: AppTr.tr('العنوان')),
               maxLines: 2,
             ),
             const SizedBox(height: 16),
             TextField(
               controller: cityController,
-              decoration: const InputDecoration(labelText: 'المدينة'),
+              decoration: InputDecoration(labelText: AppTr.tr('المدينة')),
             ),
           ],
         ),

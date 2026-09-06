@@ -1,4 +1,6 @@
-import 'package:flutter/material.dart';
+import 'package:flutter/material.dart' hide Text, Align;
+import '../../l10n/tr_widgets.dart';
+import '../../l10n/app_language.dart';
 
 import '../../data/app_settings.dart';
 import '../../data/home_summary_service.dart';
@@ -192,7 +194,7 @@ Future<ScopeSelection?> showScopeBuilderSheet({
     useSafeArea: true,
     backgroundColor: Colors.transparent,
     builder: (sheetContext) => Directionality(
-      textDirection: TextDirection.rtl,
+      textDirection: AppTr.uiDir,
       child: _ScopeBuilder(
         kind: kind,
         accent: accent,
@@ -415,7 +417,7 @@ class _ScopeBuilderState extends State<_ScopeBuilder> {
                   ),
                 ),
                 IconButton(
-                  tooltip: 'إغلاق',
+                  tooltip: AppTr.tr('إغلاق'),
                   onPressed: () => Navigator.pop(context),
                   icon: const Icon(Icons.close_rounded),
                 ),
@@ -432,7 +434,7 @@ class _ScopeBuilderState extends State<_ScopeBuilder> {
                   controller: _queryCtrl,
                   onChanged: (value) => setState(() => _draft.query = value),
                   decoration: InputDecoration(
-                    hintText: 'البحث بالاسم أو النوع أو التاريخ...',
+                    hintText: AppTr.tr('البحث بالاسم أو النوع أو التاريخ...'),
                     prefixIcon: const Icon(Icons.search_rounded),
                     filled: true,
                     fillColor: AppTheme.field,
@@ -642,7 +644,7 @@ class _ScopeBuilderState extends State<_ScopeBuilder> {
                   controller: _titleCtrl,
                   onChanged: (value) => _draft.title = value,
                   decoration: InputDecoration(
-                    hintText: 'مثال: ${widget.kind} خاص',
+                    hintText: AppTr.tr('مثال: ${widget.kind} خاص'),
                     filled: true,
                     fillColor: AppTheme.field,
                     border: OutlineInputBorder(

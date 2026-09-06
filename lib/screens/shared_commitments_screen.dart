@@ -1,5 +1,7 @@
 import 'dart:convert';
-import 'package:flutter/material.dart';
+import 'package:flutter/material.dart' hide Text, Align;
+import '../l10n/tr_widgets.dart';
+import '../l10n/app_language.dart';
 import '../data/app_settings.dart';
 import '../data/shared_entries_repository.dart';
 import '../widgets/management_dashboard_chrome.dart';
@@ -1003,7 +1005,7 @@ class _SharedCommitmentsScreenState extends State<SharedCommitmentsScreen> {
     return Scaffold(
       backgroundColor: AppTheme.page,
       body: Directionality(
-        textDirection: TextDirection.rtl,
+        textDirection: AppTr.uiDir,
         child: _buildScreenBody(),
       ),
       floatingActionButton: AddFab(
@@ -1187,17 +1189,17 @@ class _SharedCommitmentsScreenState extends State<SharedCommitmentsScreen> {
             key: const ValueKey('shared-search-field'),
             controller: _searchController,
             focusNode: _searchFocusNode,
-            textDirection: TextDirection.rtl,
+            textDirection: AppTr.uiDir,
             onChanged: (_) => setState(() {}),
             decoration: InputDecoration(
               // حقل ممتلئ بلا حدود بنفس نصف قطر ولون حقول التطبيق.
-              hintText: 'بحث في الالتزامات المشتركة',
+              hintText: AppTr.tr('بحث في الالتزامات المشتركة'),
               hintStyle: const TextStyle(color: AppTheme.muted, fontSize: 13, fontWeight: FontWeight.w600),
               prefixIcon: const Icon(Icons.search_rounded, size: 21, color: AppTheme.chevron),
               suffixIcon: _searchController.text.isEmpty
                   ? null
                   : IconButton(
-                      tooltip: 'مسح البحث',
+                      tooltip: AppTr.tr('مسح البحث'),
                       icon: const Icon(Icons.close_rounded, size: 18, color: AppTheme.muted),
                       onPressed: () {
                         _searchController.clear();
@@ -1305,7 +1307,7 @@ class _SharedCommitmentsScreenState extends State<SharedCommitmentsScreen> {
                     vertical: 10,
                   ),
                   child: Row(
-                    textDirection: TextDirection.rtl,
+                    textDirection: AppTr.uiDir,
                     children: [
                       const Icon(
                         Icons.search_rounded,
@@ -1469,7 +1471,7 @@ class _SharedCommitmentsScreenState extends State<SharedCommitmentsScreen> {
 
   Widget _buildListHeader(int count) {
     return Row(
-      textDirection: TextDirection.rtl,
+      textDirection: AppTr.uiDir,
       children: [
         Container(
           constraints: const BoxConstraints(minWidth: 36),
@@ -1496,7 +1498,7 @@ class _SharedCommitmentsScreenState extends State<SharedCommitmentsScreen> {
         ),
         PopupMenuButton<String>(
           key: const ValueKey('shared-sort-button'),
-          tooltip: 'ترتيب الالتزامات',
+          tooltip: AppTr.tr('ترتيب الالتزامات'),
           offset: const Offset(0, 8),
           shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.circular(AppTheme.rField),
@@ -1512,7 +1514,7 @@ class _SharedCommitmentsScreenState extends State<SharedCommitmentsScreen> {
                 return PopupMenuItem(
                   value: o,
                   child: Directionality(
-                    textDirection: TextDirection.rtl,
+                    textDirection: AppTr.uiDir,
                     child: Row(
                       children: [
                         Icon(
@@ -1843,7 +1845,7 @@ class _SharedCommitmentsScreenState extends State<SharedCommitmentsScreen> {
             boxShadow: [BoxShadow(color: Color(0x1A000000), blurRadius: 24, offset: Offset(0, -4))],
           ),
           child: Directionality(
-            textDirection: TextDirection.rtl,
+            textDirection: AppTr.uiDir,
             child: Padding(
               padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
               child: Column(
@@ -1860,7 +1862,7 @@ class _SharedCommitmentsScreenState extends State<SharedCommitmentsScreen> {
                   ),
                   const SizedBox(height: 16),
                   Row(
-                    textDirection: TextDirection.rtl,
+                    textDirection: AppTr.uiDir,
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       const Expanded(
@@ -2068,7 +2070,7 @@ Future<void> _openSharedEntryForm(
           }
 
           return Directionality(
-            textDirection: TextDirection.rtl,
+            textDirection: AppTr.uiDir,
             child: DraggableScrollableSheet(
               initialChildSize: 0.9,
               maxChildSize: 0.95,
@@ -2112,7 +2114,7 @@ Future<void> _openSharedEntryForm(
                             ),
                           ),
                           IconButton(
-                            tooltip: 'إغلاق',
+                            tooltip: AppTr.tr('إغلاق'),
                             onPressed: () => Navigator.pop(sheetContext),
                             icon: const Icon(Icons.close_rounded),
                           ),
@@ -2255,7 +2257,7 @@ Widget _buildSharedField(
           decoration: _sharedFieldDecoration(labelText, field.icon, accent),
           validator: field.required ? (v) => v == null || v.isEmpty ? 'مطلوب' : null : null,
           onTap: () async {
-            final picked = await showDatePicker(context: context, initialDate: DateTime.now(), firstDate: DateTime(2000), lastDate: DateTime(2100), builder: (pickerContext, child) => Directionality(textDirection: TextDirection.rtl, child: child!));
+            final picked = await showDatePicker(context: context, initialDate: DateTime.now(), firstDate: DateTime(2000), lastDate: DateTime(2100), builder: (pickerContext, child) => Directionality(textDirection: AppTr.uiDir, child: child!));
             if (picked == null) return;
             controller.text = '${picked.day}/${picked.month}/${picked.year}';
             setSheetState(() {});
@@ -2753,7 +2755,7 @@ class _SharedCommitmentDetailsScreenState extends State<SharedCommitmentDetailsS
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (dialogContext) => Directionality(
-        textDirection: TextDirection.rtl,
+        textDirection: AppTr.uiDir,
         child: AlertDialog(
           title: const Text('حذف الالتزام'),
           content: Text('هل تريد حذف «${item.title}» نهائيًا؟ لا يمكن التراجع عن هذا الإجراء.'),
@@ -2804,7 +2806,7 @@ class _SharedCommitmentDetailsScreenState extends State<SharedCommitmentDetailsS
       floatingActionButtonLocation: FloatingActionButtonLocation.endFloat,
       floatingActionButton: FloatingActionButton.extended(
         heroTag: 'shared-details-add',
-        tooltip: 'إضافة إلى الالتزام',
+        tooltip: AppTr.tr('إضافة إلى الالتزام'),
         backgroundColor: item.color,
         foregroundColor: Colors.white,
         elevation: 7,
@@ -2825,13 +2827,13 @@ class _SharedCommitmentDetailsScreenState extends State<SharedCommitmentDetailsS
         centerTitle: true,
         title: Text('تفاصيل ${item.entryType}', style: const TextStyle(fontSize: 18, fontWeight: FontWeight.w900, color: Color(0xFF172033))),
         leading: IconButton(
-          tooltip: 'رجوع',
+          tooltip: AppTr.tr('رجوع'),
           onPressed: () => Navigator.pop(context),
           icon: const Icon(Icons.arrow_back_ios_new_rounded, size: 20),
         ),
       ),
       body: Directionality(
-        textDirection: TextDirection.rtl,
+        textDirection: AppTr.uiDir,
         child: ListView(
           key: const ValueKey('shared-compact-details'),
           padding: const EdgeInsets.fromLTRB(14, 14, 14, 92),
@@ -2909,7 +2911,7 @@ class _SharedCommitmentDetailsScreenState extends State<SharedCommitmentDetailsS
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
       builder: (sheetContext) => Directionality(
-        textDirection: TextDirection.rtl,
+        textDirection: AppTr.uiDir,
         child: StatefulBuilder(
           builder: (context, setSheetState) => SafeArea(
             top: false,
@@ -3099,7 +3101,7 @@ class _SharedCommitmentDetailsScreenState extends State<SharedCommitmentDetailsS
           ),
           const SizedBox(width: 4),
           PopupMenuButton<_SharedCommitmentMenuAction>(
-            tooltip: 'إجراءات الالتزام',
+            tooltip: AppTr.tr('إجراءات الالتزام'),
             onSelected: _handleMenuAction,
             icon: const Icon(Icons.more_vert_rounded, size: 23, color: Color(0xFF475569)),
             // لم تعد القائمة const لأن عنوان الأرشفة يتبدّل حسب حالة البند.
@@ -3368,7 +3370,7 @@ class _SharedCommitmentDetailsScreenState extends State<SharedCommitmentDetailsS
         context: context,
         backgroundColor: Colors.transparent,
         builder: (sheetContext) => Directionality(
-          textDirection: TextDirection.rtl,
+          textDirection: AppTr.uiDir,
           child: Container(
             decoration: const BoxDecoration(color: Colors.white, borderRadius: BorderRadius.vertical(top: Radius.circular(AppTheme.rCard))),
             padding: const EdgeInsets.all(16),
@@ -3413,7 +3415,7 @@ class _SharedCommitmentDetailsScreenState extends State<SharedCommitmentDetailsS
       backgroundColor: Colors.transparent,
       builder: (sheetContext) => StatefulBuilder(
         builder: (context, setSheetState) => Directionality(
-          textDirection: TextDirection.rtl,
+          textDirection: AppTr.uiDir,
           child: Padding(
             padding: EdgeInsets.only(bottom: MediaQuery.of(context).viewInsets.bottom),
             child: Container(
@@ -3459,7 +3461,7 @@ class _SharedCommitmentDetailsScreenState extends State<SharedCommitmentDetailsS
                       readOnly: true,
                       decoration: _sharedFieldDecoration('التاريخ', Icons.event_outlined, item.color),
                       onTap: () async {
-                        final picked = await showDatePicker(context: context, initialDate: now, firstDate: DateTime(2000), lastDate: DateTime(2100), builder: (pickerContext, child) => Directionality(textDirection: TextDirection.rtl, child: child!));
+                        final picked = await showDatePicker(context: context, initialDate: now, firstDate: DateTime(2000), lastDate: DateTime(2100), builder: (pickerContext, child) => Directionality(textDirection: AppTr.uiDir, child: child!));
                         if (picked == null) return;
                         dateCtrl.text = '${picked.day}/${picked.month}/${picked.year}';
                         setSheetState(() {});
@@ -3586,7 +3588,7 @@ class _SharedCommitmentDetailsScreenState extends State<SharedCommitmentDetailsS
       backgroundColor: Colors.transparent,
       builder: (sheetContext) => StatefulBuilder(
         builder: (context, setSheetState) => Directionality(
-          textDirection: TextDirection.rtl,
+          textDirection: AppTr.uiDir,
           child: Padding(
             padding: EdgeInsets.only(bottom: MediaQuery.of(context).viewInsets.bottom),
             child: Container(
@@ -3717,7 +3719,7 @@ class _SharedCommitmentDetailsScreenState extends State<SharedCommitmentDetailsS
       backgroundColor: Colors.transparent,
       builder: (sheetContext) => StatefulBuilder(
         builder: (context, setSheetState) => Directionality(
-          textDirection: TextDirection.rtl,
+          textDirection: AppTr.uiDir,
           child: Padding(
             padding: EdgeInsets.only(bottom: MediaQuery.of(context).viewInsets.bottom),
             child: Container(
@@ -3746,7 +3748,7 @@ class _SharedCommitmentDetailsScreenState extends State<SharedCommitmentDetailsS
                     readOnly: true,
                     decoration: _sharedFieldDecoration('التاريخ (اختياري)', Icons.event_outlined, item.color),
                     onTap: () async {
-                      final picked = await showDatePicker(context: context, initialDate: now, firstDate: DateTime(2000), lastDate: DateTime(2100), builder: (pickerContext, child) => Directionality(textDirection: TextDirection.rtl, child: child!));
+                      final picked = await showDatePicker(context: context, initialDate: now, firstDate: DateTime(2000), lastDate: DateTime(2100), builder: (pickerContext, child) => Directionality(textDirection: AppTr.uiDir, child: child!));
                       if (picked == null) return;
                       dateCtrl.text = '${picked.day}/${picked.month}/${picked.year}';
                       setSheetState(() {});

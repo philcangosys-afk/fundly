@@ -1,4 +1,6 @@
-import 'package:flutter/material.dart';
+import 'package:flutter/material.dart' hide Text, Align;
+import '../l10n/tr_widgets.dart';
+import '../l10n/app_language.dart';
 
 import 'shared/app_design.dart';
 
@@ -53,7 +55,7 @@ class DetailPageHeader extends StatelessWidget {
     final visualMetrics = List<DetailHeaderMetric>.from(metrics.reversed);
 
     return Directionality(
-      textDirection: TextDirection.rtl,
+      textDirection: AppTr.uiDir,
       child: Container(
         key: const ValueKey('shared-detail-page-header'),
         padding: const EdgeInsets.all(AppTheme.sLg),
@@ -66,7 +68,7 @@ class DetailPageHeader extends StatelessWidget {
         child: Column(
           children: [
             Row(
-              textDirection: TextDirection.rtl,
+              textDirection: AppTr.uiDir,
               children: [
                 AppIconTile(icon: icon, color: color),
                 const SizedBox(width: AppTheme.sMd),

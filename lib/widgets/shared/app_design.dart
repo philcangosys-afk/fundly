@@ -1,4 +1,6 @@
-import 'package:flutter/material.dart';
+import 'package:flutter/material.dart' hide Text, Align;
+import '../../l10n/tr_widgets.dart';
+import '../../l10n/app_language.dart';
 
 /// نظام التصميم الموحَّد للتطبيق.
 ///
@@ -637,7 +639,7 @@ class AppCard extends StatelessWidget {
     return Padding(
       padding: margin ?? EdgeInsets.zero,
       child: Directionality(
-        textDirection: TextDirection.rtl,
+        textDirection: AppTr.uiDir,
         child: Material(
           color: background ?? AppTheme.surface,
           borderRadius: BorderRadius.circular(AppTheme.rCard),
@@ -707,7 +709,7 @@ class AppListRow extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Directionality(
-      textDirection: TextDirection.rtl,
+      textDirection: AppTr.uiDir,
       child: Material(
         color: background ?? AppTheme.surface,
         borderRadius: BorderRadius.circular(AppTheme.rField),
@@ -770,7 +772,7 @@ class AppSectionTitle extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Directionality(
-      textDirection: TextDirection.rtl,
+      textDirection: AppTr.uiDir,
       child: Row(
         children: [
           Expanded(child: Text(text, style: AppTheme.sectionTitle)),
@@ -825,7 +827,7 @@ class AppIconButton extends StatelessWidget {
 
     final wrapped = tooltip == null
         ? button
-        : Tooltip(message: tooltip!, child: button);
+        : Tooltip(message: AppTr.tr(tooltip!), child: button);
 
     if (!badge) return wrapped;
     return Stack(
@@ -1059,7 +1061,7 @@ class AppEntityCard extends StatelessWidget {
             12,
           ),
           child: Row(
-            textDirection: TextDirection.rtl,
+            textDirection: AppTr.uiDir,
             children: [
               Container(
                 width: iconBox,

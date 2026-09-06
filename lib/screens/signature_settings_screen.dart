@@ -1,6 +1,8 @@
 import 'dart:typed_data';
 
-import 'package:flutter/material.dart';
+import 'package:flutter/material.dart' hide Text, Align;
+import '../l10n/tr_widgets.dart';
+import '../l10n/app_language.dart';
 import 'package:image_picker/image_picker.dart';
 
 import '../data/user_signature_store.dart';
@@ -72,7 +74,7 @@ class _SignatureSettingsScreenState extends State<SignatureSettingsScreen> {
       builder: (sheetContext) => SafeArea(
         top: false,
         child: Directionality(
-          textDirection: TextDirection.rtl,
+          textDirection: AppTr.uiDir,
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
@@ -156,7 +158,7 @@ class _SignatureSettingsScreenState extends State<SignatureSettingsScreen> {
         centerTitle: true,
       ),
       body: Directionality(
-        textDirection: TextDirection.rtl,
+        textDirection: AppTr.uiDir,
         child: ListView(
           padding: const EdgeInsets.all(16),
           children: [

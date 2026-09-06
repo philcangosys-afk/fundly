@@ -1,6 +1,8 @@
 import 'dart:convert';
 
-import 'package:flutter/material.dart';
+import 'package:flutter/material.dart' hide Text, Align;
+import '../l10n/tr_widgets.dart';
+import '../l10n/app_language.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:share_plus/share_plus.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -1066,7 +1068,7 @@ class _PersonalCommitmentsScreenState extends State<PersonalCommitmentsScreen> {
             ],
           ),
           child: Directionality(
-            textDirection: TextDirection.rtl,
+            textDirection: AppTr.uiDir,
             child: Padding(
               padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
               child: Column(
@@ -1084,7 +1086,7 @@ class _PersonalCommitmentsScreenState extends State<PersonalCommitmentsScreen> {
                   ),
                   const SizedBox(height: 16),
                   Row(
-                    textDirection: TextDirection.rtl,
+                    textDirection: AppTr.uiDir,
                     crossAxisAlignment: CrossAxisAlignment.start,
                     children: [
                       const Expanded(
@@ -1183,7 +1185,7 @@ class _PersonalCommitmentsScreenState extends State<PersonalCommitmentsScreen> {
             ],
           ),
           child: Directionality(
-            textDirection: TextDirection.rtl,
+            textDirection: AppTr.uiDir,
             child: Padding(
               padding: const EdgeInsets.fromLTRB(16, 12, 16, 16),
               child: Column(
@@ -1201,7 +1203,7 @@ class _PersonalCommitmentsScreenState extends State<PersonalCommitmentsScreen> {
                   ),
                   const SizedBox(height: 16),
                   Row(
-                    textDirection: TextDirection.rtl,
+                    textDirection: AppTr.uiDir,
                     crossAxisAlignment: CrossAxisAlignment.center,
                     children: [
                       Container(
@@ -1372,7 +1374,7 @@ class _PersonalCommitmentsScreenState extends State<PersonalCommitmentsScreen> {
                   borderRadius: BorderRadius.vertical(top: Radius.circular(AppTheme.rCard)),
                 ),
                 child: Directionality(
-                  textDirection: TextDirection.rtl,
+                  textDirection: AppTr.uiDir,
                   child: Form(
                     key: formKey,
                     child: SingleChildScrollView(
@@ -1426,7 +1428,7 @@ class _PersonalCommitmentsScreenState extends State<PersonalCommitmentsScreen> {
                                 ),
                               ),
                               IconButton(
-                                tooltip: 'إغلاق',
+                                tooltip: AppTr.tr('إغلاق'),
                                 onPressed: () => Navigator.pop(context),
                                 icon: const Icon(Icons.close_rounded),
                               ),
@@ -1807,9 +1809,9 @@ class _PersonalCommitmentsScreenState extends State<PersonalCommitmentsScreen> {
           suffixIcon: savedPeopleNames.isEmpty
               ? null
               : Directionality(
-                  textDirection: TextDirection.rtl,
+                  textDirection: AppTr.uiDir,
                   child: PopupMenuButton<String>(
-                    tooltip: 'اختر من الأسماء المحفوظة',
+                    tooltip: AppTr.tr('اختر من الأسماء المحفوظة'),
                     icon: const Icon(
                       Icons.arrow_drop_down_circle_outlined,
                       color: Color(0xFF0F766E),
@@ -1827,7 +1829,7 @@ class _PersonalCommitmentsScreenState extends State<PersonalCommitmentsScreen> {
                         PopupMenuItem<String>(
                           value: name,
                           child: Directionality(
-                            textDirection: TextDirection.rtl,
+                            textDirection: AppTr.uiDir,
                             child: Row(
                               children: [
                                 const Icon(
@@ -2168,7 +2170,7 @@ class _PersonalCommitmentsScreenState extends State<PersonalCommitmentsScreen> {
     return Scaffold(
       backgroundColor: AppTheme.page,
       body: Directionality(
-        textDirection: TextDirection.rtl,
+        textDirection: AppTr.uiDir,
         child: _buildScreenBody(),
       ),
       floatingActionButton: AddFab(
@@ -2418,7 +2420,7 @@ class _PersonalCommitmentsScreenState extends State<PersonalCommitmentsScreen> {
       child: Padding(
         padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
         child: Row(
-          textDirection: TextDirection.rtl,
+          textDirection: AppTr.uiDir,
           children: [
             Icon(
               isRecent ? Icons.history_rounded : Icons.search_rounded,
@@ -2470,7 +2472,7 @@ class _PersonalCommitmentsScreenState extends State<PersonalCommitmentsScreen> {
                 key: const ValueKey('personal-search-field'),
                 controller: _searchController,
                 focusNode: _searchFocusNode,
-                textDirection: TextDirection.rtl,
+                textDirection: AppTr.uiDir,
                 onChanged: (_) => setState(() {}),
                 onSubmitted: _saveRecentSearch,
                 decoration: InputDecoration(
@@ -2479,7 +2481,7 @@ class _PersonalCommitmentsScreenState extends State<PersonalCommitmentsScreen> {
                   // حتى لا يبقى نص بحث قديم منسيًا يُخفي التزامات موجودة فعلًا
                   // دون أن يلاحظ المستخدم السبب.
                   // حقل ممتلئ بلا حدود بنفس نصف قطر ولون حقول التطبيق.
-                  hintText: 'بحث',
+                  hintText: AppTr.tr('بحث'),
                   hintStyle: const TextStyle(
                     color: AppTheme.muted,
                     fontSize: 13,
@@ -2494,7 +2496,7 @@ class _PersonalCommitmentsScreenState extends State<PersonalCommitmentsScreen> {
                       ? null
                       : IconButton(
                           key: const ValueKey('personal-search-clear'),
-                          tooltip: 'مسح البحث',
+                          tooltip: AppTr.tr('مسح البحث'),
                           icon: const Icon(
                             Icons.close_rounded,
                             size: 18,
@@ -2917,7 +2919,7 @@ class _PersonalCommitmentsScreenState extends State<PersonalCommitmentsScreen> {
   Widget _buildSortDropdownButton() {
     return PopupMenuButton<String>(
       key: const ValueKey('personal-sort-button'),
-      tooltip: 'ترتيب الالتزامات',
+      tooltip: AppTr.tr('ترتيب الالتزامات'),
       offset: const Offset(0, 8),
       shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.circular(AppTheme.rField),
@@ -2928,7 +2930,7 @@ class _PersonalCommitmentsScreenState extends State<PersonalCommitmentsScreen> {
         return PopupMenuItem<String>(
           value: option.$1,
           child: Directionality(
-            textDirection: TextDirection.rtl,
+            textDirection: AppTr.uiDir,
             child: Row(
               children: [
                 Icon(
@@ -2967,7 +2969,7 @@ class _PersonalCommitmentsScreenState extends State<PersonalCommitmentsScreen> {
       // بلا مستطيل حول الكلمة: بقية الشاشات تعرض الكلمة والسهم فقط، وكان
       // هذا الزر وحده داخل صندوق أزرق فيبدو مختلفًا عن أخواته.
       child: Directionality(
-        textDirection: TextDirection.rtl,
+        textDirection: AppTr.uiDir,
         child: Row(
           mainAxisSize: MainAxisSize.min,
           children: [
@@ -2996,7 +2998,7 @@ class _PersonalCommitmentsScreenState extends State<PersonalCommitmentsScreen> {
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
         Row(
-          textDirection: TextDirection.rtl,
+          textDirection: AppTr.uiDir,
           children: [
             Container(
               constraints: const BoxConstraints(minWidth: 36),
@@ -3141,7 +3143,7 @@ class _PersonalCommitmentDetailsScreenState
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
       builder: (sheetContext) => Directionality(
-        textDirection: TextDirection.rtl,
+        textDirection: AppTr.uiDir,
         child: StatefulBuilder(
           builder: (context, setSheetState) => SafeArea(
             top: false,
@@ -3345,13 +3347,13 @@ class _PersonalCommitmentDetailsScreenState
     final name = await showDialog<String>(
       context: context,
       builder: (dialogContext) => Directionality(
-        textDirection: TextDirection.rtl,
+        textDirection: AppTr.uiDir,
         child: AlertDialog(
           title: const Text('إضافة أخرى'),
           content: TextField(
             controller: controller,
             autofocus: true,
-            decoration: const InputDecoration(labelText: 'اسم الإضافة'),
+            decoration: InputDecoration(labelText: AppTr.tr('اسم الإضافة')),
           ),
           actions: [
             TextButton(
@@ -3423,7 +3425,7 @@ class _PersonalCommitmentDetailsScreenState
     final added = await showDialog<bool>(
       context: context,
       builder: (dialogContext) => Directionality(
-        textDirection: TextDirection.rtl,
+        textDirection: AppTr.uiDir,
         child: AlertDialog(
           title: const Text('زيادة على الدين السابق'),
           content: Column(
@@ -3436,14 +3438,14 @@ class _PersonalCommitmentDetailsScreenState
                   decimal: true,
                 ),
                 decoration: InputDecoration(
-                  labelText: 'مبلغ الزيادة',
+                  labelText: AppTr.tr('مبلغ الزيادة'),
                   suffixText: AppSettings.currencySuffix,
                 ),
               ),
               const SizedBox(height: 10),
               TextField(
                 controller: noteController,
-                decoration: const InputDecoration(labelText: 'سبب الزيادة'),
+                decoration: InputDecoration(labelText: AppTr.tr('سبب الزيادة')),
               ),
             ],
           ),
@@ -3607,7 +3609,7 @@ class _PersonalCommitmentDetailsScreenState
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (dialogContext) => Directionality(
-        textDirection: TextDirection.rtl,
+        textDirection: AppTr.uiDir,
         child: AlertDialog(
           title: const Text('حذف الالتزام'),
           content: Text(
@@ -3825,7 +3827,7 @@ class _PersonalCommitmentDetailsScreenState
                   borderRadius: BorderRadius.vertical(top: Radius.circular(AppTheme.rCard)),
                 ),
                 child: Directionality(
-                  textDirection: TextDirection.rtl,
+                  textDirection: AppTr.uiDir,
                   child: Form(
                     key: formKey,
                     child: SingleChildScrollView(
@@ -4099,7 +4101,7 @@ class _PersonalCommitmentDetailsScreenState
                   borderRadius: BorderRadius.vertical(top: Radius.circular(AppTheme.rCard)),
                 ),
                 child: Directionality(
-                  textDirection: TextDirection.rtl,
+                  textDirection: AppTr.uiDir,
                   child: Form(
                     key: formKey,
                     child: SingleChildScrollView(
@@ -4350,14 +4352,14 @@ class _PersonalCommitmentDetailsScreenState
   }) {
     final decoration = InputDecoration(
       labelText: field.label + (field.required ? ' *' : ''),
-      hintText: 'اكتب اسمًا جديدًا أو اختر من القائمة المحفوظة',
+      hintText: AppTr.tr('اكتب اسمًا جديدًا أو اختر من القائمة المحفوظة'),
       prefixIcon: Icon(field.icon, color: color, size: 20),
       suffixIcon: delegateNames.isEmpty
           ? null
           : Directionality(
-              textDirection: TextDirection.rtl,
+              textDirection: AppTr.uiDir,
               child: PopupMenuButton<String>(
-                tooltip: 'اختر من الأسماء المحفوظة',
+                tooltip: AppTr.tr('اختر من الأسماء المحفوظة'),
                 icon: Icon(Icons.arrow_drop_down_circle_outlined, color: color),
                 shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.circular(AppTheme.rField),
@@ -4365,10 +4367,10 @@ class _PersonalCommitmentDetailsScreenState
                 onSelected: (value) =>
                     setModalState(() => controller.text = value),
                 itemBuilder: (context) => [
-                  const PopupMenuItem<String>(
+                  PopupMenuItem<String>(
                     enabled: false,
                     child: Directionality(
-                      textDirection: TextDirection.rtl,
+                      textDirection: AppTr.uiDir,
                       child: Text(
                         'أسماء محفوظة مسبقًا',
                         style: TextStyle(
@@ -4383,7 +4385,7 @@ class _PersonalCommitmentDetailsScreenState
                     PopupMenuItem<String>(
                       value: name,
                       child: Directionality(
-                        textDirection: TextDirection.rtl,
+                        textDirection: AppTr.uiDir,
                         child: Row(
                           children: [
                             Icon(
@@ -4467,7 +4469,7 @@ class _PersonalCommitmentDetailsScreenState
                   borderRadius: BorderRadius.vertical(top: Radius.circular(AppTheme.rCard)),
                 ),
                 child: Directionality(
-                  textDirection: TextDirection.rtl,
+                  textDirection: AppTr.uiDir,
                   child: Form(
                     key: formKey,
                     child: SingleChildScrollView(
@@ -4919,7 +4921,7 @@ class _PersonalCommitmentDetailsScreenState
               borderRadius: BorderRadius.vertical(top: Radius.circular(AppTheme.rCard)),
             ),
             child: Directionality(
-              textDirection: TextDirection.rtl,
+              textDirection: AppTr.uiDir,
               child: Form(
                 key: formKey,
                 child: SingleChildScrollView(
@@ -4972,7 +4974,7 @@ class _PersonalCommitmentDetailsScreenState
                             ),
                           ),
                           IconButton(
-                            tooltip: 'إغلاق',
+                            tooltip: AppTr.tr('إغلاق'),
                             onPressed: () => Navigator.pop(sheetContext),
                             icon: const Icon(Icons.close_rounded),
                           ),
@@ -5244,7 +5246,7 @@ class _PersonalCommitmentDetailsScreenState
       floatingActionButtonLocation: FloatingActionButtonLocation.endFloat,
       floatingActionButton: FloatingActionButton.extended(
         key: const ValueKey('add-commitment-attachment'),
-        tooltip: 'إضافة إلى الالتزام',
+        tooltip: AppTr.tr('إضافة إلى الالتزام'),
         onPressed: _openAddAttachmentMenu,
         backgroundColor: const Color(0xFFE5B22E),
         foregroundColor: const Color(0xFF3D2E08),
@@ -5275,13 +5277,13 @@ class _PersonalCommitmentDetailsScreenState
           ),
         ),
         leading: IconButton(
-          tooltip: 'رجوع',
+          tooltip: AppTr.tr('رجوع'),
           onPressed: () => Navigator.pop(context),
           icon: const Icon(Icons.arrow_back_ios_new_rounded, size: 20),
         ),
       ),
       body: Directionality(
-        textDirection: TextDirection.rtl,
+        textDirection: AppTr.uiDir,
         child: ListView(
           key: const ValueKey('compact-personal-details'),
           padding: const EdgeInsets.fromLTRB(14, 14, 14, 92),
@@ -5427,7 +5429,7 @@ class _CompactCommitmentHeader extends StatelessWidget {
               const SizedBox(width: 4),
               PopupMenuButton<_CommitmentMenuAction>(
                 key: const ValueKey('compact-details-edit'),
-                tooltip: 'إجراءات الالتزام',
+                tooltip: AppTr.tr('إجراءات الالتزام'),
                 onSelected: onAction,
                 icon: const Icon(
                   Icons.more_vert_rounded,
@@ -5488,7 +5490,7 @@ class _CommitmentMenuItem extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Directionality(
-      textDirection: TextDirection.rtl,
+      textDirection: AppTr.uiDir,
       child: Row(
         children: [
           Icon(icon, size: 19, color: color),

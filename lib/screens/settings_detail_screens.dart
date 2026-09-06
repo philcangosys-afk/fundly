@@ -1,6 +1,8 @@
 import 'dart:typed_data';
 
-import 'package:flutter/material.dart';
+import 'package:flutter/material.dart' hide Text, Align;
+import '../l10n/tr_widgets.dart';
+import '../l10n/app_language.dart';
 import 'package:flutter/services.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:url_launcher/url_launcher.dart';
@@ -82,7 +84,7 @@ class _ProfileDataSettingsPageState extends State<ProfileDataSettingsPage> {
         borderRadius: BorderRadius.vertical(top: Radius.circular(AppTheme.rCard)),
       ),
       builder: (sheetContext) => Directionality(
-        textDirection: TextDirection.rtl,
+        textDirection: AppTr.uiDir,
         child: SafeArea(
           top: false,
           child: Padding(
@@ -186,7 +188,7 @@ class _ProfileDataSettingsPageState extends State<ProfileDataSettingsPage> {
         scrolledUnderElevation: 0,
       ),
       body: Directionality(
-        textDirection: TextDirection.rtl,
+        textDirection: AppTr.uiDir,
         child: ListView(
           padding: const EdgeInsets.fromLTRB(20, 18, 20, 32),
           children: [
@@ -224,7 +226,7 @@ class _ProfileDataSettingsPageState extends State<ProfileDataSettingsPage> {
                       elevation: 0,
                       child: IconButton(
                         key: const ValueKey('profile-photo-picker'),
-                        tooltip: 'تغيير الصورة الشخصية',
+                        tooltip: AppTr.tr('تغيير الصورة الشخصية'),
                         onPressed: _openPhotoPicker,
                         icon: const Icon(
                           Icons.photo_camera_outlined,
@@ -450,10 +452,10 @@ class _NotificationSettingsPageState extends State<NotificationSettingsPage> {
           DropdownButtonFormField<int>(
             key: const ValueKey('settings-lead-time'),
             initialValue: _settings.leadTimeDays,
-            decoration: const InputDecoration(
-              labelText: 'وقت التذكير الافتراضي',
+            decoration: InputDecoration(
+              labelText: AppTr.tr('وقت التذكير الافتراضي'),
               helperText:
-                  'يُستخدم للعناصر التي لم تُحدَّد لها مدة تذكير خاصة بها',
+                  AppTr.tr('يُستخدم للعناصر التي لم تُحدَّد لها مدة تذكير خاصة بها'),
               border: OutlineInputBorder(),
             ),
             items: AppSettings.leadTimeOptions.entries
@@ -510,8 +512,8 @@ class _LanguageCurrencySettingsPageState
           DropdownButtonFormField<String>(
             key: const ValueKey('settings-language'),
             initialValue: _settings.language,
-            decoration: const InputDecoration(
-              labelText: 'لغة التطبيق',
+            decoration: InputDecoration(
+              labelText: AppTr.tr('لغة التطبيق'),
               border: OutlineInputBorder(),
             ),
             items: AppSettings.languages
@@ -523,17 +525,14 @@ class _LanguageCurrencySettingsPageState
               if (value != null) _settings.setLanguage(value);
             },
           ),
-          if (_settings.language != 'العربية')
-            const SettingsNotice(
-              text:
-                  'واجهة التطبيق مكتوبة بالعربية حاليًا؛ الترجمة الإنجليزية قيد الإعداد.',
-            ),
+          // الترجمة الإنجليزية أصبحت فعلية — الإشعار القديم "قيد
+          // الإعداد" حُذف: تغيير اللغة يترجم الواجهة ويقلب الاتجاه فورًا.
           DropdownButtonFormField<String>(
             key: const ValueKey('settings-currency'),
             initialValue: _settings.currency,
-            decoration: const InputDecoration(
-              labelText: 'العملة الافتراضية',
-              helperText: 'تظهر بجانب كل مبلغ في التطبيق',
+            decoration: InputDecoration(
+              labelText: AppTr.tr('العملة الافتراضية'),
+              helperText: AppTr.tr('تظهر بجانب كل مبلغ في التطبيق'),
               border: OutlineInputBorder(),
             ),
             items: AppSettings.currencies.keys
@@ -572,8 +571,8 @@ class _LanguageCurrencySettingsPageState
           DropdownButtonFormField<String>(
             key: const ValueKey('settings-calendar'),
             initialValue: _settings.calendar,
-            decoration: const InputDecoration(
-              labelText: 'نوع التقويم الافتراضي',
+            decoration: InputDecoration(
+              labelText: AppTr.tr('نوع التقويم الافتراضي'),
               border: OutlineInputBorder(),
             ),
             items: AppSettings.calendars
@@ -725,7 +724,7 @@ class _SecuritySettingsPageState extends State<SecuritySettingsPage> {
       context: context,
       builder: (dialogContext) => StatefulBuilder(
         builder: (dialogContext, setDialogState) => Directionality(
-          textDirection: TextDirection.rtl,
+          textDirection: AppTr.uiDir,
           child: AlertDialog(
             title: Text(title),
             content: Column(
@@ -747,8 +746,8 @@ class _SecuritySettingsPageState extends State<SecuritySettingsPage> {
                   keyboardType: TextInputType.number,
                   maxLength: 4,
                   inputFormatters: [FilteringTextInputFormatter.digitsOnly],
-                  decoration: const InputDecoration(
-                    labelText: 'الرمز',
+                  decoration: InputDecoration(
+                    labelText: AppTr.tr('الرمز'),
                     counterText: '',
                     border: OutlineInputBorder(),
                   ),
@@ -761,8 +760,8 @@ class _SecuritySettingsPageState extends State<SecuritySettingsPage> {
                     keyboardType: TextInputType.number,
                     maxLength: 4,
                     inputFormatters: [FilteringTextInputFormatter.digitsOnly],
-                    decoration: const InputDecoration(
-                      labelText: 'تأكيد الرمز',
+                    decoration: InputDecoration(
+                      labelText: AppTr.tr('تأكيد الرمز'),
                       counterText: '',
                       border: OutlineInputBorder(),
                     ),
@@ -1113,7 +1112,7 @@ class SettingsDetailPage extends StatelessWidget {
         scrolledUnderElevation: 0,
       ),
       body: Directionality(
-        textDirection: TextDirection.rtl,
+        textDirection: AppTr.uiDir,
         child: ListView.separated(
           padding: const EdgeInsets.fromLTRB(16, 18, 16, 28),
           itemCount: children.length,
@@ -1290,7 +1289,7 @@ class SettingsHubPage extends StatelessWidget {
             scrolledUnderElevation: 0,
           ),
           body: Directionality(
-            textDirection: TextDirection.rtl,
+            textDirection: AppTr.uiDir,
             child: ListView.separated(
               padding: const EdgeInsets.fromLTRB(16, 14, 16, 28),
               itemCount: items.length + 1,

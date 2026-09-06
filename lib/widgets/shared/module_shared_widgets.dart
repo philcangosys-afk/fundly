@@ -1,4 +1,6 @@
-import 'package:flutter/material.dart';
+import 'package:flutter/material.dart' hide Text, Align;
+import '../../l10n/tr_widgets.dart';
+import '../../l10n/app_language.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../detail_page_chrome.dart';
@@ -90,7 +92,7 @@ class UnifiedSearchFilterBar extends StatelessWidget {
               Expanded(
                 child: TextField(
                   controller: controller,
-                  textDirection: TextDirection.rtl,
+                  textDirection: AppTr.uiDir,
                   onChanged: onChanged,
                   decoration: InputDecoration(
                     hintText: hintText,
@@ -495,7 +497,7 @@ class AddTypeSheet extends StatelessWidget {
     return SafeArea(
       top: false,
       child: Directionality(
-        textDirection: TextDirection.rtl,
+        textDirection: AppTr.uiDir,
         child: ListView(
           shrinkWrap: true,
           padding: const EdgeInsets.fromLTRB(16, 12, 16, 20),

@@ -2,7 +2,9 @@ import 'dart:convert';
 import 'dart:typed_data';
 import 'dart:ui' as ui;
 
-import 'package:flutter/material.dart';
+import 'package:flutter/material.dart' hide Text, Align;
+import '../l10n/tr_widgets.dart';
+import '../l10n/app_language.dart';
 import 'package:flutter/rendering.dart';
 import 'package:share_plus/share_plus.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -163,7 +165,7 @@ class _DocumentTemplatesScreenState extends State<DocumentTemplatesScreen> {
             ),
             child: SingleChildScrollView(
               child: Directionality(
-                textDirection: TextDirection.rtl,
+                textDirection: AppTr.uiDir,
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
@@ -193,8 +195,8 @@ class _DocumentTemplatesScreenState extends State<DocumentTemplatesScreen> {
                     const SizedBox(height: 9),
                     DropdownButtonFormField<String>(
                       initialValue: reminderLabel,
-                      decoration: const InputDecoration(
-                        labelText: 'التذكير قبل الانتهاء',
+                      decoration: InputDecoration(
+                        labelText: AppTr.tr('التذكير قبل الانتهاء'),
                         border: OutlineInputBorder(),
                         isDense: true,
                       ),
@@ -288,8 +290,8 @@ class _DocumentTemplatesScreenState extends State<DocumentTemplatesScreen> {
                       DropdownButtonFormField<String>(
                         initialValue: link?.id,
                         isExpanded: true,
-                        decoration: const InputDecoration(
-                          labelText: 'ربط المستند بـ (اختياري)',
+                        decoration: InputDecoration(
+                          labelText: AppTr.tr('ربط المستند بـ (اختياري)'),
                           border: OutlineInputBorder(),
                           isDense: true,
                         ),
@@ -444,7 +446,7 @@ class _DocumentTemplatesScreenState extends State<DocumentTemplatesScreen> {
     await showDialog<void>(
       context: context,
       builder: (dialogContext) => Directionality(
-        textDirection: TextDirection.rtl,
+        textDirection: AppTr.uiDir,
         child: AlertDialog(
           title: const Text('معاينة النموذج'),
           content: SingleChildScrollView(
@@ -604,7 +606,7 @@ class _DocumentTemplatesScreenState extends State<DocumentTemplatesScreen> {
     return TextField(
       controller: controller,
       maxLines: maxLines,
-      textDirection: TextDirection.rtl,
+      textDirection: AppTr.uiDir,
       decoration: InputDecoration(
         labelText: label,
         border: const OutlineInputBorder(),
@@ -657,7 +659,7 @@ class _DocumentTemplatesScreenState extends State<DocumentTemplatesScreen> {
       body: _loading
           ? const Center(child: CircularProgressIndicator())
           : Directionality(
-        textDirection: TextDirection.rtl,
+        textDirection: AppTr.uiDir,
         child: RefreshIndicator(
           onRefresh: _load,
           child: ListView(

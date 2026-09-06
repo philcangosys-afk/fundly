@@ -1,7 +1,9 @@
 import 'dart:convert';
 import 'dart:typed_data';
 
-import 'package:flutter/material.dart';
+import 'package:flutter/material.dart' hide Text, Align;
+import 'l10n/tr_widgets.dart';
+import 'l10n/app_language.dart';
 import 'package:flutter/services.dart';
 import 'package:share_plus/share_plus.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -372,7 +374,7 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
   /// الصندوق يفتح نافذة التثبيت، وكل بطاقة صغيرة تفتح قسمها.
   Widget _buildSummaryAndPinnedRow() {
     return Directionality(
-      textDirection: TextDirection.rtl,
+      textDirection: AppTr.uiDir,
       child: Container(
         key: const ValueKey('home-summary-pin-panel'),
         decoration: BoxDecoration(
@@ -574,7 +576,7 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
                 AppIconButton(
                   key: const ValueKey('home-pin-picker'),
                   icon: Icons.push_pin_outlined,
-                  tooltip: 'إدارة العناصر المثبتة',
+                  tooltip: AppTr.tr('إدارة العناصر المثبتة'),
                   size: 24,
                   onTap: () {
                     HapticFeedback.selectionClick();
@@ -702,7 +704,7 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
       useSafeArea: true,
       backgroundColor: AppTheme.page,
       builder: (sheetContext) => Directionality(
-        textDirection: TextDirection.rtl,
+        textDirection: AppTr.uiDir,
         child: FractionallySizedBox(
           heightFactor: 1,
           child: Column(
@@ -719,7 +721,7 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
                   children: [
                     IconButton(
                       key: const ValueKey('close-global-summary'),
-                      tooltip: 'إغلاق',
+                      tooltip: AppTr.tr('إغلاق'),
                       onPressed: () => Navigator.of(sheetContext).pop(),
                       icon: const Icon(Icons.close_rounded),
                     ),
@@ -740,7 +742,7 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
                     ),
                     IconButton(
                       key: const ValueKey('global-summary-back'),
-                      tooltip: 'تعديل الاختيار',
+                      tooltip: AppTr.tr('تعديل الاختيار'),
                       onPressed: () {
                         Navigator.of(sheetContext).pop();
                         _openGlobalSummarySheet();
@@ -837,6 +839,8 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
   }
 
   String _formatArabicNumber(int value) {
+    // بالإنجليزية تُعرض الأرقام الغربية كما هي.
+    if (AppTr.isEnglish) return value.toString();
     const western = ['0', '1', '2', '3', '4', '5', '6', '7', '8', '9'];
     const arabic = ['٠', '١', '٢', '٣', '٤', '٥', '٦', '٧', '٨', '٩'];
     var output = value.toString();
@@ -889,7 +893,7 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
       backgroundColor: Colors.transparent,
       builder: (context) {
         return Directionality(
-          textDirection: TextDirection.rtl,
+          textDirection: AppTr.uiDir,
           child: Padding(
             padding: const EdgeInsets.fromLTRB(10, 8, 10, 10),
             child: Container(
@@ -967,7 +971,7 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
                                 ),
                               ),
                               IconButton(
-                                tooltip: 'إغلاق',
+                                tooltip: AppTr.tr('إغلاق'),
                                 onPressed: () => Navigator.of(context).pop(),
                                 style: IconButton.styleFrom(
                                   backgroundColor: Colors.white,
@@ -1127,7 +1131,7 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
                           child: Padding(
                             padding: const EdgeInsets.fromLTRB(16, 6, 16, 7),
                             child: Directionality(
-                              textDirection: TextDirection.rtl,
+                              textDirection: AppTr.uiDir,
                               child: Column(
                                 mainAxisAlignment: MainAxisAlignment.center,
                                 children: [
@@ -1206,7 +1210,7 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
                                       // ولون موحّد مع بقية أزرار التطبيق
                                       // بدل ثلاثة أشكال مختلفة بحدود ملوّنة.
                                       AppIconButton(
-                                        tooltip: 'التقويم الذكي',
+                                        tooltip: AppTr.tr('التقويم الذكي'),
                                         icon: Icons.calendar_month_rounded,
                                         background: AppTheme.field,
                                         color: const Color(0xFF2E7D62),
@@ -1219,7 +1223,7 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
                                       ),
                                       const SizedBox(width: AppTheme.sSm),
                                       AppIconButton(
-                                        tooltip: 'الإشعارات',
+                                        tooltip: AppTr.tr('الإشعارات'),
                                         icon: _alertsCount > 0
                                             ? Icons.notifications_active_rounded
                                             : Icons.notifications_none_rounded,
@@ -1274,7 +1278,7 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
                   ),
                   SliverToBoxAdapter(
                     child: Directionality(
-                      textDirection: TextDirection.rtl,
+                      textDirection: AppTr.uiDir,
                       child: FadeTransition(
                         opacity: _entranceCurve,
                         child: SlideTransition(
@@ -1301,7 +1305,7 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
                                         height: 52,
                                         child: TextField(
                                           controller: _searchController,
-                                          textDirection: TextDirection.rtl,
+                                          textDirection: AppTr.uiDir,
                                           style: const TextStyle(
                                             fontSize: 13.5,
                                             fontWeight: FontWeight.w600,
@@ -1730,7 +1734,7 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
         );
       },
       child: Directionality(
-        textDirection: TextDirection.rtl,
+        textDirection: AppTr.uiDir,
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
@@ -1904,7 +1908,7 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
         crossAxisAlignment: CrossAxisAlignment.end,
         children: [
           Row(
-            textDirection: TextDirection.rtl,
+            textDirection: AppTr.uiDir,
             mainAxisAlignment: MainAxisAlignment.spaceBetween,
             children: [
               Container(
@@ -1937,7 +1941,7 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
             (item) => Padding(
               padding: EdgeInsets.only(bottom: 10),
               child: Row(
-                textDirection: TextDirection.rtl,
+                textDirection: AppTr.uiDir,
                 children: [
                   Container(
                     width: 6,
@@ -1962,7 +1966,7 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
                         color: Colors.grey[700],
                         height: 1.4,
                       ),
-                      textDirection: TextDirection.rtl,
+                      textDirection: AppTr.uiDir,
                       maxLines: 2,
                       overflow: TextOverflow.ellipsis,
                     ),
@@ -1989,7 +1993,7 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
                 ),
                 child: Row(
                   mainAxisSize: MainAxisSize.min,
-                  textDirection: TextDirection.rtl,
+                  textDirection: AppTr.uiDir,
                   children: [
                     Icon(Icons.arrow_forward, color: color, size: 16),
                     SizedBox(width: 6),
@@ -2013,7 +2017,7 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
 
   Widget _buildPersonalCommitmentCards(Color color) {
     return Row(
-      textDirection: TextDirection.rtl,
+      textDirection: AppTr.uiDir,
       children: [
         Expanded(
           child: Container(
@@ -2034,7 +2038,7 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
               crossAxisAlignment: CrossAxisAlignment.end,
               children: [
                 Row(
-                  textDirection: TextDirection.rtl,
+                  textDirection: AppTr.uiDir,
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
                     Icon(Icons.south_east, color: Color(0xFFFB7185), size: 16),
@@ -2074,7 +2078,7 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
               crossAxisAlignment: CrossAxisAlignment.end,
               children: [
                 Row(
-                  textDirection: TextDirection.rtl,
+                  textDirection: AppTr.uiDir,
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
                     Icon(Icons.north_west, color: Color(0xFF10B981), size: 16),
@@ -2100,7 +2104,7 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
 
   Widget _buildCurrencyAmount(String amount, Color amountColor) {
     return RichText(
-      textDirection: TextDirection.rtl,
+      textDirection: AppTr.uiDir,
       text: TextSpan(
         children: [
           TextSpan(
@@ -2136,7 +2140,7 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
       child: Padding(
         padding: const EdgeInsets.fromLTRB(12, 4, 12, 6),
         child: Directionality(
-          textDirection: TextDirection.rtl,
+          textDirection: AppTr.uiDir,
           child: Row(
             children: [
               Expanded(
@@ -2267,7 +2271,7 @@ class _HomeCategoryMetric extends StatelessWidget {
         vertical: compact ? 5 : 6,
       ),
       child: Row(
-        textDirection: TextDirection.rtl,
+        textDirection: AppTr.uiDir,
         children: [
           Icon(icon, color: color, size: compact ? 14 : 16),
           SizedBox(width: compact ? 5 : 7),
@@ -2376,7 +2380,7 @@ class _HomePinnedChip extends StatelessWidget {
                 ),
               ),
               IconButton(
-                tooltip: 'إلغاء التثبيت',
+                tooltip: AppTr.tr('إلغاء التثبيت'),
                 onPressed: onRemove,
                 visualDensity: VisualDensity.compact,
                 constraints: const BoxConstraints.tightFor(
@@ -3018,14 +3022,14 @@ class _ReportsArchiveHubPageState extends State<_ReportsArchiveHubPage> {
     final reason = await showDialog<String>(
       context: context,
       builder: (dialogContext) => Directionality(
-        textDirection: TextDirection.rtl,
+        textDirection: AppTr.uiDir,
         child: AlertDialog(
           title: const Text('سبب الأرشفة'),
           content: TextField(
             controller: controller,
             autofocus: true,
-            decoration: const InputDecoration(
-              hintText: 'مثال: انتهت الفترة / للحفظ المرجعي',
+            decoration: InputDecoration(
+              hintText: AppTr.tr('مثال: انتهت الفترة / للحفظ المرجعي'),
             ),
           ),
           actions: [
@@ -3076,7 +3080,7 @@ class _ReportsArchiveHubPageState extends State<_ReportsArchiveHubPage> {
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (dialogContext) => Directionality(
-        textDirection: TextDirection.rtl,
+        textDirection: AppTr.uiDir,
         child: AlertDialog(
           title: const Text('حذف التقرير'),
           content: Text('سيُحذف "${report.title}" نهائيًا. هل تريد المتابعة؟'),
@@ -3156,7 +3160,7 @@ class _ReportsArchiveHubPageState extends State<_ReportsArchiveHubPage> {
       ),
       builder: (sheetContext) {
         return Directionality(
-          textDirection: TextDirection.rtl,
+          textDirection: AppTr.uiDir,
           child: DraggableScrollableSheet(
             expand: false,
             initialChildSize: 0.75,
@@ -3494,7 +3498,7 @@ class _ReportsArchiveHubPageState extends State<_ReportsArchiveHubPage> {
                       ),
                     ),
                     IconButton(
-                      tooltip: 'مشاركة / تصدير',
+                      tooltip: AppTr.tr('مشاركة / تصدير'),
                       onPressed: () => _handleReportAction(report, 'share'),
                       visualDensity: VisualDensity.compact,
                       icon: const Icon(
@@ -3504,7 +3508,7 @@ class _ReportsArchiveHubPageState extends State<_ReportsArchiveHubPage> {
                       ),
                     ),
                     PopupMenuButton<String>(
-                      tooltip: 'خيارات',
+                      tooltip: AppTr.tr('خيارات'),
                       icon: const Icon(
                         Icons.more_horiz_rounded,
                         size: 20,
@@ -3691,7 +3695,7 @@ class _ReportsArchiveHubPageState extends State<_ReportsArchiveHubPage> {
     // شريط التبويبات من اليمين: "التقارير" أولًا ثم "الأرشيف". كان الشريط
     // خارج نطاق الاتجاه فيظهر معكوسًا.
     return Directionality(
-      textDirection: TextDirection.rtl,
+      textDirection: AppTr.uiDir,
       child: DefaultTabController(
         length: 2,
         child: Scaffold(
@@ -4041,7 +4045,7 @@ class _DelegationsHubPageState extends State<_DelegationsHubPage> {
       builder: (sheetContext) => SafeArea(
         top: false,
         child: Directionality(
-          textDirection: TextDirection.rtl,
+          textDirection: AppTr.uiDir,
           child: Column(
             mainAxisSize: MainAxisSize.min,
             children: [
@@ -4158,7 +4162,7 @@ class _DelegationsHubPageState extends State<_DelegationsHubPage> {
                 ),
                 child: SingleChildScrollView(
                   child: Directionality(
-                    textDirection: TextDirection.rtl,
+                    textDirection: AppTr.uiDir,
                     child: Column(
                       crossAxisAlignment: CrossAxisAlignment.stretch,
                       children: [
@@ -4231,9 +4235,9 @@ class _DelegationsHubPageState extends State<_DelegationsHubPage> {
                         const SizedBox(height: 6),
                         TextField(
                           controller: delegateController,
-                          textDirection: TextDirection.rtl,
+                          textDirection: AppTr.uiDir,
                           decoration: InputDecoration(
-                            hintText: 'اكتب اسم الشخص أو الجهة',
+                            hintText: AppTr.tr('اكتب اسم الشخص أو الجهة'),
                             filled: true,
                             fillColor: AppTheme.field,
                             border: OutlineInputBorder(
@@ -4616,7 +4620,7 @@ class _DelegationsHubPageState extends State<_DelegationsHubPage> {
       body: _loading
           ? const Center(child: CircularProgressIndicator())
           : Directionality(
-        textDirection: TextDirection.rtl,
+        textDirection: AppTr.uiDir,
         child: RefreshIndicator(
           onRefresh: _load,
           child: ListView(
@@ -5084,7 +5088,7 @@ class _DelegationCard extends StatelessWidget {
                       ),
                     ),
                     PopupMenuButton<String>(
-                      tooltip: 'خيارات التفويض',
+                      tooltip: AppTr.tr('خيارات التفويض'),
                       onSelected: onAction,
                       itemBuilder: (context) => [
                         const PopupMenuItem(
@@ -5432,7 +5436,7 @@ class _DelegationDetailsPage extends StatelessWidget {
         surfaceTintColor: Colors.transparent,
       ),
       body: Directionality(
-        textDirection: TextDirection.rtl,
+        textDirection: AppTr.uiDir,
         child: ListView(
           padding: const EdgeInsets.fromLTRB(16, 16, 16, 22),
           children: [
@@ -5857,7 +5861,7 @@ class _WalletsHubPageState extends State<_WalletsHubPage> {
         borderRadius: BorderRadius.vertical(top: Radius.circular(AppTheme.rCard)),
       ),
       builder: (sheetContext) => Directionality(
-        textDirection: TextDirection.rtl,
+        textDirection: AppTr.uiDir,
         child: StatefulBuilder(
           builder: (sheetContext, setSheetState) => Padding(
             padding: EdgeInsets.fromLTRB(
@@ -5943,14 +5947,14 @@ class _WalletsHubPageState extends State<_WalletsHubPage> {
                   const SizedBox(height: 12),
                   TextField(
                     controller: nameCtrl,
-                    textAlign: TextAlign.right,
+                    textAlign: AppTr.alignEnd,
                     decoration: _field('اسم المحفظة'),
                   ),
                   if (kind != WalletRecord.kindCash) ...[
                     const SizedBox(height: 10),
                     TextField(
                       controller: issuerCtrl,
-                      textAlign: TextAlign.right,
+                      textAlign: AppTr.alignEnd,
                       decoration: _field(
                         kind == WalletRecord.kindDigital
                             ? 'المزوّد'
@@ -5962,7 +5966,7 @@ class _WalletsHubPageState extends State<_WalletsHubPage> {
                     const SizedBox(height: 10),
                     TextField(
                       controller: last4Ctrl,
-                      textAlign: TextAlign.right,
+                      textAlign: AppTr.alignEnd,
                       keyboardType: TextInputType.number,
                       maxLength: 4,
                       decoration: _field('آخر 4 أرقام'),
@@ -5971,7 +5975,7 @@ class _WalletsHubPageState extends State<_WalletsHubPage> {
                   const SizedBox(height: 10),
                   TextField(
                     controller: openingCtrl,
-                    textAlign: TextAlign.right,
+                    textAlign: AppTr.alignEnd,
                     keyboardType: const TextInputType.numberWithOptions(
                       decimal: true,
                       signed: true,
@@ -6019,7 +6023,7 @@ class _WalletsHubPageState extends State<_WalletsHubPage> {
                   const SizedBox(height: 12),
                   TextField(
                     controller: notesCtrl,
-                    textAlign: TextAlign.right,
+                    textAlign: AppTr.alignEnd,
                     maxLines: 2,
                     decoration: _field('ملاحظات (اختياري)'),
                   ),
@@ -6137,7 +6141,7 @@ class _WalletsHubPageState extends State<_WalletsHubPage> {
         borderRadius: BorderRadius.vertical(top: Radius.circular(AppTheme.rCard)),
       ),
       builder: (sheetContext) => Directionality(
-        textDirection: TextDirection.rtl,
+        textDirection: AppTr.uiDir,
         child: StatefulBuilder(
           builder: (sheetContext, setSheetState) => Padding(
             padding: EdgeInsets.fromLTRB(
@@ -6176,7 +6180,7 @@ class _WalletsHubPageState extends State<_WalletsHubPage> {
                   const SizedBox(height: 14),
                   TextField(
                     controller: amountCtrl,
-                    textAlign: TextAlign.right,
+                    textAlign: AppTr.alignEnd,
                     keyboardType: const TextInputType.numberWithOptions(
                       decimal: true,
                     ),
@@ -6213,7 +6217,7 @@ class _WalletsHubPageState extends State<_WalletsHubPage> {
                         firstDate: DateTime(2015),
                         lastDate: DateTime(2060),
                         builder: (pickerContext, child) => Directionality(
-                          textDirection: TextDirection.rtl,
+                          textDirection: AppTr.uiDir,
                           child: child!,
                         ),
                       );
@@ -6227,7 +6231,7 @@ class _WalletsHubPageState extends State<_WalletsHubPage> {
                   const SizedBox(height: 10),
                   TextField(
                     controller: categoryCtrl,
-                    textAlign: TextAlign.right,
+                    textAlign: AppTr.alignEnd,
                     decoration: _field('التصنيف'),
                   ),
                   const SizedBox(height: 8),
@@ -6246,7 +6250,7 @@ class _WalletsHubPageState extends State<_WalletsHubPage> {
                   const SizedBox(height: 10),
                   TextField(
                     controller: noteCtrl,
-                    textAlign: TextAlign.right,
+                    textAlign: AppTr.alignEnd,
                     maxLines: 2,
                     decoration: _field('ملاحظات (اختياري)'),
                   ),
@@ -6328,7 +6332,7 @@ class _WalletsHubPageState extends State<_WalletsHubPage> {
         borderRadius: BorderRadius.vertical(top: Radius.circular(AppTheme.rCard)),
       ),
       builder: (sheetContext) => Directionality(
-        textDirection: TextDirection.rtl,
+        textDirection: AppTr.uiDir,
         child: StatefulBuilder(
           builder: (sheetContext, setSheetState) => Padding(
             padding: EdgeInsets.fromLTRB(
@@ -6416,7 +6420,7 @@ class _WalletsHubPageState extends State<_WalletsHubPage> {
                   const SizedBox(height: 10),
                   TextField(
                     controller: amountCtrl,
-                    textAlign: TextAlign.right,
+                    textAlign: AppTr.alignEnd,
                     keyboardType: const TextInputType.numberWithOptions(
                       decimal: true,
                     ),
@@ -6431,7 +6435,7 @@ class _WalletsHubPageState extends State<_WalletsHubPage> {
                         firstDate: DateTime(2015),
                         lastDate: DateTime(2060),
                         builder: (pickerContext, child) => Directionality(
-                          textDirection: TextDirection.rtl,
+                          textDirection: AppTr.uiDir,
                           child: child!,
                         ),
                       );
@@ -6445,7 +6449,7 @@ class _WalletsHubPageState extends State<_WalletsHubPage> {
                   const SizedBox(height: 10),
                   TextField(
                     controller: noteCtrl,
-                    textAlign: TextAlign.right,
+                    textAlign: AppTr.alignEnd,
                     decoration: _field('ملاحظات (اختياري)'),
                   ),
                   const SizedBox(height: 16),
@@ -6518,7 +6522,7 @@ class _WalletsHubPageState extends State<_WalletsHubPage> {
         borderRadius: BorderRadius.vertical(top: Radius.circular(AppTheme.rCard)),
       ),
       builder: (sheetContext) => Directionality(
-        textDirection: TextDirection.rtl,
+        textDirection: AppTr.uiDir,
         child: SafeArea(
           top: false,
           child: Column(
@@ -6591,7 +6595,7 @@ class _WalletsHubPageState extends State<_WalletsHubPage> {
     final confirmed = await showDialog<bool>(
       context: context,
       builder: (dialogContext) => Directionality(
-        textDirection: TextDirection.rtl,
+        textDirection: AppTr.uiDir,
         child: AlertDialog(
           title: const Text('حذف المحفظة'),
           // تحذير صريح بعدد الحركات التي ستُحذف معها — الحذف يُسقط كل
@@ -6639,7 +6643,7 @@ class _WalletsHubPageState extends State<_WalletsHubPage> {
         borderRadius: BorderRadius.vertical(top: Radius.circular(AppTheme.rCard)),
       ),
       builder: (sheetContext) => Directionality(
-        textDirection: TextDirection.rtl,
+        textDirection: AppTr.uiDir,
         child: SafeArea(
           top: false,
           child: Column(
@@ -6689,7 +6693,7 @@ class _WalletsHubPageState extends State<_WalletsHubPage> {
   Widget build(BuildContext context) {
     final totals = _monthTotals;
     return Directionality(
-      textDirection: TextDirection.rtl,
+      textDirection: AppTr.uiDir,
       child: Scaffold(
         backgroundColor: AppTheme.page,
         appBar: AppBar(
@@ -6714,7 +6718,7 @@ class _WalletsHubPageState extends State<_WalletsHubPage> {
               ),
             ),
             IconButton(
-              tooltip: 'تحديث',
+              tooltip: AppTr.tr('تحديث'),
               onPressed: _load,
               icon: const Icon(Icons.refresh_rounded),
             ),

@@ -1,4 +1,6 @@
-import 'package:flutter/material.dart';
+import 'package:flutter/material.dart' hide Text, Align;
+import '../l10n/tr_widgets.dart';
+import '../l10n/app_language.dart';
 
 class FollowupCenterItem {
   final String label;
@@ -101,10 +103,15 @@ class _FollowupCenterCardState extends State<FollowupCenterCard> {
               IconButton(
                 key: const ValueKey('follow-up-more'),
                 onPressed: widget.onMoreTap ?? () {},
-                tooltip: 'عرض المتابعة كاملة',
+                tooltip: AppTr.tr('عرض المتابعة كاملة'),
                 visualDensity: VisualDensity.compact,
                 color: _followUpColor,
-                icon: const Icon(Icons.arrow_forward_ios_rounded, size: 19),
+                icon: Icon(
+                  AppTr.isEnglish
+                      ? Icons.arrow_back_ios_new_rounded
+                      : Icons.arrow_forward_ios_rounded,
+                  size: 19,
+                ),
               ),
             ],
           ),
@@ -113,7 +120,7 @@ class _FollowupCenterCardState extends State<FollowupCenterCard> {
             scrollDirection: Axis.horizontal,
             reverse: true,
             child: Row(
-              textDirection: TextDirection.rtl,
+              textDirection: AppTr.uiDir,
               children: [
                 for (var index = 0; index < widget.items.length; index++) ...[
                   _FollowupItemText(

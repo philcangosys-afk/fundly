@@ -1,4 +1,6 @@
-import 'package:flutter/material.dart';
+import 'package:flutter/material.dart' hide Text, Align;
+import '../l10n/tr_widgets.dart';
+import '../l10n/app_language.dart';
 import '../config/commitment_additions_config.dart';
 import 'shared/app_design.dart';
 
@@ -36,7 +38,7 @@ class _CommitmentAdditionsMenuState extends State<CommitmentAdditionsMenu> {
         : const <AdditionType>[];
 
     return Directionality(
-      textDirection: TextDirection.rtl,
+      textDirection: AppTr.uiDir,
       child: Container(
         constraints: BoxConstraints(
           maxHeight: MediaQuery.of(context).size.height * 0.82,
@@ -111,7 +113,7 @@ class _CommitmentAdditionsMenuState extends State<CommitmentAdditionsMenu> {
                               ],
                             ),
                             child: IconButton(
-                              tooltip: 'إضافة جديدة',
+                              tooltip: AppTr.tr('إضافة جديدة'),
                               splashRadius: 20,
                               onPressed: () {
                                 widget.onAdditionSelected(AllAdditions.payment);

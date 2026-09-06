@@ -1,4 +1,6 @@
-import 'package:flutter/material.dart';
+import 'package:flutter/material.dart' hide Text, Align;
+import '../../l10n/tr_widgets.dart';
+import '../../l10n/app_language.dart';
 
 import 'app_design.dart';
 
@@ -286,7 +288,7 @@ Future<void> showAppFilterSheet({
     isScrollControlled: true,
     backgroundColor: Colors.transparent,
     builder: (sheetContext) => Directionality(
-      textDirection: TextDirection.rtl,
+      textDirection: AppTr.uiDir,
       child: StatefulBuilder(
         builder: (context, setSheetState) {
           // الاختصار المختار يظهر محدَّدًا بدل أن يبدو كأن الضغطة لم تفعل

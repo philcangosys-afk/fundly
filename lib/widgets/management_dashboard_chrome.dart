@@ -1,4 +1,6 @@
-import 'package:flutter/material.dart';
+import 'package:flutter/material.dart' hide Text, Align;
+import '../l10n/tr_widgets.dart';
+import '../l10n/app_language.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'shared/app_design.dart';
 import 'shared/search_matching.dart';
@@ -119,7 +121,7 @@ class ManagementDashboardHeader extends StatelessWidget {
       shape: const Border(bottom: BorderSide(color: AppTheme.line)),
       titleSpacing: AppTheme.pageInset,
       title: Directionality(
-        textDirection: TextDirection.rtl,
+        textDirection: AppTr.uiDir,
         child: Row(
           children: [
             AppIconTile(icon: icon, color: accent),
@@ -147,7 +149,7 @@ class ManagementDashboardHeader extends StatelessWidget {
             ),
             const SizedBox(width: AppTheme.sSm),
             AppIconButton(
-              tooltip: 'كلندر ذكي',
+              tooltip: AppTr.tr('كلندر ذكي'),
               icon: Icons.calendar_month_rounded,
               background: AppTheme.field,
               color: accent,
@@ -160,8 +162,10 @@ class ManagementDashboardHeader extends StatelessWidget {
             // السهم يشير يمينًا لا يسارًا: الواجهة عربية والرجوع في اتجاه
             // القراءة من اليمين إلى اليسار يعني السهم المتّجه يمينًا.
             AppIconButton(
-              tooltip: 'رجوع',
-              icon: Icons.arrow_forward_ios_rounded,
+              tooltip: AppTr.tr('رجوع'),
+              icon: AppTr.isEnglish
+                  ? Icons.arrow_back_ios_new_rounded
+                  : Icons.arrow_forward_ios_rounded,
               background: AppTheme.field,
               color: AppTheme.chevron,
               onTap: onClose ?? () => Navigator.of(context).maybePop(),
@@ -188,7 +192,7 @@ class ManagementListHeading extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Directionality(
-      textDirection: TextDirection.rtl,
+      textDirection: AppTr.uiDir,
       child: Row(
         children: [
           Container(
@@ -336,7 +340,7 @@ class _ManagementSearchBarState extends State<ManagementSearchBar> {
                     setState(() => _hasFocus = hasFocus),
                 child: TextField(
                   controller: widget.controller,
-                  textDirection: TextDirection.rtl,
+                  textDirection: AppTr.uiDir,
                   onChanged: (value) {
                     widget.onChanged(value);
                     setState(() {});
@@ -566,7 +570,7 @@ class ManagementSortHeader extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Directionality(
-      textDirection: TextDirection.rtl,
+      textDirection: AppTr.uiDir,
       child: Row(
         children: [
           Container(
@@ -598,7 +602,7 @@ class ManagementSortHeader extends StatelessWidget {
           ),
           PopupMenuButton<String>(
             key: const ValueKey('management-sort-button'),
-            tooltip: 'ترتيب النتائج',
+            tooltip: AppTr.tr('ترتيب النتائج'),
             initialValue: value,
             onSelected: onSelected,
             itemBuilder: (context) => options
@@ -644,10 +648,24 @@ class ManagementCompactCard extends StatelessWidget {
     required this.accentColor,
     required this.statusColor,
     required this.onTap,
+    this.categoryTitle,
+    this.trailingNote,
+    this.showChevron = false,
   });
+
+  /// سهم صغير في نهاية البطاقة (يسارًا في RTL) يوضح إمكانية الدخول.
+  final bool showChevron;
+
+  /// سطر صغير في نهاية البطاقة (الاتجاه المعاكس) — مكان العنصر مثلًا.
+  final String? trailingNote;
 
   final String title;
   final String category;
+
+  /// الفئة الرئيسية (العقارات / نشاط تجاري / آليات ومعدات...). حين تُمرَّر
+  /// تُعرض سطرًا بارزًا فوق سطر النوع، فيقرأ المستخدم الفئة ثم النوع
+  /// تحتها (مثال: نشاط تجاري ← متجر إلكتروني).
+  final String? categoryTitle;
   final String date;
   final String value;
   final String status;
@@ -673,7 +691,7 @@ class ManagementCompactCard extends StatelessWidget {
             borderRadius: BorderRadius.circular(AppTheme.rField),
           ),
           child: Row(
-            textDirection: TextDirection.rtl,
+            textDirection: AppTr.uiDir,
             children: [
               AppIconTile(icon: icon, color: accentColor),
               const SizedBox(width: AppTheme.sMd),
@@ -688,7 +706,21 @@ class ManagementCompactCard extends StatelessWidget {
                       overflow: TextOverflow.ellipsis,
                       style: AppTheme.rowTitle,
                     ),
-                    const SizedBox(height: 5),
+                    if (categoryTitle != null) ...[
+                      const SizedBox(height: 3),
+                      Text(
+                        categoryTitle!,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: TextStyle(
+                          fontSize: 10.5,
+                          fontWeight: FontWeight.w900,
+                          color: accentColor,
+                        ),
+                      ),
+                      const SizedBox(height: 2),
+                    ] else
+                      const SizedBox(height: 5),
                     Row(
                       children: [
                         Flexible(
@@ -699,7 +731,9 @@ class ManagementCompactCard extends StatelessWidget {
                             style: TextStyle(
                               fontSize: 10,
                               fontWeight: FontWeight.w700,
-                              color: accentColor,
+                              color: categoryTitle != null
+                                  ? AppTheme.muted
+                                  : accentColor,
                             ),
                           ),
                         ),
@@ -764,9 +798,29 @@ class ManagementCompactCard extends StatelessWidget {
                         ),
                       ),
                     ),
+                    if (trailingNote != null &&
+                        trailingNote!.trim().isNotEmpty) ...[
+                      const SizedBox(height: 5),
+                      Text(
+                        trailingNote!,
+                        maxLines: 1,
+                        overflow: TextOverflow.ellipsis,
+                        style: const TextStyle(
+                          fontSize: 9,
+                          fontWeight: FontWeight.w700,
+                          color: AppTheme.muted,
+                        ),
+                      ),
+                    ],
                   ],
                 ),
               ),
+              if (showChevron)
+                const Icon(
+                  Icons.chevron_left_rounded,
+                  size: 20,
+                  color: AppTheme.muted,
+                ),
             ],
           ),
         ),

@@ -1,4 +1,6 @@
-import 'package:flutter/material.dart';
+import 'package:flutter/material.dart' hide Text, Align;
+import '../l10n/tr_widgets.dart';
+import '../l10n/app_language.dart';
 import 'package:flutter/services.dart';
 
 import '../data/app_settings.dart';
@@ -66,7 +68,7 @@ class _AppLockScreenState extends State<_AppLockScreen> {
     return Scaffold(
       backgroundColor: AppTheme.page,
       body: Directionality(
-        textDirection: TextDirection.rtl,
+        textDirection: AppTr.uiDir,
         child: SafeArea(
           child: Center(
             child: SingleChildScrollView(
@@ -105,7 +107,9 @@ class _AppLockScreenState extends State<_AppLockScreen> {
                       textAlign: TextAlign.center,
                       keyboardType: TextInputType.number,
                       maxLength: 4,
-                      inputFormatters: [FilteringTextInputFormatter.digitsOnly],
+                      inputFormatters: [
+                        FilteringTextInputFormatter.digitsOnly,
+                      ],
                       style: const TextStyle(
                         fontSize: 22,
                         letterSpacing: 8,
