@@ -14,12 +14,26 @@ export default {
     },
     extend: {
       colors: {
+        // هوية فَندلي نفسها المأخوذة من AppTheme في التطبيق.
         brand: {
-          DEFAULT: "#7067f0",
-          soft: "#f0efff",
-          teal: "#4cb8a5",
-          coral: "#e77c97",
+          DEFAULT: "#0E7161",
+          dark: "#0A5A50",
+          deep: "#04413B",
+          mid: "#34A894",
+          soft: "#E9F4F1",
         },
+        gold: {
+          DEFAULT: "#CE8422",
+          dark: "#A6691A",
+          light: "#F2A93F",
+          soft: "#FDEFDC",
+        },
+        ink: {
+          title: "#0F1F1C",
+          body: "#46534F",
+          muted: "#8C9A97",
+        },
+        hairline: "#D6E2E0",
         border: "hsl(var(--border))",
         input: "hsl(var(--input))",
         ring: "hsl(var(--ring))",

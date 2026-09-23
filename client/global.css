@@ -1,63 +1,151 @@
-@import url("https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Arabic:wght@400;500;600;700&display=swap");
+@import url("https://fonts.googleapis.com/css2?family=Cairo:wght@300;400;500;600;700;800;900&display=swap");
 @import "tailwindcss";
 @config "../tailwind.config.ts";
 
+/*
+  هوية فَندلي: نفس ألوان AppTheme في التطبيق ونفس خطه (Cairo)، فتبدو
+  اللوحة امتدادًا للتطبيق لا منتجًا آخر. كانت القيم بنفسجية بخط مختلف.
+*/
 @layer base {
   :root {
-    --background: 228 33% 98%;
-    --foreground: 235 25% 19%;
+    --background: 165 20% 97%;
+    --foreground: 169 35% 9%;
     --card: 0 0% 100%;
-    --card-foreground: 235 25% 19%;
+    --card-foreground: 169 35% 9%;
     --popover: 0 0% 100%;
-    --popover-foreground: 235 25% 19%;
-    --primary: 244 80% 67%;
+    --popover-foreground: 169 35% 9%;
+    --primary: 170 78% 25%;
     --primary-foreground: 0 0% 100%;
-    --secondary: 240 33% 97%;
-    --secondary-foreground: 235 25% 19%;
-    --muted: 240 20% 96%;
-    --muted-foreground: 233 11% 58%;
-    --accent: 240 33% 97%;
-    --accent-foreground: 235 25% 19%;
-    --destructive: 350 66% 67%;
+    --secondary: 165 24% 96%;
+    --secondary-foreground: 169 35% 9%;
+    --muted: 165 20% 96%;
+    --muted-foreground: 167 6% 58%;
+    --accent: 168 43% 94%;
+    --accent-foreground: 170 78% 25%;
+    --destructive: 4 62% 47%;
     --destructive-foreground: 0 0% 100%;
-    --border: 240 19% 92%;
-    --input: 240 19% 92%;
-    --ring: 244 80% 67%;
-    --radius: 0.85rem;
+    --border: 170 17% 86%;
+    --input: 170 17% 86%;
+    --ring: 170 78% 25%;
+    --radius: 1rem;
     --sidebar-background: 0 0% 100%;
-    --sidebar-foreground: 235 25% 19%;
-    --sidebar-primary: 244 80% 67%;
+    --sidebar-foreground: 169 35% 9%;
+    --sidebar-primary: 170 78% 25%;
     --sidebar-primary-foreground: 0 0% 100%;
-    --sidebar-accent: 240 33% 97%;
-    --sidebar-accent-foreground: 235 25% 19%;
-    --sidebar-border: 240 19% 92%;
-    --sidebar-ring: 244 80% 67%;
+    --sidebar-accent: 168 43% 94%;
+    --sidebar-accent-foreground: 170 78% 25%;
+    --sidebar-border: 170 17% 86%;
+    --sidebar-ring: 170 78% 25%;
+
+    /* ألوان الرسوم البيانية — مجموعة مُتحقَّق منها لعمى الألوان،
+       تبدأ بالأخضر لون هوية فَندلي. */
+    --series-1: #1baf7a;
+    --series-2: #2a78d6;
+    --series-3: #eb6834;
+    --series-4: #4a3aa7;
+    --viz-grid: #e1e9e6;
+    --viz-surface: #ffffff;
   }
-  * { @apply border-border; }
-  body { @apply bg-background text-foreground; font-family: "IBM Plex Sans Arabic", sans-serif; }
-  button { font-family: inherit; }
+
+  * {
+    @apply border-border;
+  }
+
+  body {
+    @apply bg-background text-foreground;
+    font-family: "Cairo", system-ui, sans-serif;
+    -webkit-font-smoothing: antialiased;
+  }
+
+  button {
+    font-family: inherit;
+  }
 }
 
 @layer components {
-  .brand-mark { @apply flex h-9 w-9 items-center justify-center rounded-xl bg-[#7067f0] text-white shadow-[0_5px_12px_rgba(112,103,240,.25)]; }
-  .nav-item { @apply flex w-full items-center gap-3 rounded-xl px-3 py-3 text-right text-[12px] font-semibold text-[#85899e] transition-colors hover:bg-[#f7f7fc] hover:text-[#54586f]; }
-  .nav-item-active { @apply bg-[#f0efff] font-bold text-[#7067f0] shadow-[inset_-3px_0_0_#7067f0]; }
-  .avatar { @apply flex h-8 w-8 items-center justify-center rounded-full bg-[#ece9ff] text-xs font-bold text-[#7067f0]; }
-  .metric-card { @apply rounded-2xl border border-[#ececf3] bg-white p-5 shadow-[0_2px_5px_rgba(35,36,65,.02)]; }
-  .metric-icon { @apply flex h-10 w-10 items-center justify-center rounded-xl; }
-  .dashboard-card { @apply rounded-2xl border border-[#ececf3] bg-white p-5 shadow-[0_2px_5px_rgba(35,36,65,.02)]; }
-  .section-title { @apply text-sm font-extrabold text-[#303247]; }
-  .section-subtitle { @apply mt-1 text-[11px] text-[#a0a3b4]; }
-  .chart-grid { background-image: linear-gradient(to bottom, #eeeff5 1px, transparent 1px); background-size: 100% 25%; }
-  .donut-chart { @apply relative h-[142px] w-[142px] shrink-0 rounded-full; background: conic-gradient(#7067f0 0 38%, #4cb8a5 38% 64%, #f0b35b 64% 80%, #e77c97 80% 91%, #8b91a9 91% 97%, #d7d9e6 97% 100%); }
-  .donut-hole { @apply absolute inset-[22px] flex flex-col items-center justify-center rounded-full bg-white text-center; }
-  .donut-hole strong { @apply text-lg font-extrabold text-[#34374c]; }
-  .donut-hole span { @apply text-[9px] text-[#a1a4b5]; }
-  .health-item { @apply rounded-xl bg-[#fafaff] p-3.5; }
-  .health-item p { @apply text-[11px] text-[#85899e]; }
-  .health-item strong { @apply mt-2 block text-lg font-extrabold text-[#303247]; }
-  .health-item span { @apply mt-1 block text-[10px]; }
+  .brand-mark {
+    @apply flex h-9 w-9 items-center justify-center rounded-xl bg-brand text-white shadow-[0_5px_12px_rgba(14,113,97,.25)];
+  }
+  /* روابط القائمة كانت رمادية باهتة تكاد لا تُقرأ — الآن بالأخضر نفسه
+     المستعمل في بطاقات الملخص. */
+  .nav-item {
+    @apply flex w-full items-center gap-3 rounded-xl px-3 py-3 text-right text-[12.5px] font-bold text-brand-dark transition-colors hover:bg-brand-soft hover:text-brand-deep;
+  }
+  .nav-item-active {
+    @apply bg-brand-soft font-extrabold text-brand-deep shadow-[inset_-3px_0_0_#0E7161];
+  }
+  /* المعطّل يبقى رماديًا ليُقرأ كمعطّل، لكن بوضوح كافٍ. */
+  .nav-item-disabled {
+    @apply cursor-not-allowed text-ink-muted hover:bg-transparent hover:text-ink-muted;
+  }
+  .nav-group-title {
+    @apply mb-3 px-3 text-[10.5px] font-extrabold tracking-[.12em] text-brand-dark/75;
+  }
+  .avatar {
+    @apply flex h-8 w-8 items-center justify-center rounded-full bg-brand-soft text-xs font-bold text-brand;
+  }
+  .metric-card {
+    @apply rounded-2xl border border-hairline bg-white p-5 shadow-[0_2px_5px_rgba(15,31,28,.03)];
+  }
+  .metric-icon {
+    @apply flex h-10 w-10 items-center justify-center rounded-xl;
+  }
+  .dashboard-card {
+    @apply rounded-2xl border border-hairline bg-white p-5 shadow-[0_2px_5px_rgba(15,31,28,.03)];
+  }
+  .section-title {
+    @apply text-sm font-extrabold text-ink-title;
+  }
+  .section-subtitle {
+    @apply mt-1 text-[11px] text-ink-muted;
+  }
+  .chart-grid {
+    background-image: linear-gradient(to bottom, #e9efed 1px, transparent 1px);
+    background-size: 100% 25%;
+  }
+  .health-item {
+    @apply rounded-xl bg-[#f7faf9] p-3.5;
+  }
+  .health-item p {
+    @apply text-[11px] text-ink-muted;
+  }
+  .health-item strong {
+    @apply mt-2 block text-lg font-extrabold text-ink-title;
+  }
+  .health-item span {
+    @apply mt-1 block text-[10px];
+  }
+  .field {
+    @apply w-full rounded-xl bg-[#f3f7f6] px-4 py-3 text-[13px] font-semibold text-ink-title outline-none placeholder:text-ink-muted focus:ring-2 focus:ring-brand/30;
+  }
+  .pill-button {
+    @apply rounded-xl bg-[#f3f7f6] px-3.5 py-2.5 text-[11.5px] font-extrabold text-ink-body transition-colors hover:bg-hairline;
+  }
+  .primary-button {
+    @apply rounded-xl bg-brand-deep px-3.5 py-2.5 text-[11.5px] font-extrabold text-white transition-colors hover:bg-brand-dark disabled:opacity-50;
+  }
 }
 
-:where(p, span, li, h1, h2, h3, h4, h5, h6, a, button, label, td, th) { overflow-wrap: anywhere; word-break: break-word; }
-pre, code { overflow-x: auto; white-space: pre; }
+/* الكلمات العربية لا تُقطع في منتصفها داخل البطاقات الضيقة. */
+:where(p, span, li, h1, h2, h3, h4, h5, h6, a, button, label, td, th) {
+  overflow-wrap: anywhere;
+  word-break: break-word;
+}
+
+pre,
+code {
+  overflow-x: auto;
+  white-space: pre;
+}
+
+*::-webkit-scrollbar {
+  width: 9px;
+  height: 9px;
+}
+*::-webkit-scrollbar-thumb {
+  background: #d6e2e0;
+  border-radius: 999px;
+}
+*::-webkit-scrollbar-track {
+  background: transparent;
+}

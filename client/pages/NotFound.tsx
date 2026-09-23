@@ -1,27 +1,17 @@
-import { useLocation } from "react-router-dom";
-import { useEffect } from "react";
+import { NavLink } from "react-router-dom";
 
-const NotFound = () => {
-  const location = useLocation();
-
-  useEffect(() => {
-    console.error(
-      "404 Error: User attempted to access non-existent route:",
-      location.pathname,
-    );
-  }, [location.pathname]);
-
+export default function NotFound() {
   return (
-    <div className="min-h-screen flex items-center justify-center bg-gray-100">
+    <div dir="rtl" className="flex min-h-screen items-center justify-center bg-background px-4">
       <div className="text-center">
-        <h1 className="text-4xl font-bold mb-4">404</h1>
-        <p className="text-xl text-gray-600 mb-4">Oops! Page not found</p>
-        <a href="/" className="text-blue-500 hover:text-blue-700 underline">
-          Return to Home
-        </a>
+        <p className="text-[52px] font-black leading-none text-brand">404</p>
+        <p className="mt-3 text-[14px] font-bold text-ink-title">
+          لا توجد صفحة بهذا العنوان
+        </p>
+        <NavLink to="/" className="primary-button mt-5 inline-block">
+          العودة إلى اللوحة
+        </NavLink>
       </div>
     </div>
   );
-};
-
-export default NotFound;
+}
