@@ -1,5 +1,11 @@
 import { useState, type FormEvent } from "react";
-import { supabase, readableError, configError, supabaseUrl } from "@/lib/supabase";
+import {
+  supabase,
+  readableError,
+  configError,
+  supabaseUrl,
+  keySource,
+} from "@/lib/supabase";
 
 /**
  * الدخول بحساب Supabase حقيقي — لا مفتاح service_role في المتصفح، فالمفتاح
@@ -82,8 +88,12 @@ export default function Login() {
             {busy ? "جارٍ الدخول…" : "دخول"}
           </button>
 
-          <p dir="ltr" className="mt-4 text-center font-mono text-[10px] leading-relaxed text-ink-muted">
-            {supabaseUrl.replace("https://", "")}
+          <p className="mt-4 text-center text-[10px] leading-relaxed text-ink-muted">
+            <span dir="ltr" className="font-mono">
+              {supabaseUrl.replace("https://", "")}
+            </span>
+            {" · "}
+            {keySource === "env" ? "المفتاح من .env" : "المفتاح المضمَّن"}
           </p>
         </form>
       </div>
