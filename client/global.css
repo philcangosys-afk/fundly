@@ -1,121 +1,63 @@
-/** @import must precede all other statements */
-@import url("https://fonts.googleapis.com/css2?family=Inter:wght@400;600;700;800&display=swap");
-
+@import url("https://fonts.googleapis.com/css2?family=IBM+Plex+Sans+Arabic:wght@400;500;600;700&display=swap");
 @import "tailwindcss";
-
-/* Theme, content globs, and plugins are declared in tailwind.config.ts. */
 @config "../tailwind.config.ts";
 
 @layer base {
-  /**
-   * Tailwind CSS theme
-   * tailwind.config.ts expects the following color variables to be expressed as HSL values.
-   * A different format will require also updating the theme in tailwind.config.ts.
-  */
   :root {
-    --background: 0 0% 100%;
-    --foreground: 222.2 84% 4.9%;
-
+    --background: 228 33% 98%;
+    --foreground: 235 25% 19%;
     --card: 0 0% 100%;
-    --card-foreground: 222.2 84% 4.9%;
-
+    --card-foreground: 235 25% 19%;
     --popover: 0 0% 100%;
-    --popover-foreground: 222.2 84% 4.9%;
-
-    --primary: 222.2 47.4% 11.2%;
-    --primary-foreground: 210 40% 98%;
-
-    --secondary: 210 40% 96.1%;
-    --secondary-foreground: 222.2 47.4% 11.2%;
-
-    --muted: 210 40% 96.1%;
-    --muted-foreground: 215.4 16.3% 46.9%;
-
-    --accent: 210 40% 96.1%;
-    --accent-foreground: 222.2 47.4% 11.2%;
-
-    --destructive: 0 84.2% 60.2%;
-    --destructive-foreground: 210 40% 98%;
-
-    --border: 214.3 31.8% 91.4%;
-    --input: 214.3 31.8% 91.4%;
-    --ring: 222.2 84% 4.9%;
-
-    --radius: 0.5rem;
-
-    --sidebar-background: 0 0% 98%;
-
-    --sidebar-foreground: 240 5.3% 26.1%;
-
-    --sidebar-primary: 240 5.9% 10%;
-
-    --sidebar-primary-foreground: 0 0% 98%;
-
-    --sidebar-accent: 240 4.8% 95.9%;
-
-    --sidebar-accent-foreground: 240 5.9% 10%;
-
-    --sidebar-border: 220 13% 91%;
-
-    --sidebar-ring: 217.2 91.2% 59.8%;
-  }
-
-  .dark {
-    --background: 222.2 84% 4.9%;
-    --foreground: 210 40% 98%;
-
-    --card: 222.2 84% 4.9%;
-    --card-foreground: 210 40% 98%;
-
-    --popover: 222.2 84% 4.9%;
-    --popover-foreground: 210 40% 98%;
-
-    --primary: 210 40% 98%;
-    --primary-foreground: 222.2 47.4% 11.2%;
-
-    --secondary: 217.2 32.6% 17.5%;
-    --secondary-foreground: 210 40% 98%;
-
-    --muted: 217.2 32.6% 17.5%;
-    --muted-foreground: 215 20.2% 65.1%;
-
-    --accent: 217.2 32.6% 17.5%;
-    --accent-foreground: 210 40% 98%;
-
-    --destructive: 0 62.8% 30.6%;
-    --destructive-foreground: 210 40% 98%;
-
-    --border: 217.2 32.6% 17.5%;
-    --input: 217.2 32.6% 17.5%;
-    --ring: 212.7 26.8% 83.9%;
-    --sidebar-background: 240 5.9% 10%;
-    --sidebar-foreground: 240 4.8% 95.9%;
-    --sidebar-primary: 224.3 76.3% 48%;
+    --popover-foreground: 235 25% 19%;
+    --primary: 244 80% 67%;
+    --primary-foreground: 0 0% 100%;
+    --secondary: 240 33% 97%;
+    --secondary-foreground: 235 25% 19%;
+    --muted: 240 20% 96%;
+    --muted-foreground: 233 11% 58%;
+    --accent: 240 33% 97%;
+    --accent-foreground: 235 25% 19%;
+    --destructive: 350 66% 67%;
+    --destructive-foreground: 0 0% 100%;
+    --border: 240 19% 92%;
+    --input: 240 19% 92%;
+    --ring: 244 80% 67%;
+    --radius: 0.85rem;
+    --sidebar-background: 0 0% 100%;
+    --sidebar-foreground: 235 25% 19%;
+    --sidebar-primary: 244 80% 67%;
     --sidebar-primary-foreground: 0 0% 100%;
-    --sidebar-accent: 240 3.7% 15.9%;
-    --sidebar-accent-foreground: 240 4.8% 95.9%;
-    --sidebar-border: 240 3.7% 15.9%;
-    --sidebar-ring: 217.2 91.2% 59.8%;
+    --sidebar-accent: 240 33% 97%;
+    --sidebar-accent-foreground: 235 25% 19%;
+    --sidebar-border: 240 19% 92%;
+    --sidebar-ring: 244 80% 67%;
   }
+  * { @apply border-border; }
+  body { @apply bg-background text-foreground; font-family: "IBM Plex Sans Arabic", sans-serif; }
+  button { font-family: inherit; }
 }
 
-@layer base {
-  * {
-    @apply border-border;
-  }
-
-  body {
-    @apply bg-background text-foreground;
-  }
-
-  :where(p, span, li, h1, h2, h3, h4, h5, h6, a, button, label, td, th) {
-    overflow-wrap: anywhere;
-    word-break: break-word;
-  }
-
-  pre,
-  code {
-    overflow-x: auto;
-    white-space: pre;
-  }
+@layer components {
+  .brand-mark { @apply flex h-9 w-9 items-center justify-center rounded-xl bg-[#7067f0] text-white shadow-[0_5px_12px_rgba(112,103,240,.25)]; }
+  .nav-item { @apply flex w-full items-center gap-3 rounded-xl px-3 py-3 text-right text-[12px] font-semibold text-[#85899e] transition-colors hover:bg-[#f7f7fc] hover:text-[#54586f]; }
+  .nav-item-active { @apply bg-[#f0efff] font-bold text-[#7067f0] shadow-[inset_-3px_0_0_#7067f0]; }
+  .avatar { @apply flex h-8 w-8 items-center justify-center rounded-full bg-[#ece9ff] text-xs font-bold text-[#7067f0]; }
+  .metric-card { @apply rounded-2xl border border-[#ececf3] bg-white p-5 shadow-[0_2px_5px_rgba(35,36,65,.02)]; }
+  .metric-icon { @apply flex h-10 w-10 items-center justify-center rounded-xl; }
+  .dashboard-card { @apply rounded-2xl border border-[#ececf3] bg-white p-5 shadow-[0_2px_5px_rgba(35,36,65,.02)]; }
+  .section-title { @apply text-sm font-extrabold text-[#303247]; }
+  .section-subtitle { @apply mt-1 text-[11px] text-[#a0a3b4]; }
+  .chart-grid { background-image: linear-gradient(to bottom, #eeeff5 1px, transparent 1px); background-size: 100% 25%; }
+  .donut-chart { @apply relative h-[142px] w-[142px] shrink-0 rounded-full; background: conic-gradient(#7067f0 0 38%, #4cb8a5 38% 64%, #f0b35b 64% 80%, #e77c97 80% 91%, #8b91a9 91% 97%, #d7d9e6 97% 100%); }
+  .donut-hole { @apply absolute inset-[22px] flex flex-col items-center justify-center rounded-full bg-white text-center; }
+  .donut-hole strong { @apply text-lg font-extrabold text-[#34374c]; }
+  .donut-hole span { @apply text-[9px] text-[#a1a4b5]; }
+  .health-item { @apply rounded-xl bg-[#fafaff] p-3.5; }
+  .health-item p { @apply text-[11px] text-[#85899e]; }
+  .health-item strong { @apply mt-2 block text-lg font-extrabold text-[#303247]; }
+  .health-item span { @apply mt-1 block text-[10px]; }
 }
+
+:where(p, span, li, h1, h2, h3, h4, h5, h6, a, button, label, td, th) { overflow-wrap: anywhere; word-break: break-word; }
+pre, code { overflow-x: auto; white-space: pre; }
