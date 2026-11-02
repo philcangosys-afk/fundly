@@ -5,6 +5,7 @@ import 'package:flutter/material.dart' hide Text, Align;
 import 'l10n/tr_widgets.dart';
 import 'l10n/app_language.dart';
 import 'package:flutter/services.dart';
+import 'package:flutter/foundation.dart' show defaultTargetPlatform;
 import 'package:share_plus/share_plus.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
