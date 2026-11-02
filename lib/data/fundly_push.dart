@@ -32,9 +32,6 @@ class FundlyPush {
 
   /// عند الإقلاع قبل بناء الواجهة.
   static Future<void> init() async {
-    // iOS: لم يُضف ملف GoogleService-Info.plist بعد، فيبقى الفحص الدوري وحده
-    // بلا محاولة تشغيل Firebase.
-    if (!kIsWeb && defaultTargetPlatform == TargetPlatform.iOS) return;
     try {
       await Firebase.initializeApp();
       FirebaseMessaging.onBackgroundMessage(fundlyPushBackground);
@@ -53,8 +50,17 @@ class FundlyPush {
     try {
       final messaging = FirebaseMessaging.instance;
       await messaging.requestPermission();
-      final token = await messaging.getToken();
-      if (token != null && token.isNotEmpty) await _save(token);
+      // الآيفون: رمز Firebase يحتاج رمز Apple (APNs) أولًا، وقد يتأخر في أول
+      // تشغيل — حينها يُحفظ لاحقًا من onTokenRefresh.
+      if (defaultTargetPlatform == TargetPlatform.iOS) {
+        await messaging.getAPNSToken();
+      }
+      try {
+        final token = await messaging.getToken();
+        if (token != null && token.isNotEmpty) await _save(token);
+      } catch (error) {
+        debugPrint('FundlyPush token not ready: $error');
+      }
       if (_listening) return;
       _listening = true;
       messaging.onTokenRefresh.listen((fresh) => unawaited(_save(fresh)));

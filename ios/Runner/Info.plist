@@ -55,6 +55,10 @@
 	<string>نحتاج موقعك لحفظ مواقع العقارات والأماكن على الخريطة.</string>
 	<key>NSLocationAlwaysAndWhenInUseUsageDescription</key>
 	<string>نحتاج موقعك لحفظ مواقع العقارات والأماكن على الخريطة.</string>
+	<key>UIBackgroundModes</key>
+	<array>
+		<string>remote-notification</string>
+	</array>
 	<key>ITSAppUsesNonExemptEncryption</key>
 	<false/>
 </dict>
