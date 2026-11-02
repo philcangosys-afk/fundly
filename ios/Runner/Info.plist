@@ -47,5 +47,15 @@
 	<true/>
 	<key>NSPhotoLibraryUsageDescription</key>
 	<string>نحتاج الوصول إلى معرض الصور لإرفاق صورة الفاتورة مع الدفعة.</string>
+	<key>NSCameraUsageDescription</key>
+	<string>نحتاج الكاميرا لتصوير المستندات والفواتير وإرفاقها.</string>
+	<key>NSPhotoLibraryAddUsageDescription</key>
+	<string>نحتاج الإذن لحفظ الصور والمستندات في معرض الصور عند طلبك.</string>
+	<key>NSLocationWhenInUseUsageDescription</key>
+	<string>نحتاج موقعك لحفظ مواقع العقارات والأماكن على الخريطة.</string>
+	<key>NSLocationAlwaysAndWhenInUseUsageDescription</key>
+	<string>نحتاج موقعك لحفظ مواقع العقارات والأماكن على الخريطة.</string>
+	<key>ITSAppUsesNonExemptEncryption</key>
+	<false/>
 </dict>
 </plist>
