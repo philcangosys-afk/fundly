@@ -1,0 +1,7 @@
+<?xml version="1.0" encoding="utf-8"?>
+<resources>
+    <!-- خلفية أيقونة التطبيق: بيضاء كما في الشعار الرسمي -->
+    <color name="ic_launcher_background">#FFFFFFFF</color>
+    <!-- أخضر الهوية -->
+    <color name="brand">#FF0A5A50</color>
+</resources>

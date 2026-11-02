@@ -21,7 +21,7 @@ class FollowUpEntry {
     required this.subtitle,
     required this.icon,
     required this.color,
-    required this.onTap,
+    this.onTap,
     this.trailingText,
   });
 
@@ -34,7 +34,9 @@ class FollowUpEntry {
   final String? trailingText;
 
   /// يُستدعى بعد إغلاق النوافذ، ليفتح تفاصيل العنصر.
-  final VoidCallback onTap;
+  ///
+  /// `null` = للاطلاع فقط: يُعرض الصف بلا سهم ولا ضغط، ولا تُغلق النوافذ.
+  final VoidCallback? onTap;
 }
 
 /// بند فرعي داخل مجموعة (مثال: "متأخرة" داخل "الاستحقاقات").
@@ -43,7 +45,17 @@ class FollowUpMetric {
     required this.label,
     required this.icon,
     required this.entries,
+    this.isHeading = false,
+    this.indented = false,
   });
+
+  /// عنوان رئيسي داخل المجموعة («مالية»): يُكتب بالأسود بلا عدّاد ولا
+  /// ضغط، وتحته بنوده الفرعية. كان كل بند يُكتب «مالية · شيكات» فيتكرر
+  /// اسم العنوان في كل سطر.
+  final bool isHeading;
+
+  /// بند فرعي يتبع عنوانًا: يُزاح قليلًا ليُقرأ كأنه تحته.
+  final bool indented;
 
   final String label;
   final IconData icon;
@@ -75,6 +87,7 @@ Future<void> showFollowUpCenterSheet({
   required Color accent,
   required List<FollowUpGroup> groups,
   String title = 'مركز المتابعة',
+  String subtitle = '',
 }) {
   final grandTotal = groups.fold<int>(0, (sum, group) => sum + group.total);
   final maxRows = groups.fold<int>(
@@ -92,7 +105,7 @@ Future<void> showFollowUpCenterSheet({
         heightFactor: 0.9,
         child: Container(
           decoration: const BoxDecoration(
-            color: Color(0xFFF8FAFC),
+            color: Color(0xFFF7FAF9),
             borderRadius: BorderRadius.vertical(
               top: Radius.circular(AppTheme.rCard),
             ),
@@ -106,22 +119,44 @@ Future<void> showFollowUpCenterSheet({
                   children: [
                     Icon(Icons.dashboard_customize_outlined, color: accent),
                     const SizedBox(width: 9),
+                    // العنوان ثم العدد بجانبه مباشرة، وتحتهما اسم القسم.
                     Expanded(
-                      child: Text(
-                        title,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(
-                          fontSize: 18,
-                          fontWeight: FontWeight.w900,
-                          color: Color(0xFF0F172A),
-                        ),
+                      child: Column(
+                        crossAxisAlignment: CrossAxisAlignment.start,
+                        children: [
+                          Row(
+                            children: [
+                              Flexible(
+                                child: Text(
+                                  title,
+                                  maxLines: 3,
+                                  style: const TextStyle(
+                                    fontSize: 17,
+                                    fontWeight: FontWeight.w900,
+                                    color: Color(0xFF022E2A),
+                                  ),
+                                ),
+                              ),
+                              if (grandTotal > 0) ...[
+                                const SizedBox(width: AppTheme.sSm),
+                                _CountBadge(count: grandTotal, color: accent),
+                              ],
+                            ],
+                          ),
+                          if (subtitle.isNotEmpty)
+                            Text(
+                              subtitle,
+                              maxLines: 3,
+                              style: const TextStyle(
+                                fontSize: 12,
+                                fontWeight: FontWeight.w700,
+                                color: Color(0xFF5C6B68),
+                              ),
+                            ),
+                        ],
                       ),
                     ),
-                    if (grandTotal > 0) ...[
-                      _CountBadge(count: grandTotal, color: accent),
-                      const SizedBox(width: AppTheme.sSm),
-                    ],
+                    const SizedBox(width: AppTheme.sSm),
                     // زر الخروج: كان الإغلاق بالسحب لأسفل فقط.
                     AppIconButton(
                       key: const ValueKey('followup-sheet-close'),
@@ -145,7 +180,7 @@ Future<void> showFollowUpCenterSheet({
                             textAlign: TextAlign.center,
                             style: TextStyle(
                               fontWeight: FontWeight.w700,
-                              color: Color(0xFF64748B),
+                              color: Color(0xFF5C6B68),
                             ),
                           ),
                         ),
@@ -188,8 +223,8 @@ class _SheetHandle extends StatelessWidget {
       height: 4,
       margin: const EdgeInsets.only(top: 10, bottom: 12),
       decoration: BoxDecoration(
-        color: const Color(0xFFCBD5E1),
-        borderRadius: BorderRadius.circular(4),
+        color: const Color(0xFFD5DEDB),
+        borderRadius: BorderRadius.circular(8),
       ),
     );
   }
@@ -212,7 +247,7 @@ class _CountBadge extends StatelessWidget {
       child: Text(
         '$count',
         style: TextStyle(
-          fontSize: 12.5,
+          fontSize: 12,
           fontWeight: FontWeight.w900,
           color: color,
         ),
@@ -232,7 +267,9 @@ class _FollowUpGroupCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final hasItems = group.total > 0;
+    // بنود كل مجموعة تظهر دائمًا ولو كانت أصفارًا: غيابها يجعل المستخدم
+    // يظنّ أن المجموعة بلا بنود أصلًا.
+    final hasItems = group.metrics.isNotEmpty;
     return Container(
       decoration: BoxDecoration(
         color: AppTheme.surface,
@@ -250,21 +287,21 @@ class _FollowUpGroupCard extends StatelessWidget {
                   height: 34,
                   decoration: BoxDecoration(
                     color: group.color.withValues(alpha: 0.12),
-                    borderRadius: BorderRadius.circular(10),
+                    borderRadius: BorderRadius.circular(12),
                   ),
                   child: Icon(group.icon, color: group.color, size: 18),
                 ),
                 const SizedBox(width: 9),
+                // الاسم المركّب على سطرين بدل قصّه («مالية (عا…»).
                 Expanded(
                   child: Text(
-                    group.title,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    softWrap: false,
+                    twoLineLabel(group.title),
+                    maxLines: 2,
                     style: const TextStyle(
-                      fontSize: 13.5,
+                      fontSize: 12.5,
+                      height: 1.2,
                       fontWeight: FontWeight.w900,
-                      color: Color(0xFF0F172A),
+                      color: Color(0xFF022E2A),
                     ),
                   ),
                 ),
@@ -322,37 +359,68 @@ class _MetricRow extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    if (metric.isHeading) {
+      return Padding(
+        padding: const EdgeInsets.only(top: 10, bottom: 2),
+        child: Row(
+          children: [
+            Icon(metric.icon, size: 16, color: const Color(0xFF022E2A)),
+            const SizedBox(width: 8),
+            Expanded(
+              // العنوان كاملًا («المتابعة والتخطيط») بلا قصّ.
+              child: Text(
+                metric.label,
+                maxLines: 2,
+                softWrap: true,
+                style: const TextStyle(
+                  fontSize: 12.5,
+                  fontWeight: FontWeight.w900,
+                  color: Color(0xFF022E2A),
+                ),
+              ),
+            ),
+          ],
+        ),
+      );
+    }
     final enabled = metric.count > 0;
     return InkWell(
       onTap: enabled
           ? () => _openMetricSheet(context, metric, group, rootContext)
           : null,
-      borderRadius: BorderRadius.circular(10),
+      borderRadius: BorderRadius.circular(12),
       child: Padding(
-        padding: const EdgeInsets.symmetric(vertical: 7),
+        padding: EdgeInsetsDirectional.only(
+          top: 5,
+          bottom: 5,
+          start: metric.indented ? 14 : 0,
+        ),
         child: Row(
           children: [
             Icon(
               metric.icon,
               size: 16,
               color: enabled
-                  ? const Color(0xFF475569)
-                  : const Color(0xFFCBD5E1),
+                  ? const Color(0xFF46534F)
+                  : const Color(0xFFD5DEDB),
             ),
             const SizedBox(width: 8),
+            // البند كاملًا: يصغُر قليلًا ليدخل بدل «بانتظار الموا…».
             Expanded(
-              child: Text(
+              child: FittedBox(
+                fit: BoxFit.scaleDown,
+                alignment: AlignmentDirectional.centerStart,
+                child: Text(
                 metric.label,
-                maxLines: 1,
-                overflow: TextOverflow.ellipsis,
-                softWrap: false,
+                maxLines: 3,
                 style: TextStyle(
                   fontSize: 12,
                   fontWeight: FontWeight.w700,
                   color: enabled
-                      ? const Color(0xFF334155)
-                      : const Color(0xFF94A3B8),
+                      ? const Color(0xFF2C3B38)
+                      : const Color(0xFF8C9A97),
                 ),
+              ),
               ),
             ),
             Text(
@@ -361,13 +429,13 @@ class _MetricRow extends StatelessWidget {
                 fontSize: 12,
                 fontWeight: FontWeight.w900,
                 color: enabled
-                    ? const Color(0xFF0F172A)
-                    : const Color(0xFFCBD5E1),
+                    ? const Color(0xFF022E2A)
+                    : const Color(0xFFD5DEDB),
               ),
             ),
             if (enabled) ...[
               const SizedBox(width: 4),
-              const AppChevron(size: 18, color: Color(0xFF94A3B8)),
+              const AppChevron(size: 18, color: Color(0xFF8C9A97)),
             ],
           ],
         ),
@@ -395,7 +463,7 @@ void _openMetricSheet(
         ),
         child: Container(
           decoration: const BoxDecoration(
-            color: Color(0xFFF8FAFC),
+            color: Color(0xFFF7FAF9),
             borderRadius: BorderRadius.vertical(
               top: Radius.circular(AppTheme.rCard),
             ),
@@ -413,12 +481,11 @@ void _openMetricSheet(
                     Expanded(
                       child: Text(
                         metric.label,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
+                        maxLines: 3,
                         style: const TextStyle(
                           fontSize: 15,
                           fontWeight: FontWeight.w900,
-                          color: Color(0xFF0F172A),
+                          color: Color(0xFF022E2A),
                         ),
                       ),
                     ),
@@ -443,15 +510,19 @@ void _openMetricSheet(
                   separatorBuilder: (_, _) => const SizedBox(height: 8),
                   itemBuilder: (context, index) {
                     final entry = metric.entries[index];
+                    final open = entry.onTap;
                     return _EntryTile(
                       entry: entry,
-                      onTap: () {
-                        // يُغلق البند ثم مركز المتابعة، فتظهر التفاصيل
-                        // فوق الشاشة الأصلية لا فوق نافذتين مكدّستين.
-                        Navigator.of(sheetContext).pop();
-                        Navigator.of(rootContext).pop();
-                        entry.onTap();
-                      },
+                      onTap: open == null
+                          ? null
+                          : () {
+                              // يُغلق البند ثم مركز المتابعة، فتظهر
+                              // التفاصيل فوق الشاشة الأصلية لا فوق نافذتين
+                              // مكدّستين.
+                              Navigator.of(sheetContext).pop();
+                              Navigator.of(rootContext).pop();
+                              open();
+                            },
                     );
                   },
                 ),
@@ -468,7 +539,9 @@ class _EntryTile extends StatelessWidget {
   const _EntryTile({required this.entry, required this.onTap});
 
   final FollowUpEntry entry;
-  final VoidCallback onTap;
+
+  /// `null` = صف للاطلاع فقط.
+  final VoidCallback? onTap;
 
   @override
   Widget build(BuildContext context) {
@@ -498,16 +571,15 @@ class _EntryTile extends StatelessWidget {
                   children: [
                     Text(
                       entry.title,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
+                      maxLines: 3,
                       style: AppTheme.rowTitle,
                     ),
                     if (entry.subtitle.isNotEmpty) ...[
                       const SizedBox(height: 2),
+                      // سطران لا سطر مقصوص: التاريخ والحالة في آخره.
                       Text(
                         entry.subtitle,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
+                        maxLines: 4,
                         style: AppTheme.rowSubtitle,
                       ),
                     ],
@@ -522,12 +594,14 @@ class _EntryTile extends StatelessWidget {
                   style: const TextStyle(
                     fontSize: 12,
                     fontWeight: FontWeight.w900,
-                    color: Color(0xFF0F172A),
+                    color: Color(0xFF022E2A),
                   ),
                 ),
               ],
-              const SizedBox(width: 4),
-              const AppChevron(),
+              if (onTap != null) ...[
+                const SizedBox(width: 4),
+                const AppChevron(),
+              ],
             ],
           ),
         ),

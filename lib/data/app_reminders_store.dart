@@ -2,6 +2,8 @@ import 'dart:convert';
 
 import 'package:shared_preferences/shared_preferences.dart';
 
+import 'fundly_notifications.dart';
+
 class AppReminder {
   const AppReminder({
     required this.id,
@@ -89,6 +91,8 @@ class AppRemindersStore {
           .map((item) => jsonEncode(item.toJson()))
           .toList(growable: false),
     );
+
+    FundlyNotifications.scheduleSoon();
   }
 
   static DateTime? parseDisplayDate(String value) {

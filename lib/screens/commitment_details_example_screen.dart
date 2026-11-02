@@ -83,15 +83,15 @@ class _CommitmentDetailsExampleScreenState
             const SizedBox(height: 8),
             Text(
               'النوع: ${widget.entryType}',
-              style: TextStyle(fontSize: 14, color: Colors.grey[600]),
+              style: TextStyle(fontSize: 13, color: const Color(0xFF5C6B68)),
             ),
             const SizedBox(height: 4),
             Text(
               'المبلغ: ${widget.amount.toStringAsFixed(2)} ر.س',
               style: const TextStyle(
-                fontSize: 18,
+                fontSize: 17,
                 fontWeight: FontWeight.w600,
-                color: Colors.green,
+                color: const Color(0xFF0E7161),
               ),
             ),
           ],
@@ -113,7 +113,7 @@ class _CommitmentDetailsExampleScreenState
           children: [
             const Text(
               'الإضافات المتاحة',
-              style: TextStyle(fontSize: 16, fontWeight: FontWeight.bold),
+              style: TextStyle(fontSize: 15, fontWeight: FontWeight.bold),
             ),
             const SizedBox(height: 12),
             Row(
@@ -123,7 +123,7 @@ class _CommitmentDetailsExampleScreenState
                     icon: Icons.check_circle,
                     label: 'الإضافات المقترحة',
                     count: logical.length,
-                    color: Colors.blue,
+                    color: const Color(0xFF178F7B),
                   ),
                 ),
                 const SizedBox(width: 16),
@@ -182,10 +182,10 @@ class _CommitmentDetailsExampleScreenState
     return ElevatedButton.icon(
       onPressed: _showAdditionsMenu,
       icon: const Icon(Icons.add_circle_outline, size: 28),
-      label: const Text('إضافة جديدة', style: TextStyle(fontSize: 18)),
+      label: const Text('إضافة جديدة', style: TextStyle(fontSize: 17)),
       style: ElevatedButton.styleFrom(
         padding: const EdgeInsets.symmetric(vertical: 16),
-        backgroundColor: Colors.blue,
+        backgroundColor: const Color(0xFF178F7B),
         foregroundColor: Colors.white,
         shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.circular(AppTheme.rField),
@@ -255,7 +255,7 @@ class _CommitmentDetailsExampleScreenState
                   keyboardType: TextInputType.number,
                   decoration: InputDecoration(
                     labelText: AppTr.tr('المبلغ'),
-                    suffixText: 'ر.س',
+                    suffixText: AppTr.tr('ر.س'),
                   ),
                 ),
                 const SizedBox(height: 16),
@@ -654,7 +654,7 @@ class _CommitmentDetailsExampleScreenState
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: Text(message),
-        backgroundColor: Colors.green,
+        backgroundColor: const Color(0xFF0E7161),
         behavior: SnackBarBehavior.floating,
       ),
     );
@@ -664,7 +664,7 @@ class _CommitmentDetailsExampleScreenState
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: Text(message),
-        backgroundColor: Colors.red,
+        backgroundColor: const Color(0xFFC4392E),
         behavior: SnackBarBehavior.floating,
       ),
     );
@@ -674,7 +674,7 @@ class _CommitmentDetailsExampleScreenState
     ScaffoldMessenger.of(context).showSnackBar(
       SnackBar(
         content: Text(message),
-        backgroundColor: Colors.blue,
+        backgroundColor: const Color(0xFF178F7B),
         behavior: SnackBarBehavior.floating,
       ),
     );

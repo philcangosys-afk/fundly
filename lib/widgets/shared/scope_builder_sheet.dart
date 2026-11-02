@@ -396,8 +396,8 @@ class _ScopeBuilderState extends State<_ScopeBuilder> {
             width: 40,
             height: 4,
             decoration: BoxDecoration(
-              color: const Color(0xFFCBD5E1),
-              borderRadius: BorderRadius.circular(10),
+              color: const Color(0xFFD5DEDB),
+              borderRadius: BorderRadius.circular(12),
             ),
           ),
           Padding(
@@ -412,7 +412,7 @@ class _ScopeBuilderState extends State<_ScopeBuilder> {
                     style: const TextStyle(
                       fontSize: 15,
                       fontWeight: FontWeight.w900,
-                      color: Color(0xFF0F172A),
+                      color: Color(0xFF022E2A),
                     ),
                   ),
                 ),
@@ -598,8 +598,7 @@ class _ScopeBuilderState extends State<_ScopeBuilder> {
                           _draft.from == null
                               ? 'من'
                               : 'من: ${ScopeSelection._fmt(_draft.from!)}',
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
+                          maxLines: 3,
                         ),
                       ),
                     ),
@@ -612,8 +611,7 @@ class _ScopeBuilderState extends State<_ScopeBuilder> {
                           _draft.to == null
                               ? 'إلى'
                               : 'إلى: ${ScopeSelection._fmt(_draft.to!)}',
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
+                          maxLines: 3,
                         ),
                       ),
                     ),
@@ -632,7 +630,7 @@ class _ScopeBuilderState extends State<_ScopeBuilder> {
                     style: const TextStyle(
                       fontSize: 11,
                       fontWeight: FontWeight.w800,
-                      color: Color(0xFF047857),
+                      color: Color(0xFF0E7161),
                     ),
                   ),
                 ],
@@ -717,9 +715,9 @@ class _ScopeBuilderState extends State<_ScopeBuilder> {
     child: Text(
       text,
       style: const TextStyle(
-        fontSize: 12.5,
+        fontSize: 12,
         fontWeight: FontWeight.w900,
-        color: Color(0xFF24332F),
+        color: Color(0xFF1C2C29),
       ),
     ),
   );
@@ -741,7 +739,7 @@ class _ScopeBuilderState extends State<_ScopeBuilder> {
           decoration: BoxDecoration(
             borderRadius: BorderRadius.circular(12),
             border: Border.all(
-              color: selected ? accent : const Color(0xFFE2E8F0),
+              color: selected ? accent : const Color(0xFFE4EAE8),
               width: 1.2,
             ),
           ),
@@ -750,10 +748,9 @@ class _ScopeBuilderState extends State<_ScopeBuilder> {
             constraints: const BoxConstraints(maxWidth: 250),
             child: Text(
               label,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
+              maxLines: 3,
               style: TextStyle(
-                fontSize: 11.5,
+                fontSize: 11,
                 fontWeight: FontWeight.w800,
                 color: selected ? accent : AppTheme.title,
               ),
@@ -821,15 +818,14 @@ class _ScopeBuilderState extends State<_ScopeBuilder> {
                       ? Icons.radio_button_checked_rounded
                       : Icons.radio_button_unchecked_rounded,
                   size: 17,
-                  color: option == value ? accent : const Color(0xFF94A3B8),
+                  color: option == value ? accent : const Color(0xFF8C9A97),
                 ),
                 const SizedBox(width: 8),
                 Expanded(
                   child: Text(
                     option,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: const TextStyle(fontSize: 12.5),
+                    maxLines: 3,
+                    style: const TextStyle(fontSize: 12),
                   ),
                 ),
               ],
@@ -841,7 +837,7 @@ class _ScopeBuilderState extends State<_ScopeBuilder> {
           color: active ? accent.withValues(alpha: 0.08) : AppTheme.field,
           borderRadius: BorderRadius.circular(AppTheme.rField),
           border: Border.all(
-            color: active ? accent : const Color(0xFFE2E8F0),
+            color: active ? accent : const Color(0xFFE4EAE8),
             width: 1.2,
           ),
         ),
@@ -855,8 +851,7 @@ class _ScopeBuilderState extends State<_ScopeBuilder> {
                 children: [
                   Text(
                     label,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
+                    maxLines: 3,
                     style: const TextStyle(
                       fontSize: 10,
                       fontWeight: FontWeight.w700,
@@ -866,8 +861,7 @@ class _ScopeBuilderState extends State<_ScopeBuilder> {
                   const SizedBox(height: 2),
                   Text(
                     value,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
+                    maxLines: 3,
                     style: TextStyle(
                       fontSize: 12,
                       fontWeight: FontWeight.w900,
@@ -881,7 +875,7 @@ class _ScopeBuilderState extends State<_ScopeBuilder> {
             Icon(
               Icons.keyboard_arrow_down_rounded,
               size: 19,
-              color: active ? accent : const Color(0xFF94A3B8),
+              color: active ? accent : const Color(0xFF8C9A97),
             ),
           ],
         ),
@@ -907,7 +901,7 @@ class _ScopeBuilderState extends State<_ScopeBuilder> {
           decoration: BoxDecoration(
             borderRadius: BorderRadius.circular(AppTheme.rField),
             border: Border.all(
-              color: selected ? accent : const Color(0xFFE2E8F0),
+              color: selected ? accent : const Color(0xFFE4EAE8),
               width: 1.2,
             ),
           ),
@@ -953,12 +947,12 @@ class ScopeResultView extends StatelessWidget {
   final Color accent;
 
   Color _statusColor(SummaryItem item) {
-    if (item.isOverdue) return const Color(0xFFDC2626);
-    if (item.isDueSoon) return const Color(0xFFD97706);
+    if (item.isOverdue) return const Color(0xFFC4392E);
+    if (item.isDueSoon) return const Color(0xFFCE8422);
     if (const {'منتهية', 'منتهي', 'ملغاة', 'متوقف'}.contains(item.status)) {
-      return const Color(0xFF64748B);
+      return const Color(0xFF5C6B68);
     }
-    return const Color(0xFF059669);
+    return const Color(0xFF178F7B);
   }
 
   @override
@@ -1002,10 +996,9 @@ class ScopeResultView extends StatelessWidget {
                       selection.title.trim().isEmpty
                           ? selection.scope
                           : selection.title.trim(),
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
+                      maxLines: 3,
                       style: const TextStyle(
-                        fontSize: 14.5,
+                        fontSize: 15,
                         fontWeight: FontWeight.w900,
                         color: Colors.white,
                       ),
@@ -1051,12 +1044,12 @@ class ScopeResultView extends StatelessWidget {
             _stat(
               'الإجمالي',
               total == 0 ? '—' : '$total ${AppSettings.currencySuffix}',
-              const Color(0xFF0F6AA8),
+              const Color(0xFF0A5A50),
             ),
             const SizedBox(width: 8),
-            _stat('متأخرة', '$overdue', const Color(0xFFDC2626)),
+            _stat('متأخرة', '$overdue', const Color(0xFFC4392E)),
             const SizedBox(width: 8),
-            _stat('قريبة', '$dueSoon', const Color(0xFFD97706)),
+            _stat('قريبة', '$dueSoon', const Color(0xFFCE8422)),
           ],
         ),
         if (byType.length > 1) ...[
@@ -1073,7 +1066,7 @@ class ScopeResultView extends StatelessWidget {
                 const Text(
                   'التوزيع حسب النوع',
                   style: TextStyle(
-                    fontSize: 12.5,
+                    fontSize: 12,
                     fontWeight: FontWeight.w900,
                     color: AppTheme.title,
                   ),
@@ -1085,10 +1078,9 @@ class ScopeResultView extends StatelessWidget {
                       Expanded(
                         child: Text(
                           entry.key,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
+                          maxLines: 3,
                           style: const TextStyle(
-                            fontSize: 11.5,
+                            fontSize: 11,
                             fontWeight: FontWeight.w700,
                             color: AppTheme.body,
                           ),
@@ -1097,7 +1089,7 @@ class ScopeResultView extends StatelessWidget {
                       Text(
                         '${entry.value}',
                         style: TextStyle(
-                          fontSize: 11.5,
+                          fontSize: 11,
                           fontWeight: FontWeight.w900,
                           color: accent,
                         ),
@@ -1107,7 +1099,7 @@ class ScopeResultView extends StatelessWidget {
                   const SizedBox(height: 4),
                   // شريط نسبة بسيط يوضح ثقل كل نوع.
                   ClipRRect(
-                    borderRadius: BorderRadius.circular(4),
+                    borderRadius: BorderRadius.circular(8),
                     child: LinearProgressIndicator(
                       value: entry.value / maxTypeCount,
                       minHeight: 5,
@@ -1153,7 +1145,7 @@ class ScopeResultView extends StatelessWidget {
             child: Text(
               'العناصر (${items.length})',
               style: const TextStyle(
-                fontSize: 12.5,
+                fontSize: 12,
                 fontWeight: FontWeight.w900,
                 color: AppTheme.title,
               ),
@@ -1176,7 +1168,7 @@ class ScopeResultView extends StatelessWidget {
                     height: 34,
                     decoration: BoxDecoration(
                       color: accent.withValues(alpha: 0.1),
-                      borderRadius: BorderRadius.circular(10),
+                      borderRadius: BorderRadius.circular(12),
                     ),
                     child: Icon(
                       Icons.description_outlined,
@@ -1191,10 +1183,9 @@ class ScopeResultView extends StatelessWidget {
                       children: [
                         Text(
                           item.title.isEmpty ? 'بلا عنوان' : item.title,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
+                          maxLines: 3,
                           style: const TextStyle(
-                            fontSize: 12.5,
+                            fontSize: 12,
                             fontWeight: FontWeight.w800,
                             color: AppTheme.title,
                           ),
@@ -1207,10 +1198,9 @@ class ScopeResultView extends StatelessWidget {
                               ScopeSelection._fmt(item.date!),
                             if (item.person.isNotEmpty) item.person,
                           ].join(' · '),
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
+                          maxLines: 3,
                           style: const TextStyle(
-                            fontSize: 10.5,
+                            fontSize: 10,
                             fontWeight: FontWeight.w600,
                             color: AppTheme.muted,
                           ),
@@ -1245,7 +1235,7 @@ class ScopeResultView extends StatelessWidget {
                           child: Text(
                             item.status,
                             style: TextStyle(
-                              fontSize: 9.5,
+                              fontSize: 10,
                               fontWeight: FontWeight.w800,
                               color: _statusColor(item),
                             ),
@@ -1295,7 +1285,7 @@ class ScopeResultView extends StatelessWidget {
             Text(
               label,
               style: const TextStyle(
-                fontSize: 9.5,
+                fontSize: 10,
                 fontWeight: FontWeight.w700,
                 color: AppTheme.body,
               ),

@@ -37,7 +37,7 @@ class EntryOverviewCard extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     return Material(
-      color: const Color(0xFFF0F3F7),
+      color: const Color(0xFFF2F6F5),
       shape: RoundedRectangleBorder(borderRadius: BorderRadius.circular(24)),
       clipBehavior: Clip.antiAlias,
       child: InkWell(
@@ -57,10 +57,9 @@ class EntryOverviewCard extends StatelessWidget {
                       children: [
                         Text(
                           title,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
+                          maxLines: 3,
                           style: const TextStyle(
-                            color: Color(0xFF111827),
+                            color: Color(0xFF0F1F1C),
                             fontSize: 20,
                             fontWeight: FontWeight.w900,
                           ),
@@ -68,10 +67,9 @@ class EntryOverviewCard extends StatelessWidget {
                         const SizedBox(height: 3),
                         Text(
                           subtitle,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
+                          maxLines: 3,
                           style: const TextStyle(
-                            color: Color(0xFF4B5563),
+                            color: Color(0xFF46534F),
                             fontSize: 13,
                             fontWeight: FontWeight.w600,
                           ),
@@ -91,7 +89,7 @@ class EntryOverviewCard extends StatelessWidget {
                         height: 42,
                         child: Icon(
                           Icons.arrow_back_ios_new_rounded,
-                          color: Color(0xFF111827),
+                          color: Color(0xFF0F1F1C),
                           size: 24,
                         ),
                       ),
@@ -103,10 +101,9 @@ class EntryOverviewCard extends StatelessWidget {
                       padding: const EdgeInsets.only(top: 9),
                       child: Text(
                         countLabel,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
+                        maxLines: 3,
                         style: const TextStyle(
-                          color: Color(0xFF4B5563),
+                          color: Color(0xFF46534F),
                           fontSize: 13,
                           fontWeight: FontWeight.w700,
                         ),
@@ -156,10 +153,10 @@ class _EntryTile extends StatelessWidget {
             child: Container(
               decoration: BoxDecoration(
                 color: Colors.white,
-                borderRadius: BorderRadius.circular(17),
+                borderRadius: BorderRadius.circular(16),
                 boxShadow: const [
                   BoxShadow(
-                    color: Color(0x100F172A),
+                    color: Color(0x10022E2A),
                     blurRadius: 9,
                     offset: Offset(0, 4),
                   ),
@@ -175,11 +172,10 @@ class _EntryTile extends StatelessWidget {
                       padding: const EdgeInsets.symmetric(horizontal: 5),
                       child: Text(
                         tile.label!,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
+                        maxLines: 3,
                         textAlign: TextAlign.center,
                         style: const TextStyle(
-                          color: Color(0xFF374151),
+                          color: Color(0xFF2C3B38),
                           fontSize: 10,
                           fontWeight: FontWeight.w800,
                         ),
@@ -198,9 +194,9 @@ class _EntryTile extends StatelessWidget {
               padding: const EdgeInsets.symmetric(horizontal: 7),
               alignment: Alignment.center,
               decoration: BoxDecoration(
-                color: const Color(0xFF08AE2E),
+                color: const Color(0xFF34A894),
                 shape: BoxShape.circle,
-                border: Border.all(color: const Color(0xFFF0F3F7), width: 2),
+                border: Border.all(color: const Color(0xFFF2F6F5), width: 2),
               ),
               child: Text(
                 tile.count > 99 ? '99+' : '${tile.count}',

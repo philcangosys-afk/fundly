@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart' hide Text, Align;
 import '../../l10n/tr_widgets.dart';
 import '../../l10n/app_language.dart';
+import '../../data/fundly_auth.dart';
 
 /// نظام التصميم الموحَّد للتطبيق.
 ///
@@ -14,33 +15,81 @@ class AppTheme {
   const AppTheme._();
 
   // ===== الألوان =====
-  /// خلفية الصفحة: بيضاء، فتبرز البطاقات الرمادية فوقها.
+  // مصدرها الوحيد شعار Fundly: الأخضر العميق لجسم الحرف، والبرتقالي
+  // للشريط المتموّج داخله. لا هوية لونية ثالثة في التطبيق — فقط رمادي
+  // محايد مائل للأخضر للنصوص والخلفيات، وأحمر واحد للخطر. هكذا تبدو كل
+  // الشاشات من تطبيق واحد بدل خمسة ألوان متنافرة في الصفحة الواحدة.
+
+  // --- الأخضر: لون الهوية ---
+  /// الأساسي: الأزرار الممتلئة، التبويب المحدد، الأرقام المهمة.
+  static const brand = Color(0xFF0A5A50);
+
+  /// أغمق درجة للنصوص فوق الخلفيات الفاتحة وللضغط على الأزرار.
+  static const brandDark = Color(0xFF04413B);
+
+  /// شبه أسود بمسحة خضراء — لون العناوين الرئيسية.
+  static const brandDeep = Color(0xFF022E2A);
+
+  /// درجة وسطى للأيقونات والحالات الإيجابية.
+  static const brandMid = Color(0xFF0E7161);
+
+  /// درجة فاتحة للرسوم والتدرجات.
+  static const brandLight = Color(0xFF178F7B);
+
+  /// تظليل خفيف: خلفية الشرائح المحددة.
+  static const brandTint = Color(0xFFD9EDE8);
+
+  /// أخف تظليل: خلفية البطاقات المميزة.
+  static const brandSoft = Color(0xFFE9F4F1);
+
+  // --- البرتقالي: لون التمييز، بشحّ ---
+  /// للتنبيه والتمييز فقط (لا يُستعمل كلون أساسي حتى لا يطغى).
+  static const gold = Color(0xFFCE8422);
+  static const goldDark = Color(0xFFA6691A);
+  static const goldLight = Color(0xFFF2A93F);
+  static const goldSoft = Color(0xFFFDEFDC);
+
+  // --- الأسطح ---
+  /// خلفية الصفحة: بيضاء، فتبرز البطاقات فوقها.
   static const page = Color(0xFFFFFFFF);
 
-  /// البطاقة الخارجية — نفس لون ونعومة مربعات الصفحات الاحترافية.
-  static const surface = Color(0xFFEDF1F2);
+  /// البطاقة الخارجية — رمادي بمسحة خضراء خفيفة من الهوية.
+  static const surface = Color(0xFFEDF2F0);
 
   /// بطاقة داخلية تقع داخل بطاقة خارجية.
   static const surfaceInner = Color(0xFFFFFFFF);
 
   /// حقول الإدخال والمناطق الخفيفة.
-  static const field = Color(0xFFF2F5F6);
+  static const field = Color(0xFFF3F7F6);
 
   /// خط فاصل رفيع (يُستعمل بشحّ — التصميم يعتمد على الكتل لا الحدود).
-  static const line = Color(0xFFE3E9EB);
+  static const line = Color(0xFFE1E9E6);
 
-  static const title = Color(0xFF16232B);
-  static const body = Color(0xFF56666E);
-  static const muted = Color(0xFF8DA0A8);
-  static const chevron = Color(0xFF7C8D95);
+  /// خلفية بطاقات التفاصيل في كل الوحدات (الالتزامات الشخصية والمشتركة
+  /// والأفراد والعقارات): رمادي بمسحة خضراء خفيفة من الهوية — لا بيج.
+  static const paper = Color(0xFFEDF2F0);
 
-  static const accent = Color(0xFF3E8E8B);
-  static const accentDark = Color(0xFF2C6B69);
-  static const accentSoft = Color(0xFFE4EFEF);
+  /// خط فاصل شعري داخل البطاقات.
+  static const hairline = Color(0xFFD6E2E0);
 
-  static const danger = Color(0xFFC7443F);
-  static const success = Color(0xFF2E7D62);
-  static const warning = Color(0xFFB4741A);
+  // --- النصوص ---
+  static const title = Color(0xFF0F1F1C);
+  static const body = Color(0xFF46534F);
+  static const muted = Color(0xFF8C9A97);
+  static const chevron = Color(0xFF76837F);
+
+  // --- أسماء متوافقة مع الكود القائم (تشير إلى الهوية الجديدة) ---
+  static const accent = brand;
+  static const accentDark = brandDark;
+  static const accentSoft = brandSoft;
+
+  // --- الدلالات ---
+  static const danger = Color(0xFFC4392E);
+  static const dangerSoft = Color(0xFFFBE7E4);
+  static const success = brandMid;
+  static const successSoft = brandSoft;
+  static const warning = goldDark;
+  static const warningSoft = goldSoft;
 
   // ===== أنصاف الأقطار =====
   /// البطاقة الخارجية.
@@ -82,6 +131,17 @@ class AppTheme {
   static const iconSizeSmall = 17.0;
   static const chevronSize = 24.0;
 
+  // ===== سلّم أحجام الخط =====
+  // ست درجات فقط لكل التطبيق. أي نص جديد يأخذ إحداها ولا يخترع مقاسًا
+  // بينها — هذا ما يجعل الشاشات تبدو من تطبيق واحد.
+  static const fsMicro = 10.0; // شارات صغيرة داخل حبّات
+  static const fsCaption = 11.0; // تسميات وشروح تحت العناصر
+  static const fsSmall = 12.0; // نص ثانوي وأرقام مساعدة
+  static const fsBody = 13.0; // النص الأساسي
+  static const fsRow = 15.0; // عنوان صف أو بطاقة
+  static const fsTitle = 17.0; // عنوان قسم
+  static const fsDisplay = 20.0; // عنوان صفحة أو رقم بارز
+
   // ===== النصوص =====
   static const cardTitle = TextStyle(
     fontSize: 17,
@@ -91,14 +151,14 @@ class AppTheme {
   );
 
   static const sectionTitle = TextStyle(
-    fontSize: 18.5,
+    fontSize: 17,
     fontWeight: FontWeight.w900,
     color: title,
     height: 1.25,
   );
 
   static const rowTitle = TextStyle(
-    fontSize: 14.5,
+    fontSize: 15,
     fontWeight: FontWeight.w800,
     color: title,
     height: 1.3,
@@ -142,6 +202,8 @@ ThemeData buildAppTheme() {
     ),
     useMaterial3: true,
     scaffoldBackgroundColor: AppTheme.page,
+    // خط واحد لكل التطبيق: يمنع اختلاف شكل الحروف بين الأجهزة.
+    fontFamily: 'Cairo',
   );
 
   OutlineInputBorder fieldBorder([Color? color, double width = 0]) =>
@@ -181,7 +243,8 @@ ThemeData buildAppTheme() {
       border: fieldBorder(),
       enabledBorder: fieldBorder(),
       disabledBorder: fieldBorder(),
-      focusedBorder: fieldBorder(AppTheme.accent, 1.4),
+      // الحقل النشط يتوهّج ببرتقالي الشعار: لون الانتباه في التطبيق.
+      focusedBorder: fieldBorder(AppTheme.gold, 1.6),
       errorBorder: fieldBorder(AppTheme.danger, 1.2),
       focusedErrorBorder: fieldBorder(AppTheme.danger, 1.4),
       hintStyle: const TextStyle(
@@ -191,15 +254,15 @@ ThemeData buildAppTheme() {
       ),
       labelStyle: const TextStyle(
         color: AppTheme.body,
-        fontSize: 13.5,
+        fontSize: 13,
         fontWeight: FontWeight.w700,
       ),
       floatingLabelStyle: const TextStyle(
-        color: AppTheme.accentDark,
+        color: AppTheme.goldDark,
         fontSize: 13,
         fontWeight: FontWeight.w800,
       ),
-      helperStyle: const TextStyle(color: AppTheme.muted, fontSize: 11.5),
+      helperStyle: const TextStyle(color: AppTheme.muted, fontSize: 11),
       prefixIconColor: AppTheme.chevron,
       suffixIconColor: AppTheme.chevron,
     ),
@@ -211,7 +274,7 @@ ThemeData buildAppTheme() {
         minimumSize: const Size(0, 52),
         padding: const EdgeInsets.symmetric(horizontal: AppTheme.sXl),
         elevation: 0,
-        textStyle: const TextStyle(fontSize: 14.5, fontWeight: FontWeight.w800),
+        textStyle: const TextStyle(fontSize: 15, fontWeight: FontWeight.w800),
         shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.circular(AppTheme.rField),
         ),
@@ -225,7 +288,7 @@ ThemeData buildAppTheme() {
         padding: const EdgeInsets.symmetric(horizontal: AppTheme.sXl),
         elevation: 0,
         shadowColor: Colors.transparent,
-        textStyle: const TextStyle(fontSize: 14.5, fontWeight: FontWeight.w800),
+        textStyle: const TextStyle(fontSize: 15, fontWeight: FontWeight.w800),
         shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.circular(AppTheme.rField),
         ),
@@ -237,7 +300,7 @@ ThemeData buildAppTheme() {
         minimumSize: const Size(0, 52),
         padding: const EdgeInsets.symmetric(horizontal: AppTheme.sXl),
         side: const BorderSide(color: AppTheme.line),
-        textStyle: const TextStyle(fontSize: 14, fontWeight: FontWeight.w800),
+        textStyle: const TextStyle(fontSize: 13, fontWeight: FontWeight.w800),
         shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.circular(AppTheme.rField),
         ),
@@ -246,7 +309,7 @@ ThemeData buildAppTheme() {
     textButtonTheme: TextButtonThemeData(
       style: TextButton.styleFrom(
         foregroundColor: AppTheme.accentDark,
-        textStyle: const TextStyle(fontSize: 13.5, fontWeight: FontWeight.w800),
+        textStyle: const TextStyle(fontSize: 13, fontWeight: FontWeight.w800),
         shape: RoundedRectangleBorder(
           borderRadius: BorderRadius.circular(AppTheme.rIcon),
         ),
@@ -299,8 +362,8 @@ ThemeData buildAppTheme() {
       // فرق واضح بين المحدَّدة وغيرها: accentSoft قريب جدًا من لون
       // الحقول فلا يكاد يُرى الفرق.
       backgroundColor: AppTheme.field,
-      selectedColor: AppTheme.accent.withValues(alpha: 0.20),
-      checkmarkColor: AppTheme.accentDark,
+      selectedColor: AppTheme.brandTint,
+      checkmarkColor: AppTheme.gold,
       side: BorderSide.none,
       labelStyle: const TextStyle(
         fontSize: 12,
@@ -332,7 +395,27 @@ ThemeData buildAppTheme() {
       iconColor: AppTheme.chevron,
     ),
     progressIndicatorTheme: const ProgressIndicatorThemeData(
-      color: AppTheme.accent,
+      color: AppTheme.gold,
+    ),
+    // زر الإجراء العائم: برتقالي الشعار في كل الشاشات — فهو "الفعل"
+    // الأبرز في الصفحة، والأخضر يبقى للبنية والأزرار داخل النماذج.
+    floatingActionButtonTheme: const FloatingActionButtonThemeData(
+      backgroundColor: AppTheme.gold,
+      foregroundColor: Colors.white,
+      elevation: 6,
+      focusElevation: 6,
+      hoverElevation: 6,
+      highlightElevation: 6,
+      extendedTextStyle: TextStyle(fontSize: 13, fontWeight: FontWeight.w800),
+    ),
+    // التبويبات: النص أخضر والخط تحته برتقالي.
+    tabBarTheme: const TabBarThemeData(
+      labelColor: AppTheme.brand,
+      unselectedLabelColor: AppTheme.muted,
+      indicatorColor: AppTheme.gold,
+      dividerColor: Colors.transparent,
+      labelStyle: TextStyle(fontSize: 13, fontWeight: FontWeight.w900),
+      unselectedLabelStyle: TextStyle(fontSize: 13, fontWeight: FontWeight.w700),
     ),
   );
 }
@@ -383,6 +466,320 @@ double appFollowUpCardExtent(BuildContext context, int maxRows) {
 /// وصفوف يفصلها خط أبيض رفيع، والشخص/الجهة ببطاقة متدرّجة بحدّ زرقاء وظل
 /// وصفوف كل واحد منها صندوق مستقل، والعقار بشكل ثالث. الشكل الواحد هنا
 /// مصدره الوحيد، فتتطابق الصفحات فعلًا.
+/// نافذة تأكيد موحّدة لكل إجراءات قائمة النقاط الثلاث في التطبيق:
+/// لا يُنفَّذ إجراء (أرشفة، مشاركة، تعديل، حذف…) قبل موافقة صريحة.
+/// الاسم المركّب على سطرين: الكلمة الأولى في سطر والباقي تحتها —
+/// «الحركة المالية» ← «الحركة» / «المالية». الاسم المفرد يبقى سطرًا واحدًا.
+///
+/// هذه قاعدة أسماء الفئات والتبويبات: كسر ثابت بين الكلمات بدل أن يقرّر
+/// عرض الشاشة أين ينكسر الاسم (أو يقصّه بثلاث نقاط).
+String twoLineLabel(String label) {
+  final text = AppTr.tr(label).trim();
+  if (text.contains(' / ')) return text.replaceFirst(' / ', ' /\n');
+  final words = text.split(RegExp(r'\s+'));
+  if (words.length < 2) return text;
+  if (words.length == 2) return '${words[0]}\n${words[1]}';
+  // ثلاث كلمات فأكثر: الكسر عند المسافة الأقرب لمنتصف الطول.
+  var best = 1;
+  var bestDiff = 1 << 30;
+  for (var i = 1; i < words.length; i++) {
+    final left = words.sublist(0, i).join(' ').length;
+    final right = words.sublist(i).join(' ').length;
+    final diff = (left - right).abs();
+    if (diff < bestDiff) {
+      bestDiff = diff;
+      best = i;
+    }
+  }
+  return '${words.sublist(0, best).join(' ')}\n'
+      '${words.sublist(best).join(' ')}';
+}
+
+/// رأس قسم قابل للإضافة: العنوان (ومعه إجماليه) في أوّل السطر، وزر + في
+/// آخره، وتحتهما خط رصاصي رفيع.
+///
+/// هذا هو الشكل الموحّد لكل قسم في التطبيق يمكن أن يُضاف إليه شيء —
+/// المصروفات، الدخل الإضافي، المستندات، المتابعات — بدل أن يخترع كل قسم
+/// ترتيبه الخاص لزر الإضافة.
+/// سهم فلتر صغير في رأس القسم: «الكل» ثم الأنواع (مهمة، موعد...) — نفس
+/// الشكل في كل شاشات التطبيق.
+class AppKindFilterButton extends StatelessWidget {
+  const AppKindFilterButton({
+    super.key,
+    required this.value,
+    required this.options,
+    required this.onSelected,
+    this.accent,
+  });
+
+  final String value;
+  final List<String> options;
+  final ValueChanged<String> onSelected;
+  final Color? accent;
+
+  @override
+  Widget build(BuildContext context) {
+    final color = accent ?? AppTheme.brand;
+    return PopupMenuButton<String>(
+      tooltip: AppTr.tr('تصفية حسب النوع'),
+      initialValue: value,
+      onSelected: onSelected,
+      itemBuilder: (context) => [
+        for (final option in ['الكل', ...options])
+          PopupMenuItem<String>(
+            value: option,
+            child: Directionality(
+              textDirection: AppTr.uiDir,
+              child: Text(
+                option,
+                style: TextStyle(
+                  fontSize: 12.5,
+                  fontWeight: option == value
+                      ? FontWeight.w900
+                      : FontWeight.w600,
+                  color: option == value ? color : AppTheme.title,
+                ),
+              ),
+            ),
+          ),
+      ],
+      child: Container(
+        padding: const EdgeInsets.fromLTRB(8, 6, 6, 6),
+        decoration: BoxDecoration(
+          color: color.withValues(alpha: 0.10),
+          borderRadius: BorderRadius.circular(AppTheme.rIcon),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          textDirection: AppTr.uiDir,
+          children: [
+            Text(
+              value,
+              style: TextStyle(
+                fontSize: 11,
+                fontWeight: FontWeight.w800,
+                color: color,
+              ),
+            ),
+            Icon(Icons.keyboard_arrow_down_rounded, size: 18, color: color),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+class AppSectionAddRow extends StatelessWidget {
+  const AppSectionAddRow({
+    super.key,
+    required this.title,
+    this.onAdd,
+    this.icon,
+    this.accent,
+    this.trailingText = '',
+    this.showDivider = true,
+    this.actionIcon = Icons.add_rounded,
+    this.count,
+    this.filter,
+  });
+
+  /// سهم فلتر بجانب زر + (مثل [AppKindFilterButton]).
+  final Widget? filter;
+
+  /// عدد يظهر ملاصقًا للعنوان نفسه («المستندات 3») لا في آخر السطر.
+  final int? count;
+
+  /// نص العنوان، ويصلح أن يحمل الإجمالي معه: «إجمالي المصروفات: 0.00».
+  final String title;
+
+  /// أيقونة الزر — + افتراضًا، و× في نموذج مفتوح يُغلق من رأسه.
+  final IconData actionIcon;
+
+  /// اضغط + . تمرير null يخفي الزر.
+  final VoidCallback? onAdd;
+
+  final IconData? icon;
+  final Color? accent;
+
+  /// نص صغير قبل زر الإضافة (عدد العناصر مثلًا).
+  final String trailingText;
+
+  final bool showDivider;
+
+  @override
+  Widget build(BuildContext context) {
+    final color = accent ?? AppTheme.brand;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Padding(
+          padding: const EdgeInsets.symmetric(vertical: 8),
+          child: Row(
+            textDirection: AppTr.uiDir,
+            children: [
+              if (icon != null) ...[
+                Icon(icon, size: 18, color: AppTheme.title),
+                const SizedBox(width: 8),
+              ],
+              // سطران عند اللزوم بدل قصّ العنوان بثلاث نقاط.
+              if (count == null)
+                Expanded(
+                  child: Text(
+                    title,
+                    textAlign: AppTr.alignEnd,
+                    maxLines: 2,
+                    softWrap: true,
+                    style: const TextStyle(
+                      fontSize: 13,
+                      fontWeight: FontWeight.w900,
+                      color: AppTheme.title,
+                    ),
+                  ),
+                )
+              else
+                // العنوان وعدده معًا في جهة، و«+» في آخر السطر (يسارًا).
+                // كان Flexible + Spacer يقتسمان الفراغ فيقع «+» في الوسط.
+                Expanded(
+                  child: Row(
+                    textDirection: AppTr.uiDir,
+                    children: [
+                      Flexible(
+                        child: Text(
+                          title,
+                          textAlign: AppTr.alignEnd,
+                          maxLines: 2,
+                          softWrap: true,
+                          style: const TextStyle(
+                            fontSize: 13,
+                            fontWeight: FontWeight.w900,
+                            color: AppTheme.title,
+                          ),
+                        ),
+                      ),
+                      const SizedBox(width: 6),
+                      Container(
+                        constraints: const BoxConstraints(minWidth: 24),
+                        padding: const EdgeInsets.symmetric(
+                          horizontal: 7,
+                          vertical: 2,
+                        ),
+                        decoration: BoxDecoration(
+                          color: color.withValues(alpha: 0.12),
+                          borderRadius: BorderRadius.circular(AppTheme.rPill),
+                        ),
+                        child: Text(
+                          '$count',
+                          textAlign: TextAlign.center,
+                          style: TextStyle(
+                            fontSize: 11.5,
+                            fontWeight: FontWeight.w900,
+                            color: color,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+              if (trailingText.isNotEmpty) ...[
+                const SizedBox(width: 8),
+                Text(
+                  trailingText,
+                  style: const TextStyle(
+                    fontSize: 11,
+                    fontWeight: FontWeight.w800,
+                    color: AppTheme.muted,
+                  ),
+                ),
+              ],
+              if (filter != null) ...[
+                const SizedBox(width: 8),
+                filter!,
+              ],
+              if (onAdd != null) ...[
+                const SizedBox(width: 8),
+                InkWell(
+                  borderRadius: BorderRadius.circular(AppTheme.rIcon),
+                  // الضيف يُطلب منه تسجيل الدخول قبل أي إضافة.
+                  onTap: () async {
+                    if (await FundlyAuth.requireLogin(context)) onAdd!();
+                  },
+                  child: Container(
+                    width: 34,
+                    height: 34,
+                    alignment: Alignment.center,
+                    decoration: BoxDecoration(
+                      color: color.withValues(alpha: 0.12),
+                      borderRadius: BorderRadius.circular(AppTheme.rIcon),
+                    ),
+                    child: Icon(actionIcon, size: 20, color: color),
+                  ),
+                ),
+              ],
+            ],
+          ),
+        ),
+        if (showDivider) Container(height: 1, color: AppTheme.hairline),
+      ],
+    );
+  }
+}
+
+Future<bool> confirmAction(
+  BuildContext context, {
+  required String title,
+  required String message,
+  String confirmLabel = 'تأكيد',
+  String cancelLabel = 'إلغاء',
+  bool danger = false,
+}) async {
+  final result = await showDialog<bool>(
+    context: context,
+    builder: (dialogContext) => Directionality(
+      textDirection: AppTr.uiDir,
+      child: AlertDialog(
+        backgroundColor: Colors.white,
+        shape: RoundedRectangleBorder(
+          borderRadius: BorderRadius.circular(AppTheme.rInner),
+        ),
+        title: Text(
+          title,
+          textAlign: TextAlign.right,
+          style: const TextStyle(
+            fontSize: 15,
+            fontWeight: FontWeight.w900,
+            color: Color(0xFF022E2A),
+          ),
+        ),
+        content: Text(
+          message,
+          textAlign: TextAlign.right,
+          style: const TextStyle(
+            fontSize: 12.5,
+            height: 1.7,
+            fontWeight: FontWeight.w600,
+            color: Color(0xFF46534F),
+          ),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.of(dialogContext).pop(false),
+            child: Text(cancelLabel),
+          ),
+          FilledButton(
+            style: FilledButton.styleFrom(
+              backgroundColor: danger ? AppTheme.danger : AppTheme.brand,
+              foregroundColor: Colors.white,
+            ),
+            onPressed: () => Navigator.of(dialogContext).pop(true),
+            child: Text(confirmLabel),
+          ),
+        ],
+      ),
+    ),
+  );
+  return result == true;
+}
+
 class AppDetailsCard extends StatelessWidget {
   const AppDetailsCard({
     super.key,
@@ -390,6 +787,9 @@ class AppDetailsCard extends StatelessWidget {
     required this.icon,
     required this.color,
     required this.children,
+    this.onAdd,
+    this.addTooltip = 'إضافة',
+    this.showHeader = true,
   });
 
   final String title;
@@ -397,37 +797,77 @@ class AppDetailsCard extends StatelessWidget {
   final Color color;
   final List<Widget> children;
 
+  /// إخفاء ترويسة البطاقة حين يكون عنوان القسم فوقها يحمل الاسم نفسه.
+  final bool showHeader;
+
+  /// زر «+» في نهاية ترويسة البطاقة — يظهر فقط عند تمرير إجراء له.
+  final VoidCallback? onAdd;
+  final String addTooltip;
+
   @override
   Widget build(BuildContext context) {
     return Container(
       width: double.infinity,
       padding: const EdgeInsets.all(AppTheme.sLg),
       decoration: BoxDecoration(
-        color: AppTheme.surface,
-        borderRadius: BorderRadius.circular(AppTheme.rField),
+        color: AppTheme.paper,
+        borderRadius: BorderRadius.circular(AppTheme.rInner),
+        border: Border.all(color: AppTheme.hairline),
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
+          if (showHeader) ...[
           Row(
             children: [
-              Icon(icon, color: color, size: 22),
+              Container(
+                width: 4,
+                height: 18,
+                margin: const EdgeInsetsDirectional.only(end: 8),
+                decoration: BoxDecoration(
+                  color: AppTheme.gold,
+                  borderRadius: BorderRadius.circular(AppTheme.rPill),
+                ),
+              ),
+              Icon(icon, color: color, size: 20),
               const SizedBox(width: AppTheme.sSm),
               Expanded(
                 child: Text(
                   title,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
+                  maxLines: 3,
                   style: const TextStyle(
-                    color: Color(0xFF0F172A),
+                    color: Color(0xFF022E2A),
                     fontSize: 15,
                     fontWeight: FontWeight.w900,
                   ),
                 ),
               ),
+              if (onAdd != null)
+                Tooltip(
+                  message: AppTr.tr(addTooltip),
+                  child: InkWell(
+                    borderRadius: BorderRadius.circular(AppTheme.rIcon),
+                    onTap: onAdd,
+                    child: Container(
+                      padding: const EdgeInsets.all(6),
+                      decoration: BoxDecoration(
+                        color: color,
+                        borderRadius: BorderRadius.circular(AppTheme.rIcon),
+                      ),
+                      child: const Icon(
+                        Icons.add_rounded,
+                        size: 18,
+                        color: Colors.white,
+                      ),
+                    ),
+                  ),
+                ),
             ],
           ),
-          const SizedBox(height: AppTheme.sMd),
+          const SizedBox(height: AppTheme.sSm),
+          const Divider(height: 1, thickness: 1, color: AppTheme.hairline),
+          const SizedBox(height: AppTheme.sSm),
+          ],
           ...children,
         ],
       ),
@@ -459,18 +899,20 @@ class AppDetailRow extends StatelessWidget {
       padding: const EdgeInsets.symmetric(vertical: AppTheme.sMd),
       decoration: showDivider
           ? const BoxDecoration(
-              border: Border(bottom: BorderSide(color: Color(0xFFF1F5F9))),
+              border: Border(
+                bottom: BorderSide(color: AppTheme.hairline, width: 0.8),
+              ),
             )
           : null,
       child: Row(
         children: [
-          Icon(icon, size: 19, color: const Color(0xFF94A3B8)),
+          Icon(icon, size: 19, color: const Color(0xFF8C9A97)),
           const SizedBox(width: 9),
           Expanded(
             child: Text(
               label,
               style: const TextStyle(
-                color: Color(0xFF64748B),
+                color: Color(0xFF5C6B68),
                 fontSize: 12,
                 fontWeight: FontWeight.w600,
               ),
@@ -482,7 +924,7 @@ class AppDetailRow extends StatelessWidget {
               value,
               textAlign: TextAlign.end,
               style: TextStyle(
-                color: valueColor ?? const Color(0xFF1E293B),
+                color: valueColor ?? const Color(0xFF1C2C29),
                 fontSize: 12,
                 fontWeight: FontWeight.w900,
               ),
@@ -511,9 +953,9 @@ class AppMoreAction extends StatelessWidget {
       children: [
         Text(
           label,
-          maxLines: 1,
+          maxLines: 3,
           style: TextStyle(
-            fontSize: 12.5,
+            fontSize: 12,
             fontWeight: FontWeight.w800,
             color: color ?? AppTheme.muted,
           ),
@@ -563,6 +1005,18 @@ class AppIconTile extends StatelessWidget {
 
 /// البطاقة الخارجية الموحَّدة: مستطيل رمادي ناعم بلا حدود ولا ظل،
 /// عنوانه أقصى اليمين وسهمه أقصى اليسار.
+/// داخل مستطيل الوحدة الملوّن: البطاقات بيضاء بحد واضح حتى لا تذوب في
+/// لون الخلفية.
+class ModuleTintScope extends InheritedWidget {
+  const ModuleTintScope({super.key, required super.child});
+
+  static bool of(BuildContext context) =>
+      context.dependOnInheritedWidgetOfExactType<ModuleTintScope>() != null;
+
+  @override
+  bool updateShouldNotify(ModuleTintScope oldWidget) => false;
+}
+
 class AppCard extends StatelessWidget {
   const AppCard({
     super.key,
@@ -641,8 +1095,15 @@ class AppCard extends StatelessWidget {
       child: Directionality(
         textDirection: AppTr.uiDir,
         child: Material(
-          color: background ?? AppTheme.surface,
-          borderRadius: BorderRadius.circular(AppTheme.rCard),
+          color:
+              background ??
+              (ModuleTintScope.of(context) ? Colors.white : AppTheme.surface),
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(AppTheme.rCard),
+            side: ModuleTintScope.of(context)
+                ? const BorderSide(color: AppTheme.hairline)
+                : BorderSide.none,
+          ),
           clipBehavior: Clip.antiAlias,
           child: onTap == null
               ? content
@@ -735,16 +1196,14 @@ class AppListRow extends StatelessWidget {
                     children: [
                       Text(
                         title,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
+                        maxLines: 3,
                         style: AppTheme.rowTitle,
                       ),
                       if (subtitle != null && subtitle!.isNotEmpty) ...[
                         const SizedBox(height: 3),
                         Text(
                           subtitle!,
-                          maxLines: 2,
-                          overflow: TextOverflow.ellipsis,
+                          maxLines: 4,
                           style: AppTheme.rowSubtitle,
                         ),
                       ],
@@ -775,6 +1234,17 @@ class AppSectionTitle extends StatelessWidget {
       textDirection: AppTr.uiDir,
       child: Row(
         children: [
+          // شريط برتقالي رفيع يسبق كل عنوان قسم: توقيع الهوية المتكرر
+          // في كل الشاشات، ويفصل العناوين بصريًا عن النص تحتها.
+          Container(
+            width: 4,
+            height: 18,
+            margin: const EdgeInsetsDirectional.only(end: 8),
+            decoration: BoxDecoration(
+              color: AppTheme.gold,
+              borderRadius: BorderRadius.circular(AppTheme.rPill),
+            ),
+          ),
           Expanded(child: Text(text, style: AppTheme.sectionTitle)),
           if (trailing != null) trailing!,
         ],
@@ -913,8 +1383,7 @@ class AppMetricChip extends StatelessWidget {
             const SizedBox(height: 3),
             Text(
               label,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
+              maxLines: 3,
               textAlign: TextAlign.center,
               style: const TextStyle(
                 fontSize: 10,
@@ -970,7 +1439,7 @@ class AppCategoryChip extends StatelessWidget {
                 Icon(
                   icon,
                   size: 16,
-                  color: selected ? Colors.white : color,
+                  color: selected ? AppTheme.goldLight : color,
                 ),
                 const SizedBox(width: 6),
                 // بلا رقم داخل الشريحة: العدد يظهر في رأس القائمة أسفلها
@@ -980,7 +1449,7 @@ class AppCategoryChip extends StatelessWidget {
                   label,
                   style: TextStyle(
                     color: selected ? Colors.white : AppTheme.body,
-                    fontSize: 11.5,
+                    fontSize: 11,
                     fontWeight: FontWeight.w800,
                   ),
                 ),
@@ -1014,7 +1483,42 @@ class AppEntityCard extends StatelessWidget {
     this.stats = const [],
     this.leadingBadges = const [],
     this.trailing,
+    this.keepStatSlots = false,
+    this.subtitleMaxLines = 1,
+    this.titleMaxLines = 1,
+    this.statsMaxLines = 1,
+    this.footer,
+    this.statsHeader,
+    this.titleSingleLine = false,
+    this.statsSingleLine = false,
   });
+
+  /// كل قيمة في عمود الإحصاءات في سطر واحد (يصغر الخط إن طالت) بدل نزول
+  /// آخر كلمة إلى سطر ثانٍ.
+  final bool statsSingleLine;
+
+  /// العنوان في سطر واحد دائمًا (يصغر الخط إن طال) بدل نزوله أسطرًا.
+  final bool titleSingleLine;
+
+  /// سطر إضافي تحت العنوان الفرعي (مثل الدور في العهدة).
+  final Widget? footer;
+
+  /// فوق عمود الأرقام (حالة ملوّنة مثل «نشطة» / «ملغاة» فوق المبلغ).
+  final Widget? statsHeader;
+
+  /// أسطر كل قيمة في عمود الإحصاءات: 2 لتظهر الجملة كاملة بلا قصّ.
+  final int statsMaxLines;
+
+  /// سطرا العنوان الفرعي عند الحاجة («رحلة سفر» ثم «دفعة مقطوعة»).
+  final int subtitleMaxLines;
+
+  /// سطرا العنوان عند الحاجة: الاسم الثلاثي مع القبيلة لا يسع سطرًا واحدًا،
+  /// وكان يُقصّ بثلاث نقاط فلا يُعرف صاحب البطاقة من القائمة.
+  final int titleMaxLines;
+
+  /// تبقى الخانة الفارغة مكانها بدل أن يصعد ما بعدها إلى السطر الأول —
+  /// فالتاريخ يبقى على مستوى السطر الثاني حتى لو لم يكن هناك مبلغ.
+  final bool keepStatSlots;
 
   /// عرض عمود الإحصاءات الموحَّد.
   static const statsWidth = 108.0;
@@ -1042,10 +1546,12 @@ class AppEntityCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final visibleStats = stats
-        .where((value) => value.trim().isNotEmpty)
-        .take(2)
-        .toList(growable: false);
+    final visibleStats = keepStatSlots
+        ? stats.take(2).toList(growable: false)
+        : stats
+              .where((value) => value.trim().isNotEmpty)
+              .take(2)
+              .toList(growable: false);
 
     return Material(
       color: AppTheme.surface,
@@ -1082,16 +1588,30 @@ class AppEntityCard extends StatelessWidget {
                       children: [
                         ...leadingBadges,
                         Expanded(
-                          child: Text(
-                            title,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: const TextStyle(
-                              fontSize: 13.5,
-                              fontWeight: FontWeight.w900,
-                              color: AppTheme.title,
-                            ),
-                          ),
+                          child: titleSingleLine
+                              ? FittedBox(
+                                  fit: BoxFit.scaleDown,
+                                  alignment: AlignmentDirectional.centerStart,
+                                  child: Text(
+                                    title,
+                                    maxLines: 1,
+                                    softWrap: false,
+                                    style: const TextStyle(
+                                      fontSize: 13,
+                                      fontWeight: FontWeight.w900,
+                                      color: AppTheme.title,
+                                    ),
+                                  ),
+                                )
+                              : Text(
+                                  title,
+                                  maxLines: (titleMaxLines) + 2,
+                                  style: const TextStyle(
+                                    fontSize: 13,
+                                    fontWeight: FontWeight.w900,
+                                    color: AppTheme.title,
+                                  ),
+                                ),
                         ),
                         if (statusColor != null)
                           Container(
@@ -1110,14 +1630,17 @@ class AppEntityCard extends StatelessWidget {
                     const SizedBox(height: 5),
                     Text(
                       subtitle,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
+                      maxLines: (subtitleMaxLines) + 2,
                       style: TextStyle(
-                        fontSize: 10.5,
+                        fontSize: 10,
                         fontWeight: FontWeight.w700,
                         color: iconColor,
                       ),
                     ),
+                    if (footer != null) ...[
+                      const SizedBox(height: 5),
+                      footer!,
+                    ],
                   ],
                 ),
               ),
@@ -1129,23 +1652,23 @@ class AppEntityCard extends StatelessWidget {
                     crossAxisAlignment: CrossAxisAlignment.start,
                     mainAxisAlignment: MainAxisAlignment.center,
                     children: [
-                      Text(
+                      if (statsHeader != null) ...[
+                        statsHeader!,
+                        const SizedBox(height: 6),
+                      ],
+                      _statText(
                         visibleStats.first,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(
-                          fontSize: 10.5,
+                        const TextStyle(
+                          fontSize: 10,
                           fontWeight: FontWeight.w900,
                           color: AppTheme.title,
                         ),
                       ),
                       if (visibleStats.length > 1) ...[
                         const SizedBox(height: 6),
-                        Text(
+                        _statText(
                           visibleStats[1],
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          style: const TextStyle(
+                          const TextStyle(
                             fontSize: 10,
                             fontWeight: FontWeight.w600,
                             color: AppTheme.muted,
@@ -1165,6 +1688,22 @@ class AppEntityCard extends StatelessWidget {
       ),
     );
   }
+}
+
+/// قيمة في عمود الإحصاءات: سطر واحد مصغَّر عند [AppEntityCard.statsSingleLine].
+extension on AppEntityCard {
+  Widget _statText(String value, TextStyle style) => statsSingleLine
+      ? FittedBox(
+          fit: BoxFit.scaleDown,
+          alignment: AlignmentDirectional.centerStart,
+          child: Text(value, maxLines: 1, softWrap: false, style: style),
+        )
+      : Text(
+          value,
+          maxLines: (statsMaxLines) + 2,
+          softWrap: true,
+          style: style,
+        );
 }
 
 /// عنصر داخل قائمة شريحة الفئة المنسدلة.
@@ -1389,7 +1928,7 @@ class _AppCategoryDropdownChipState extends State<AppCategoryDropdownChip> {
                       borderRadius: BorderRadius.circular(AppTheme.rInner),
                       boxShadow: const [
                         BoxShadow(
-                          color: Color(0x2616232B),
+                          color: Color(0x260F1F1C),
                           blurRadius: 22,
                           offset: Offset(0, 10),
                         ),
@@ -1471,11 +2010,9 @@ class _AppCategoryDropdownChipState extends State<AppCategoryDropdownChip> {
               Expanded(
                 child: Text(
                   item.label,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  softWrap: false,
+                  maxLines: 3,
                   style: TextStyle(
-                    fontSize: 12.5,
+                    fontSize: 12,
                     fontWeight: item.selected
                         ? FontWeight.w900
                         : FontWeight.w600,
@@ -1538,13 +2075,24 @@ class _AppCategoryDropdownChipState extends State<AppCategoryDropdownChip> {
                   children: [
                     Icon(widget.icon, size: 16, color: foreground),
                     const SizedBox(width: 6),
-                    Text(
-                      widget.label,
-                      style: TextStyle(
-                        color: widget.selected ? Colors.white : AppTheme.body,
-                        fontSize: 11.5,
-                        fontWeight: FontWeight.w800,
-                      ),
+                    // اسم من سطرين: يُكتب بفاصل سطر في النص نفسه.
+                    Column(
+                      mainAxisSize: MainAxisSize.min,
+                      crossAxisAlignment: CrossAxisAlignment.center,
+                      children: [
+                        for (final line in widget.label.split('\n'))
+                          Text(
+                            line,
+                            style: TextStyle(
+                              color: widget.selected
+                                  ? Colors.white
+                                  : AppTheme.body,
+                              fontSize: 11,
+                              height: 1.25,
+                              fontWeight: FontWeight.w800,
+                            ),
+                          ),
+                      ],
                     ),
                     // بلا رقم داخل الشريحة — كبقية شرائح الفئات.
                   ],
@@ -1566,6 +2114,174 @@ class _AppCategoryDropdownChipState extends State<AppCategoryDropdownChip> {
                 ),
               ),
           ],
+        ),
+      ),
+    );
+  }
+}
+
+
+/// حوار نصّي صغير يملك متحكّمه ويتخلّص منه بنفسه.
+///
+/// التخلّص من TextEditingController مباشرة بعد `showDialog` يجعل الحقل
+/// يستعمل متحكّمًا محرَّرًا أثناء حركة إغلاق النافذة، فيسقط التطبيق برسالة
+/// «A TextEditingController was used after being disposed». هنا المتحكّم
+/// مملوك لـ State ويُحرَّر في dispose الخاصة به بعد انتهاء الحركة.
+Future<String?> askTextDialog(
+  BuildContext context, {
+  required String title,
+  required String label,
+  String initialText = '',
+  String confirmLabel = 'إضافة',
+  String cancelLabel = 'إلغاء',
+}) async {
+  final value = await showDialog<String>(
+    context: context,
+    builder: (dialogContext) => _AskTextDialog(
+      title: title,
+      label: label,
+      initialText: initialText,
+      confirmLabel: confirmLabel,
+      cancelLabel: cancelLabel,
+    ),
+  );
+  if (value == null) return null;
+  final trimmed = value.trim();
+  return trimmed.isEmpty ? null : trimmed;
+}
+
+class _AskTextDialog extends StatefulWidget {
+  const _AskTextDialog({
+    required this.title,
+    required this.label,
+    required this.initialText,
+    required this.confirmLabel,
+    required this.cancelLabel,
+  });
+
+  final String title;
+  final String label;
+  final String initialText;
+  final String confirmLabel;
+  final String cancelLabel;
+
+  @override
+  State<_AskTextDialog> createState() => _AskTextDialogState();
+}
+
+class _AskTextDialogState extends State<_AskTextDialog> {
+  late final TextEditingController _controller = TextEditingController(
+    text: widget.initialText,
+  );
+
+  @override
+  void dispose() {
+    _controller.dispose();
+    super.dispose();
+  }
+
+  @override
+  Widget build(BuildContext context) {
+    return Directionality(
+      textDirection: AppTr.uiDir,
+      child: AlertDialog(
+        backgroundColor: AppTheme.page,
+        title: Text(widget.title),
+        content: TextField(
+          controller: _controller,
+          autofocus: true,
+          textDirection: AppTr.uiDir,
+          decoration: InputDecoration(labelText: AppTr.tr(widget.label)),
+          onSubmitted: (value) => Navigator.pop(context, value.trim()),
+        ),
+        actions: [
+          TextButton(
+            onPressed: () => Navigator.pop(context),
+            child: Text(widget.cancelLabel),
+          ),
+          ElevatedButton(
+            onPressed: () => Navigator.pop(context, _controller.text.trim()),
+            child: Text(widget.confirmLabel),
+          ),
+        ],
+      ),
+    );
+  }
+}
+
+/// مرفق مختار في نموذج: الزر نفسه، وبجانبه زر «حذف» يزيل الاختيار، فيُرفع
+/// غيره بدل الخطأ. قبل الاختيار يظهر الزر وحده كما هو.
+class AppRemovableAttachment extends StatelessWidget {
+  const AppRemovableAttachment({
+    super.key,
+    required this.child,
+    required this.attached,
+    required this.onRemove,
+  });
+
+  final Widget child;
+  final bool attached;
+  final VoidCallback onRemove;
+
+  @override
+  Widget build(BuildContext context) {
+    if (!attached) return child;
+    return Row(
+      textDirection: AppTr.uiDir,
+      children: [
+        Expanded(child: child),
+        const SizedBox(width: 8),
+        Tooltip(
+          message: AppTr.tr('حذف المستند'),
+          child: Material(
+            color: AppTheme.danger.withValues(alpha: 0.08),
+            borderRadius: BorderRadius.circular(AppTheme.rField),
+            clipBehavior: Clip.antiAlias,
+            child: InkWell(
+              onTap: onRemove,
+              child: const SizedBox(
+                width: 46,
+                height: 46,
+                child: Icon(
+                  Icons.delete_outline_rounded,
+                  size: 21,
+                  color: AppTheme.danger,
+                ),
+              ),
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+}
+
+/// نص من عدة أسطر داخل مساحة ثابتة (مربع أو صف بارتفاع محدد): يلتفّ
+/// على عرض المساحة، وإن لم يتسع ارتفاعها صُغِّر كله حتى يظهر كاملًا —
+/// لا كلمة مقصوصة ولا «...».
+class AppFitText extends StatelessWidget {
+  const AppFitText(
+    this.text, {
+    super.key,
+    this.style,
+    this.textAlign,
+    this.alignment = AlignmentDirectional.centerStart,
+  });
+
+  final String text;
+  final TextStyle? style;
+  final TextAlign? textAlign;
+  final AlignmentGeometry alignment;
+
+  @override
+  Widget build(BuildContext context) {
+    return LayoutBuilder(
+      builder: (context, constraints) => FittedBox(
+        fit: BoxFit.scaleDown,
+        alignment: alignment,
+        child: SizedBox(
+          width: constraints.maxWidth.isFinite ? constraints.maxWidth : null,
+          child: Text(text, textAlign: textAlign, softWrap: true, style: style),
         ),
       ),
     );

@@ -85,7 +85,7 @@ class _AppLockScreenState extends State<_AppLockScreen> {
                   const Text(
                     'التطبيق مقفل',
                     style: TextStyle(
-                      fontSize: 19,
+                      fontSize: 17,
                       fontWeight: FontWeight.w900,
                       color: AppTheme.title,
                     ),
@@ -94,7 +94,7 @@ class _AppLockScreenState extends State<_AppLockScreen> {
                   const Text(
                     'أدخل رمز القفل من أربعة أرقام للمتابعة',
                     textAlign: TextAlign.center,
-                    style: TextStyle(fontSize: 12.5, color: AppTheme.muted),
+                    style: TextStyle(fontSize: 12, color: AppTheme.muted),
                   ),
                   const SizedBox(height: 22),
                   SizedBox(
@@ -111,7 +111,7 @@ class _AppLockScreenState extends State<_AppLockScreen> {
                         FilteringTextInputFormatter.digitsOnly,
                       ],
                       style: const TextStyle(
-                        fontSize: 22,
+                        fontSize: 20,
                         letterSpacing: 8,
                         fontWeight: FontWeight.w900,
                       ),
@@ -129,7 +129,7 @@ class _AppLockScreenState extends State<_AppLockScreen> {
                     Text(
                       _error!,
                       style: const TextStyle(
-                        fontSize: 12.5,
+                        fontSize: 12,
                         fontWeight: FontWeight.w700,
                         color: AppTheme.danger,
                       ),

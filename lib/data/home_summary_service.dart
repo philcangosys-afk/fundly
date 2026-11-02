@@ -27,6 +27,7 @@ class SummaryItem {
     this.payment = '',
     this.subtitle = '',
     this.createdAt,
+    this.searchText = '',
   });
 
   /// القسم الرئيسي كما في قائمة [ScopeCatalog.scopes].
@@ -52,6 +53,10 @@ class SummaryItem {
   final String payment;
   final String subtitle;
   final DateTime? createdAt;
+
+  /// نص إضافي للبحث (قيم التفاصيل، الموقع...) — لا يُعرض، يُبحث فيه فقط
+  /// في التقارير والأرشيف.
+  final String searchText;
 
   bool get isOverdue =>
       date != null &&
@@ -102,6 +107,8 @@ class HomeSummaryService {
 
     try {
       for (final entry in await _personalRepository.fetchAll()) {
+        // ما في سلة المهملات لا يدخل الملخصات ولا التقارير.
+        if (entry.status == 'محذوف') continue;
         items.add(
           SummaryItem(
             scope: ScopeCatalog.personal,
@@ -119,6 +126,7 @@ class HomeSummaryService {
             payment: entry.details['طريقة الدفع'] ?? '',
             subtitle: entry.category,
             createdAt: entry.createdAt,
+            searchText: entry.details.values.join(' '),
           ),
         );
       }
@@ -145,6 +153,7 @@ class HomeSummaryService {
             payment: entry.details['طريقة الدفع'] ?? '',
             subtitle: entry.category,
             createdAt: entry.createdAt,
+            searchText: entry.details.values.join(' '),
           ),
         );
       }
@@ -154,9 +163,10 @@ class HomeSummaryService {
 
     try {
       for (final asset in await _assetsRepository.fetchAssets()) {
+        if (asset.status == 'محذوف') continue;
         final scope = switch (asset.category) {
           'real_estate' => ScopeCatalog.realEstate,
-          'activity' => ScopeCatalog.activities,
+          'business' || 'activity' => ScopeCatalog.activities,
           _ => ScopeCatalog.equipment,
         };
         items.add(
@@ -169,6 +179,12 @@ class HomeSummaryService {
             status: asset.status.isEmpty ? 'نشط' : asset.status,
             person: asset.tenant ?? asset.owner ?? '',
             subtitle: asset.locationOrType ?? '',
+            searchText: [
+              asset.owner ?? '',
+              asset.tenant ?? '',
+              asset.description,
+              asset.serialNumber ?? '',
+            ].join(' '),
           ),
         );
       }
@@ -183,9 +199,12 @@ class HomeSummaryService {
           SummaryItem(
             scope: ScopeCatalog.delegations,
             section: DelegationRecord.mainScopeOf(delegation.scope),
-            type: delegation.permissions.isEmpty
+            type:
+                DelegationRecord.plainPermissions(delegation.permissions).isEmpty
                 ? 'بلا صلاحيات'
-                : delegation.permissions.first,
+                : DelegationRecord.plainPermissions(
+                    delegation.permissions,
+                  ).first,
             title: delegation.delegateName,
             date: delegation.endDate,
             status: delegation.statusLabel,
@@ -218,6 +237,13 @@ class HomeSummaryService {
             status: isEntity ? 'جهة' : 'فرد',
             person: name,
             subtitle: (person['roleTitle'] ?? '').toString(),
+            searchText: [
+              person['nickName'],
+              person['phone'],
+              person['email'],
+              person['city'],
+              person['address'],
+            ].whereType<Object>().join(' '),
           ),
         );
       }
@@ -264,8 +290,17 @@ class HomeSummaryService {
     return DateTime(year, month, day);
   }
 
+  /// ISO أو يوم/شهر/سنة — تاريخ الأصل قد يُخزَّن بأيٍّ منهما.
   static DateTime? _parseAnyDate(String? value) {
     if (value == null || value.trim().isEmpty) return null;
-    return DateTime.tryParse(value.trim());
+    final iso = DateTime.tryParse(value.trim());
+    if (iso != null) return iso;
+    final parts = value.trim().split('/');
+    if (parts.length != 3) return null;
+    final day = int.tryParse(parts[0]);
+    final month = int.tryParse(parts[1]);
+    final year = int.tryParse(parts[2]);
+    if (day == null || month == null || year == null) return null;
+    return DateTime(year, month, day);
   }
 }

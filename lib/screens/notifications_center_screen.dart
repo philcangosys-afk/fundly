@@ -7,6 +7,9 @@ import '../data/home_dashboard_service.dart';
 import '../data/read_notifications_store.dart';
 import '../l10n/home_strings.dart';
 import '../widgets/shared/app_design.dart';
+import 'personal_commitments_screen.dart';
+import 'projects_activities_screen.dart';
+import 'shared_commitments_screen.dart';
 
 enum _NotificationsTab { all, unread, attention, updates, activity }
 
@@ -19,6 +22,24 @@ class NotificationsCenterScreen extends StatefulWidget {
 }
 
 class _NotificationsCenterScreenState extends State<NotificationsCenterScreen> {
+  /// يفتح البند الذي جاء منه التنبيه (الالتزام أو العقار...) على تفاصيله.
+  Future<void> _openAlert(HomeCalendarItem item) async {
+    _readStore.markRead(item, read: true);
+    var id = item.sourceId.trim();
+    // تنبيه نسبة صرف العهدة: معرّفه «custody_percent_» ثم معرّف العهدة.
+    const custodyPrefix = 'custody_percent_';
+    if (id.startsWith(custodyPrefix)) id = id.substring(custodyPrefix.length);
+    if (id.isEmpty) return;
+    final Widget? page = switch (item.module) {
+      'الالتزامات الشخصية' => PersonalCommitmentsScreen(openEntryId: id),
+      'الالتزامات المشتركة' => SharedCommitmentsScreen(openEntryId: id),
+      'العقارات والأنشطة التجارية' => ProjectsActivitiesScreen(openAssetId: id),
+      _ => null,
+    };
+    if (page == null) return;
+    await Navigator.of(context).push(MaterialPageRoute(builder: (_) => page));
+  }
+
   final HomeDashboardService _dashboardService = HomeDashboardService();
   final ReadNotificationsStore _readStore = ReadNotificationsStore.instance;
   bool _isLoading = true;
@@ -90,7 +111,7 @@ class _NotificationsCenterScreenState extends State<NotificationsCenterScreen> {
           Icon(
             icon,
             size: 16,
-            color: selected ? Colors.white : const Color(0xFF475569),
+            color: selected ? Colors.white : const Color(0xFF46534F),
           ),
           const SizedBox(width: 5),
           Text(label),
@@ -98,10 +119,10 @@ class _NotificationsCenterScreenState extends State<NotificationsCenterScreen> {
       ),
       selected: selected,
       onSelected: (_) => setState(() => _selectedTab = tab),
-      selectedColor: const Color(0xFF0F6AA8),
+      selectedColor: const Color(0xFF0A5A50),
       backgroundColor: Colors.white,
       labelStyle: TextStyle(
-        color: selected ? Colors.white : const Color(0xFF334155),
+        color: selected ? Colors.white : const Color(0xFF2C3B38),
         fontSize: 12,
         fontWeight: FontWeight.w800,
       ),
@@ -109,7 +130,7 @@ class _NotificationsCenterScreenState extends State<NotificationsCenterScreen> {
           borderRadius: BorderRadius.circular(AppTheme.rField),
         ),
       side: BorderSide(
-        color: selected ? const Color(0xFF0F6AA8) : const Color(0xFFE2E8F0),
+        color: selected ? const Color(0xFF0A5A50) : const Color(0xFFE4EAE8),
       ),
       showCheckmark: false,
     );
@@ -125,25 +146,25 @@ class _NotificationsCenterScreenState extends State<NotificationsCenterScreen> {
     // يتغير شيء، وتُغيَّر مدة التذكير الافتراضية بلا أثر. الآن تُطبَّق هنا.
     final dueSoon = settings.notificationsEnabled
         ? (metrics.calendarItems
-                .where((item) {
-                  if (!settings.expiryNotifications && item.isExpiry) {
-                    return false;
-                  }
-                  final expiry = DateUtils.dateOnly(item.date);
-                  // العناصر بلا مدة تذكير خاصة تأخذ المدة الافتراضية من
-                  // الإعدادات.
-                  final lead = item.remindBeforeDays >= 0
-                      ? item.remindBeforeDays
-                      : settings.leadTimeDays;
-                  final reminderDate = expiry.subtract(Duration(days: lead));
-                  return !now.isBefore(reminderDate) && !now.isAfter(expiry);
-                })
+                // مصدر واحد مع النقطة الحمراء: يستبعد المكتمل والملغى
+                // و«بدون تذكير»، ويُبقي المتأخر غير المغلق ظاهرًا.
+                .where(
+                  (item) => HomeDashboardService.isAlertDue(
+                    item,
+                    today: now,
+                    defaultLead: settings.leadTimeDays,
+                    expiryEnabled: settings.expiryNotifications,
+                  ),
+                )
                 .toList(growable: false)
               ..sort((a, b) => a.date.compareTo(b.date)))
         : const <HomeCalendarItem>[];
 
     setState(() {
-      _alerts = dueSoon;
+      // ما مُسح بـ«مسح الكل» لا يعود حتى يتجدد استحقاقه.
+      _alerts = dueSoon
+          .where((item) => !_readStore.isDismissed(item))
+          .toList(growable: false);
       _isLoading = false;
     });
   }
@@ -163,6 +184,33 @@ class _NotificationsCenterScreenState extends State<NotificationsCenterScreen> {
               tooltip: AppTr.tr('التحكم بالتنبيهات'),
               icon: const Icon(Icons.done_all_rounded),
               onSelected: (value) async {
+                if (value == 'clear') {
+                  final ok = await confirmAction(
+                    context,
+                    title: 'مسح الكل',
+                    message: 'ستُمسح كل التنبيهات الحالية من القائمة، وتعود '
+                        'فقط عند استحقاق جديد. هل تريد المتابعة؟',
+                    confirmLabel: 'مسح الكل',
+                    danger: true,
+                  );
+                  if (!ok || !mounted) return;
+                  await _readStore.dismissAll(_alerts);
+                  if (!mounted) return;
+                  setState(() => _alerts = const []);
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(content: Text('تم مسح كل التنبيهات')),
+                  );
+                  return;
+                }
+                final ok = await confirmAction(
+                  context,
+                  title: value == 'read'
+                      ? 'وضع الكل كمقروء'
+                      : 'وضع الكل كغير مقروء',
+                  message: 'سيُطبَّق هذا على كل التنبيهات المعروضة. '
+                      'هل تريد المتابعة؟',
+                );
+                if (!ok || !mounted) return;
                 if (value == 'read') {
                   await _readStore.markAllRead(_alerts);
                 } else {
@@ -206,6 +254,26 @@ class _NotificationsCenterScreenState extends State<NotificationsCenterScreen> {
                     ),
                   ),
                 ),
+                PopupMenuItem(
+                  value: 'clear',
+                  child: Directionality(
+                    textDirection: AppTr.uiDir,
+                    child: Row(
+                      children: [
+                        Icon(
+                          Icons.delete_sweep_outlined,
+                          size: 19,
+                          color: AppTheme.danger,
+                        ),
+                        SizedBox(width: 8),
+                        Text(
+                          'مسح الكل',
+                          style: TextStyle(color: AppTheme.danger),
+                        ),
+                      ],
+                    ),
+                  ),
+                ),
               ],
             ),
         ],
@@ -224,7 +292,7 @@ class _NotificationsCenterScreenState extends State<NotificationsCenterScreen> {
                     style: const TextStyle(
                       fontSize: 13,
                       fontWeight: FontWeight.w600,
-                      color: Color(0xFF64748B),
+                      color: Color(0xFF5C6B68),
                     ),
                   ),
                   if (!AppSettings.instance.notificationsEnabled)
@@ -232,9 +300,9 @@ class _NotificationsCenterScreenState extends State<NotificationsCenterScreen> {
                       margin: const EdgeInsets.only(top: 10),
                       padding: const EdgeInsets.all(12),
                       decoration: BoxDecoration(
-                        color: const Color(0xFFFEF3C7),
-                        borderRadius: BorderRadius.circular(10),
-                        border: Border.all(color: const Color(0xFFFCD34D)),
+                        color: const Color(0xFFFDEFDC),
+                        borderRadius: BorderRadius.circular(12),
+                        border: Border.all(color: const Color(0xFFF7C378)),
                       ),
                       child: Row(
                         children: [
@@ -242,9 +310,9 @@ class _NotificationsCenterScreenState extends State<NotificationsCenterScreen> {
                             child: Text(
                               'التنبيهات موقوفة من الإعدادات، لذلك لا تظهر هنا.',
                               style: TextStyle(
-                                fontSize: 12.5,
+                                fontSize: 12,
                                 fontWeight: FontWeight.w700,
-                                color: Color(0xFF92400E),
+                                color: Color(0xFF7A4E10),
                               ),
                             ),
                           ),
@@ -309,14 +377,16 @@ class _NotificationsCenterScreenState extends State<NotificationsCenterScreen> {
                         borderRadius: BorderRadius.circular(AppTheme.rField),
                       ),
                       child: ListTile(
-                        onTap: () => _readStore.markRead(item, read: !isRead),
+                        // الضغط يفتح البند نفسه ويجعله مقروءًا، وزر اليسار
+                        // يبدّل مقروء/غير مقروء.
+                        onTap: () => _openAlert(item),
                         leading: Icon(
                           isRead
                               ? Icons.notifications_none_rounded
                               : Icons.notifications_active_outlined,
                           color: isRead
                               ? AppTheme.muted
-                              : const Color(0xFF0F6AA8),
+                              : const Color(0xFF0A5A50),
                         ),
                         title: Text(
                           item.title,
@@ -327,7 +397,7 @@ class _NotificationsCenterScreenState extends State<NotificationsCenterScreen> {
                                 : FontWeight.w900,
                             color: isRead
                                 ? AppTheme.muted
-                                : const Color(0xFF0F172A),
+                                : const Color(0xFF022E2A),
                           ),
                         ),
                         subtitle: Text(
@@ -337,7 +407,7 @@ class _NotificationsCenterScreenState extends State<NotificationsCenterScreen> {
                             fontWeight: FontWeight.w600,
                             color: isRead
                                 ? AppTheme.muted
-                                : const Color(0xFF64748B),
+                                : const Color(0xFF5C6B68),
                           ),
                         ),
                         trailing: IconButton(
@@ -351,7 +421,7 @@ class _NotificationsCenterScreenState extends State<NotificationsCenterScreen> {
                             size: 20,
                             color: isRead
                                 ? AppTheme.muted
-                                : const Color(0xFF2E7D62),
+                                : const Color(0xFF0E7161),
                           ),
                           onPressed: () =>
                               _readStore.markRead(item, read: !isRead),
@@ -366,9 +436,9 @@ class _NotificationsCenterScreenState extends State<NotificationsCenterScreen> {
                         HomeStrings.noData,
                         textAlign: TextAlign.center,
                         style: TextStyle(
-                          fontSize: 12.5,
+                          fontSize: 12,
                           fontWeight: FontWeight.w700,
-                          color: Color(0xFF64748B),
+                          color: Color(0xFF5C6B68),
                         ),
                       ),
                     ),

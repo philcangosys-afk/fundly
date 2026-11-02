@@ -2,6 +2,8 @@ import 'dart:convert';
 
 import 'package:shared_preferences/shared_preferences.dart';
 
+import 'fundly_notifications.dart';
+
 class CalendarRecord {
   const CalendarRecord({
     required this.id,
@@ -142,5 +144,7 @@ class CalendarItemsStore {
       _storageKey,
       records.map((item) => jsonEncode(item.toJson())).toList(growable: false),
     );
+
+    FundlyNotifications.scheduleSoon();
   }
 }

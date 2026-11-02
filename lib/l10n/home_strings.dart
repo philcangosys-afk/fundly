@@ -11,7 +11,7 @@ class HomeStrings {
 
   static const pinHint = 'ثبت هنا الفئات التي تستخدمها بشكل متكرر';
 
-  static const manageTitle = 'أدر أموالك وأملاكك باحترافية';
+  static const manageTitle = 'إدارة أمورك باحترافية';
 
   static const filterAll = 'الكل';
   static const filterPersonal = 'الالتزامات الشخصية';

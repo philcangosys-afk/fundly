@@ -4,6 +4,7 @@ import '../l10n/app_language.dart';
 
 import '../data/calendar_items_store.dart';
 import '../data/home_dashboard_service.dart';
+import '../data/shared_alerts.dart';
 import '../l10n/home_strings.dart';
 import 'people_management_screen.dart';
 import 'personal_commitments_screen.dart';
@@ -24,7 +25,13 @@ class _SmartCalendarScreenState extends State<SmartCalendarScreen> {
   DateTime _selectedDate = DateTime.now();
   DateTime _visibleMonth = DateTime(DateTime.now().year, DateTime.now().month);
   bool _isLoading = true;
-  bool _showSmartReminders = false;
+  bool _showSmartReminders = true;
+
+  /// النوع المختار من أزرار اليوم (مهمة، موعد...) — يصفّي قائمة اليوم.
+  String? _subFilter;
+
+  /// «الكل»: كل البنود بكل الأيام، الأحدث أولًا — حتى يُضغط يوم.
+  bool _allDays = true;
   List<HomeCalendarItem> _items = const [];
   List<CalendarRecord> _records = const [];
 
@@ -91,9 +98,107 @@ class _SmartCalendarScreenState extends State<SmartCalendarScreen> {
   }
 
   List<HomeCalendarItem> _itemsOfSelectedDay() {
+    if (_allDays) return _items;
     return _items
         .where((item) => DateUtils.isSameDay(item.date, _selectedDate))
         .toList(growable: false);
+  }
+
+  // ---- التصنيف: الكلندر يعرض التنبيهات فقط بمجموعاتها.
+  static const _cOverdue = Color(0xFFC4392E);
+  static const _cHigh = Color(0xFFF2A93F);
+  static const _cFollow = Color(0xFF0E7161);
+  static const _cExpiry = Color(0xFFCE8422);
+  static const _cDue = Color(0xFF0A5A50);
+  static const _cApproval = Color(0xFF34A894);
+  static const _cBudget = Color(0xFFA82F26);
+
+  static const _gFollow = 'متابعة وتخطيط';
+  static const _gExpiry = 'سينتهي قريبًا';
+  static const _gDue = 'استحقاقات';
+  static const _gApproval = 'اعتماد صرف';
+  static const _gBudget = 'تنبيه الميزانية';
+
+  static const _followKinds = ['مهمة', 'موعد', 'عادة', 'تذكير', 'ملاحظات'];
+  static const _docsSoon = 'مستندات ستنتهي قريبًا';
+  // الضمانات ضمن المستندات.
+  static const _docsExpired = 'مستندات منتهية';
+
+  /// دليل الألوان بترتيب الأهمية.
+  static const _legend = [
+    ('متأخر', _cOverdue),
+    (_gBudget, _cBudget),
+    (_gApproval, _cApproval),
+    ('أولوية عالية', _cHigh),
+    (_gExpiry, _cExpiry),
+    (_gFollow, _cFollow),
+    (_gDue, _cDue),
+  ];
+
+  bool _isDone(HomeCalendarItem item) =>
+      HomeDashboardService.closedStatuses.contains(item.status.trim());
+
+  String _kindOf(HomeCalendarItem item) => item.entryType.trim().isNotEmpty
+      ? item.entryType.trim()
+      : item.type.trim();
+
+  /// المجموعة: متابعة وتخطيط / سينتهي قريبًا / استحقاقات / اعتماد صرف /
+  /// تنبيه الميزانية.
+  String _groupOf(HomeCalendarItem item) {
+    final kind = _kindOf(item);
+    if (kind == sharedApprovalAlertType) return _gApproval;
+    if (kind == sharedBudgetAlertType) return _gBudget;
+    if (item.isExpiry ||
+        kind == 'مستند' ||
+        kind == 'ضمانات' ||
+        kind == 'انتهاء') {
+      return _gExpiry;
+    }
+    if (item.isUserCreated || _followKinds.contains(kind)) return _gFollow;
+    return _gDue;
+  }
+
+  /// النوع داخل المجموعة: أزرار اليوم (مهمة، موعد... مستندات ستنتهي...).
+  String _subOf(HomeCalendarItem item) {
+    final group = _groupOf(item);
+    if (group == _gFollow) {
+      final kind = _kindOf(item);
+      return _followKinds.contains(kind) ? kind : 'مهمة';
+    }
+    if (group == _gExpiry) {
+      return DateUtils.dateOnly(item.date)
+              .isBefore(DateUtils.dateOnly(DateTime.now()))
+          ? _docsExpired
+          : _docsSoon;
+    }
+    return group;
+  }
+
+  /// متأخر: فات موعده ولم يُغلق — إلا الملاحظات والعادة وما يتكرر.
+  bool _isOverdue(HomeCalendarItem item) {
+    if (_isDone(item)) return false;
+    final kind = _kindOf(item);
+    if (kind == 'ملاحظات' || kind == 'عادة' || item.repeat.isNotEmpty) {
+      return false;
+    }
+    final group = _groupOf(item);
+    if (group == _gApproval || group == _gBudget) return false;
+    return DateUtils.dateOnly(
+      item.date,
+    ).isBefore(DateUtils.dateOnly(DateTime.now()));
+  }
+
+  Color _dotColor(HomeCalendarItem item) {
+    final group = _groupOf(item);
+    if (group == _gApproval) return _cApproval;
+    if (group == _gBudget) return _cBudget;
+    if (_isOverdue(item)) return _cOverdue;
+    if (item.priority == 'عالية') return _cHigh;
+    return switch (group) {
+      _gFollow => _cFollow,
+      _gExpiry => _cExpiry,
+      _ => _cDue,
+    };
   }
 
   List<HomeCalendarItem> _itemsForDate(DateTime date) {
@@ -102,63 +207,44 @@ class _SmartCalendarScreenState extends State<SmartCalendarScreen> {
         .toList(growable: false);
   }
 
+  /// لون اليوم: أهم تنبيه فيه.
   Color _colorForDate(DateTime date) {
-    final items = _itemsForDate(date);
-    if (items.isEmpty) return Colors.transparent;
-    final today = DateUtils.dateOnly(DateTime.now());
-    if (items.any(
-      (item) =>
-          item.status != 'مكتملة' && DateUtils.dateOnly(date).isBefore(today),
-    )) {
-      return const Color(0xFFDC2626);
+    final colors = _colorsForDate(date);
+    for (final entry in _legend) {
+      if (colors.contains(entry.$2)) return entry.$2;
     }
-    if (items.any(
-      (item) => item.priority == 'عالية' && item.status != 'مكتملة',
-    )) {
-      return const Color(0xFFF59E0B);
-    }
-    if (items.any((item) => item.status != 'مكتملة')) {
-      return const Color(0xFF2563EB);
-    }
-    return const Color(0xFF16A34A);
+    return Colors.transparent;
   }
 
+  /// نقاط اليوم: لون كل تنبيه مفتوح فيه (المكتمل بلا نقطة).
   List<Color> _colorsForDate(DateTime date) {
     final colors = <Color>[];
     for (final item in _itemsForDate(date)) {
-      final color = item.status == 'مكتملة'
-          ? const Color(0xFF16A34A)
-          : DateUtils.dateOnly(
-              date,
-            ).isBefore(DateUtils.dateOnly(DateTime.now()))
-          ? const Color(0xFFDC2626)
-          : item.priority == 'عالية'
-          ? const Color(0xFFF59E0B)
-          : item.type == 'موعد'
-          ? const Color(0xFF7C3AED)
-          : item.type == 'تذكير'
-          ? const Color(0xFF0891B2)
-          : const Color(0xFF2563EB);
+      if (_isDone(item)) continue;
+      final color = _dotColor(item);
       if (!colors.contains(color)) colors.add(color);
     }
+    // الأهم أولًا (تظهر ثلاث نقاط فقط).
+    colors.sort(
+      (a, b) => _legend
+          .indexWhere((e) => e.$2 == a)
+          .compareTo(_legend.indexWhere((e) => e.$2 == b)),
+    );
     return colors;
   }
 
-  List<_SmartReminder> _smartRemindersForSelectedDate() {
-    return const [
-      _SmartReminder('مستند سينتهي قريبًا', Color(0xFFDC2626)),
-      _SmartReminder('ضمان سينتهي قريبًا', Color(0xFFF59E0B)),
-      _SmartReminder('مستند جديد', Color(0xFF2563EB)),
-      _SmartReminder('مستند محدث', Color(0xFF16A34A)),
-      _SmartReminder('مستند مرفوض', Color(0xFF7C3AED)),
-      _SmartReminder('توجد مستندات متعارضة أو مكررة', Color(0xFFDC2626)),
-      _SmartReminder('ملف مهم سينتهي وقد يؤثر على العمليات', Color(0xFFEA580C)),
-      _SmartReminder('مراجعة كل 30 يوم', Color(0xFF0F172A)),
-      _SmartReminder('مستند سينتهي خلال 90 يوم', Color(0xFF0891B2)),
-      _SmartReminder('اعتماد صرف الموافقات', Color(0xFF0EA5E9)),
-      _SmartReminder('احتمال تجاوز الميزانية', Color(0xFFB91C1C)),
-      _SmartReminder('زيادة المصروفات بشكل غير طبيعي', Color(0xFFF97316)),
-    ];
+  /// ألوان الشهر الظاهر — دليل الألوان يعرض ما فيه تنبيهات فقط.
+  Set<Color> _colorsInVisibleMonth() {
+    final colors = <Color>{};
+    for (final item in _items) {
+      if (item.date.year != _visibleMonth.year ||
+          item.date.month != _visibleMonth.month ||
+          _isDone(item)) {
+        continue;
+      }
+      colors.add(_dotColor(item));
+    }
+    return colors;
   }
 
   Set<String> _dayKeysInVisibleMonth() {
@@ -166,7 +252,8 @@ class _SmartCalendarScreenState extends State<SmartCalendarScreen> {
         .where(
           (item) =>
               item.date.year == _visibleMonth.year &&
-              item.date.month == _visibleMonth.month,
+              item.date.month == _visibleMonth.month &&
+              !_isDone(item),
         )
         .map((item) => '${item.date.year}-${item.date.month}-${item.date.day}')
         .toSet();
@@ -217,7 +304,7 @@ class _SmartCalendarScreenState extends State<SmartCalendarScreen> {
                     children: [
                       const Icon(
                         Icons.event_note_rounded,
-                        color: Color(0xFF0F6AA8),
+                        color: Color(0xFF0A5A50),
                       ),
                       const SizedBox(width: 8),
                       Expanded(
@@ -236,34 +323,48 @@ class _SmartCalendarScreenState extends State<SmartCalendarScreen> {
                     ],
                   ),
                   const SizedBox(height: 12),
-                  SegmentedButton<String>(
-                    segments: const [
-                      ButtonSegment(
-                        value: 'مهمة',
-                        label: Text('مهمة'),
-                        icon: Icon(Icons.task_alt_rounded),
-                      ),
-                      ButtonSegment(
-                        value: 'تذكير',
-                        label: Text('تذكير'),
-                        icon: Icon(Icons.notifications_active_outlined),
-                      ),
-                      ButtonSegment(
-                        value: 'موعد',
-                        label: Text('موعد'),
-                        icon: Icon(Icons.schedule_rounded),
-                      ),
+                  // مهمة، موعد، عادة، تذكير، ملاحظات.
+                  Wrap(
+                    spacing: 6,
+                    runSpacing: 6,
+                    children: [
+                      for (final option in const [
+                        ('مهمة', Icons.task_alt_rounded),
+                        ('موعد', Icons.schedule_rounded),
+                        ('عادة', Icons.repeat_rounded),
+                        ('تذكير', Icons.notifications_active_outlined),
+                        ('ملاحظات', Icons.sticky_note_2_outlined),
+                      ])
+                        ChoiceChip(
+                          avatar: Icon(
+                            option.$2,
+                            size: 16,
+                            color: type == option.$1
+                                ? Colors.white
+                                : const Color(0xFF0A5A50),
+                          ),
+                          label: Text(option.$1),
+                          selected: type == option.$1,
+                          showCheckmark: false,
+                          selectedColor: const Color(0xFF0A5A50),
+                          labelStyle: TextStyle(
+                            fontSize: 12,
+                            fontWeight: FontWeight.w800,
+                            color: type == option.$1
+                                ? Colors.white
+                                : const Color(0xFF2C3B38),
+                          ),
+                          onSelected: (_) =>
+                              setSheetState(() => type = option.$1),
+                        ),
                     ],
-                    selected: {type},
-                    onSelectionChanged: (value) =>
-                        setSheetState(() => type = value.first),
                   ),
                   const SizedBox(height: 12),
                   TextField(
                     key: const ValueKey('calendar-record-title'),
                     controller: titleController,
                     decoration: InputDecoration(
-                      labelText: AppTr.tr('العنوان *'),
+                      label: const Text('العنوان *'),
                       border: OutlineInputBorder(),
                     ),
                   ),
@@ -316,24 +417,6 @@ class _SmartCalendarScreenState extends State<SmartCalendarScreen> {
                         ),
                       ),
                     ],
-                  ),
-                  const SizedBox(height: 10),
-                  DropdownButtonFormField<String>(
-                    initialValue: priority,
-                    decoration: InputDecoration(
-                      labelText: AppTr.tr('الأولوية'),
-                      border: OutlineInputBorder(),
-                    ),
-                    items: const ['منخفضة', 'متوسطة', 'عالية']
-                        .map(
-                          (value) => DropdownMenuItem(
-                            value: value,
-                            child: Text(value),
-                          ),
-                        )
-                        .toList(),
-                    onChanged: (value) =>
-                        setSheetState(() => priority = value ?? priority),
                   ),
                   const SizedBox(height: 10),
                   DropdownButtonFormField<int>(
@@ -398,7 +481,7 @@ class _SmartCalendarScreenState extends State<SmartCalendarScreen> {
                     },
                     icon: const Icon(Icons.save_outlined),
                     label: Text(
-                      existing == null ? 'حفظ العنصر' : 'حفظ التعديلات',
+                      'حفظ',
                     ),
                   ),
                 ],
@@ -436,15 +519,28 @@ class _SmartCalendarScreenState extends State<SmartCalendarScreen> {
   }
 
   void _openItem(HomeCalendarItem item) {
+    // يُفتح البند نفسه (وفي المشتركة على تبويبه) بدل القائمة فقط.
+    var id = item.sourceId.trim();
+    // تنبيه نسبة صرف العهدة: معرّفه «custody_percent_» ثم معرّف العهدة.
+    const custodyPrefix = 'custody_percent_';
+    if (id.startsWith(custodyPrefix)) id = id.substring(custodyPrefix.length);
     if (item.module == 'الالتزامات الشخصية') {
       Navigator.of(context).push(
-        MaterialPageRoute(builder: (_) => const PersonalCommitmentsScreen()),
+        MaterialPageRoute(
+          builder: (_) => PersonalCommitmentsScreen(
+            openEntryId: id.isEmpty ? null : id,
+          ),
+        ),
       );
       return;
     }
     if (item.module == 'الالتزامات المشتركة') {
       Navigator.of(context).push(
-        MaterialPageRoute(builder: (_) => const SharedCommitmentsScreen()),
+        MaterialPageRoute(
+          builder: (_) => SharedCommitmentsScreen(
+            openEntryId: id.isEmpty ? null : id,
+          ),
+        ),
       );
       return;
     }
@@ -454,9 +550,16 @@ class _SmartCalendarScreenState extends State<SmartCalendarScreen> {
       ).push(MaterialPageRoute(builder: (_) => const PeopleManagementScreen()));
       return;
     }
-    Navigator.of(
-      context,
-    ).push(MaterialPageRoute(builder: (_) => const ProjectsActivitiesScreen()));
+    Navigator.of(context).push(
+      MaterialPageRoute(
+        builder: (_) => ProjectsActivitiesScreen(
+          openAssetId:
+              item.module == 'العقارات والأنشطة التجارية' && id.isNotEmpty
+              ? id
+              : null,
+        ),
+      ),
+    );
   }
 
   Future<void> _showMonthPickerDialog() async {
@@ -486,9 +589,9 @@ class _SmartCalendarScreenState extends State<SmartCalendarScreen> {
                           'اختر شهر $selectedYear',
                           textAlign: TextAlign.center,
                           style: const TextStyle(
-                            fontSize: 16,
+                            fontSize: 15,
                             fontWeight: FontWeight.w900,
-                            color: Color(0xFF0F172A),
+                            color: Color(0xFF022E2A),
                           ),
                         ),
                       ),
@@ -517,7 +620,7 @@ class _SmartCalendarScreenState extends State<SmartCalendarScreen> {
                           _visibleMonth.year == selectedYear &&
                           _visibleMonth.month == monthNumber;
                       return InkWell(
-                        borderRadius: BorderRadius.circular(10),
+                        borderRadius: BorderRadius.circular(12),
                         onTap: () => Navigator.pop(
                           dialogContext,
                           DateTime(selectedYear, monthNumber),
@@ -526,13 +629,13 @@ class _SmartCalendarScreenState extends State<SmartCalendarScreen> {
                           alignment: Alignment.center,
                           decoration: BoxDecoration(
                             color: isSelected
-                                ? const Color(0xFF0F6AA8)
-                                : const Color(0xFFF8FAFC),
-                            borderRadius: BorderRadius.circular(10),
+                                ? const Color(0xFF0A5A50)
+                                : const Color(0xFFF7FAF9),
+                            borderRadius: BorderRadius.circular(12),
                             border: Border.all(
                               color: isSelected
-                                  ? const Color(0xFF0F6AA8)
-                                  : const Color(0xFFE2E8F0),
+                                  ? const Color(0xFF0A5A50)
+                                  : const Color(0xFFE4EAE8),
                             ),
                           ),
                           child: Text(
@@ -542,7 +645,7 @@ class _SmartCalendarScreenState extends State<SmartCalendarScreen> {
                               fontWeight: FontWeight.w800,
                               color: isSelected
                                   ? Colors.white
-                                  : const Color(0xFF334155),
+                                  : const Color(0xFF2C3B38),
                             ),
                           ),
                         ),
@@ -581,29 +684,32 @@ class _SmartCalendarScreenState extends State<SmartCalendarScreen> {
     for (var day = 1; day <= daysInMonth; day++) {
       final date = DateTime(_visibleMonth.year, _visibleMonth.month, day);
       final key = '${date.year}-${date.month}-${date.day}';
-      final selected = DateUtils.isSameDay(date, _selectedDate);
+      final selected = !_allDays && DateUtils.isSameDay(date, _selectedDate);
       final hasItems = dayKeys.contains(key);
       final itemColor = _colorForDate(date);
       final itemColors = _colorsForDate(date);
       cells.add(
         InkWell(
+          // الضغط على اليوم يعرض أنواع ما فيه (مهمة، موعد، عادة...).
           onTap: () => setState(() {
             _selectedDate = date;
-            _showSmartReminders = false;
+            _allDays = false;
+            _showSmartReminders = true;
+            _subFilter = null;
           }),
-          borderRadius: BorderRadius.circular(10),
+          borderRadius: BorderRadius.circular(12),
           child: Container(
             margin: const EdgeInsets.all(2),
             decoration: BoxDecoration(
               color: hasItems
                   ? itemColor.withValues(alpha: selected ? 0.22 : 0.10)
                   : selected
-                  ? const Color(0xFFEAF2FF)
+                  ? const Color(0xFFD9EDE8)
                   : Colors.transparent,
-              borderRadius: BorderRadius.circular(10),
+              borderRadius: BorderRadius.circular(12),
               border: selected
                   ? Border.all(
-                      color: hasItems ? itemColor : const Color(0xFF0F6AA8),
+                      color: hasItems ? itemColor : const Color(0xFF0A5A50),
                       width: 1.5,
                     )
                   : null,
@@ -616,7 +722,7 @@ class _SmartCalendarScreenState extends State<SmartCalendarScreen> {
                   style: const TextStyle(
                     fontSize: 12,
                     fontWeight: FontWeight.w800,
-                    color: Color(0xFF0F172A),
+                    color: Color(0xFF022E2A),
                   ),
                 ),
                 const SizedBox(height: 2),
@@ -680,7 +786,7 @@ class _SmartCalendarScreenState extends State<SmartCalendarScreen> {
               Expanded(
                 child: InkWell(
                   onTap: _showMonthPickerDialog,
-                  borderRadius: BorderRadius.circular(10),
+                  borderRadius: BorderRadius.circular(12),
                   child: Padding(
                     padding: const EdgeInsets.symmetric(vertical: 6),
                     child: Text(
@@ -689,7 +795,7 @@ class _SmartCalendarScreenState extends State<SmartCalendarScreen> {
                       style: const TextStyle(
                         fontSize: 15,
                         fontWeight: FontWeight.w900,
-                        color: Color(0xFF0F172A),
+                        color: Color(0xFF022E2A),
                       ),
                     ),
                   ),
@@ -721,80 +827,34 @@ class _SmartCalendarScreenState extends State<SmartCalendarScreen> {
           ),
           const SizedBox(height: 6),
           Table(children: rows),
-          const SizedBox(height: 10),
-          const Align(
-            alignment: Alignment.centerRight,
-            child: Text(
-              'دليل الألوان',
-              style: TextStyle(
-                fontSize: 12.5,
-                fontWeight: FontWeight.w800,
-                color: Color(0xFF0F172A),
+          // دليل الألوان: ما في الشهر من تنبيهات فقط.
+          if (_colorsInVisibleMonth().isNotEmpty) ...[
+            const SizedBox(height: 10),
+            const Align(
+              alignment: Alignment.centerRight,
+              child: Text(
+                'دليل الألوان',
+                style: TextStyle(
+                  fontSize: 12,
+                  fontWeight: FontWeight.w800,
+                  color: Color(0xFF022E2A),
+                ),
               ),
             ),
-          ),
-          const SizedBox(height: 6),
-          SingleChildScrollView(
-            scrollDirection: Axis.horizontal,
-            reverse: true,
-            child: Row(
-              children: const [
-                _CalendarLegend(color: Color(0xFFDC2626), label: 'متأخر'),
-                SizedBox(width: 12),
-                _CalendarLegend(
-                  color: Color(0xFFF59E0B),
-                  label: 'أولوية عالية',
-                ),
-                SizedBox(width: 12),
-                _CalendarLegend(color: Color(0xFF2563EB), label: 'مهمة'),
-                SizedBox(width: 12),
-                _CalendarLegend(color: Color(0xFF7C3AED), label: 'موعد'),
-                SizedBox(width: 12),
-                _CalendarLegend(color: Color(0xFF0891B2), label: 'تذكير'),
-                SizedBox(width: 12),
-                _CalendarLegend(color: Color(0xFF16A34A), label: 'مكتمل'),
-                SizedBox(width: 12),
-                _CalendarLegend(
-                  color: Color(0xFFDC2626),
-                  label: 'مستند سينتهي قريبًا',
-                ),
-                SizedBox(width: 12),
-                _CalendarLegend(
-                  color: Color(0xFFF59E0B),
-                  label: 'ضمان سينتهي قريبًا',
-                ),
-                SizedBox(width: 12),
-                _CalendarLegend(color: Color(0xFF2563EB), label: 'مستند جديد'),
-                SizedBox(width: 12),
-                _CalendarLegend(color: Color(0xFF16A34A), label: 'مستند محدث'),
-                SizedBox(width: 12),
-                _CalendarLegend(color: Color(0xFF7C3AED), label: 'مستند مرفوض'),
-                SizedBox(width: 12),
-                _CalendarLegend(
-                  color: Color(0xFFDC2626),
-                  label: 'متعارض أو مكرر',
-                ),
-                SizedBox(width: 12),
-                _CalendarLegend(color: Color(0xFFEA580C), label: 'ملف مهم'),
-                SizedBox(width: 12),
-                _CalendarLegend(color: Color(0xFF0F172A), label: 'كل 30 يوم'),
-                SizedBox(width: 12),
-                _CalendarLegend(color: Color(0xFF0891B2), label: 'خلال 90 يوم'),
-                SizedBox(width: 12),
-                _CalendarLegend(color: Color(0xFF0EA5E9), label: 'اعتماد صرف'),
-                SizedBox(width: 12),
-                _CalendarLegend(
-                  color: Color(0xFFB91C1C),
-                  label: 'تجاوز الميزانية',
-                ),
-                SizedBox(width: 12),
-                _CalendarLegend(
-                  color: Color(0xFFF97316),
-                  label: 'مصروفات غير طبيعية',
-                ),
-              ],
+            const SizedBox(height: 6),
+            Align(
+              alignment: AlignmentDirectional.centerStart,
+              child: Wrap(
+                spacing: 12,
+                runSpacing: 6,
+                children: [
+                  for (final entry in _legend)
+                    if (_colorsInVisibleMonth().contains(entry.$2))
+                      _CalendarLegend(color: entry.$2, label: entry.$1),
+                ],
+              ),
             ),
-          ),
+          ],
         ],
       ),
     );
@@ -802,7 +862,9 @@ class _SmartCalendarScreenState extends State<SmartCalendarScreen> {
 
   Widget _buildAgendaItem(HomeCalendarItem item) {
     final record = _recordFor(item);
-    final color = _colorForDate(item.date);
+    final color = _isDone(item) ? const Color(0xFF8C9A97) : _dotColor(item);
+    final group = _groupOf(item);
+    final kind = _kindOf(item);
     return Container(
       margin: const EdgeInsets.only(bottom: 8),
       decoration: BoxDecoration(
@@ -816,23 +878,31 @@ class _SmartCalendarScreenState extends State<SmartCalendarScreen> {
           height: 38,
           decoration: BoxDecoration(
             color: color.withValues(alpha: 0.10),
-            borderRadius: BorderRadius.circular(10),
+            borderRadius: BorderRadius.circular(12),
           ),
           child: Icon(
-            item.type == 'مهمة'
-                ? Icons.task_alt_rounded
-                : item.type == 'موعد'
-                ? Icons.schedule_rounded
-                : Icons.notifications_active_outlined,
+            switch (group) {
+              _gApproval => Icons.verified_outlined,
+              _gBudget => Icons.account_balance_wallet_outlined,
+              _gExpiry => Icons.event_busy_outlined,
+              _gDue => Icons.payments_outlined,
+              _ => switch (kind) {
+                'مهمة' => Icons.task_alt_rounded,
+                'موعد' => Icons.schedule_rounded,
+                'عادة' => Icons.repeat_rounded,
+                'ملاحظات' => Icons.sticky_note_2_outlined,
+                _ => Icons.notifications_active_outlined,
+              },
+            },
             color: color,
           ),
         ),
         title: Text(
           item.title,
           style: TextStyle(
-            fontSize: 13.5,
+            fontSize: 13,
             fontWeight: FontWeight.w900,
-            color: const Color(0xFF0F172A),
+            color: const Color(0xFF022E2A),
             decoration: item.status == 'مكتملة'
                 ? TextDecoration.lineThrough
                 : null,
@@ -842,17 +912,16 @@ class _SmartCalendarScreenState extends State<SmartCalendarScreen> {
           padding: const EdgeInsets.only(top: 4),
           child: Text(
             [
-              item.type,
+              '${AppTr.tr(_subOf(item))} · ${AppTr.tr(item.module)}',
               if (item.time.isNotEmpty) item.time,
               item.priority == 'عالية' ? 'أولوية عالية' : null,
               if (item.description.isNotEmpty) item.description,
             ].whereType<String>().join(' • '),
-            maxLines: 2,
-            overflow: TextOverflow.ellipsis,
+            maxLines: 4,
             style: const TextStyle(
-              fontSize: 11.5,
+              fontSize: 11,
               fontWeight: FontWeight.w600,
-              color: Color(0xFF64748B),
+              color: Color(0xFF5C6B68),
             ),
           ),
         ),
@@ -860,7 +929,25 @@ class _SmartCalendarScreenState extends State<SmartCalendarScreen> {
             ? const Icon(Icons.arrow_back_ios_new_rounded, size: 16)
             : PopupMenuButton<String>(
                 tooltip: AppTr.tr('إجراءات العنصر'),
-                onSelected: (action) {
+                onSelected: (action) async {
+                  final danger = action == 'delete';
+                  final ok = await confirmAction(
+                    context,
+                    title: switch (action) {
+                      'toggle' => record.status == 'مكتملة'
+                          ? 'إعادة فتح العنصر'
+                          : 'تحديد العنصر كمكتمل',
+                      'edit' => 'تعديل العنصر',
+                      _ => 'حذف العنصر',
+                    },
+                    message: danger
+                        ? 'سيُحذف العنصر نهائيًا ولا يمكن التراجع. '
+                              'هل تريد الحذف؟'
+                        : 'هل تريد تنفيذ هذا الإجراء على العنصر؟',
+                    confirmLabel: danger ? 'حذف' : 'تأكيد',
+                    danger: danger,
+                  );
+                  if (!ok || !context.mounted) return;
                   if (action == 'toggle') _toggleCompleted(record);
                   if (action == 'edit') _openRecordForm(record);
                   if (action == 'delete') _deleteRecord(record);
@@ -892,14 +979,14 @@ class _SmartCalendarScreenState extends State<SmartCalendarScreen> {
       children: [
         const Row(
           children: [
-            Icon(Icons.history_rounded, size: 20, color: Color(0xFF475569)),
+            Icon(Icons.history_rounded, size: 20, color: Color(0xFF46534F)),
             SizedBox(width: 7),
             Text(
               'سجل النشاط',
               style: TextStyle(
                 fontSize: 15,
                 fontWeight: FontWeight.w900,
-                color: Color(0xFF0F172A),
+                color: Color(0xFF022E2A),
               ),
             ),
           ],
@@ -910,7 +997,7 @@ class _SmartCalendarScreenState extends State<SmartCalendarScreen> {
             padding: const EdgeInsets.all(20),
             decoration: BoxDecoration(
               color: Colors.white,
-              border: Border.all(color: const Color(0xFFE2E8F0)),
+              border: Border.all(color: const Color(0xFFE4EAE8)),
               borderRadius: BorderRadius.circular(12),
             ),
             child: const Text(
@@ -925,7 +1012,7 @@ class _SmartCalendarScreenState extends State<SmartCalendarScreen> {
             return Container(
               padding: const EdgeInsets.symmetric(vertical: 10),
               decoration: const BoxDecoration(
-                border: Border(bottom: BorderSide(color: Color(0xFFE2E8F0))),
+                border: Border(bottom: BorderSide(color: Color(0xFFE4EAE8))),
               ),
               child: Row(
                 children: [
@@ -934,8 +1021,8 @@ class _SmartCalendarScreenState extends State<SmartCalendarScreen> {
                     height: 8,
                     decoration: BoxDecoration(
                       color: completed
-                          ? const Color(0xFF16A34A)
-                          : const Color(0xFF2563EB),
+                          ? const Color(0xFF34A894)
+                          : const Color(0xFF0A5A50),
                       shape: BoxShape.circle,
                     ),
                   ),
@@ -949,7 +1036,7 @@ class _SmartCalendarScreenState extends State<SmartCalendarScreen> {
                               ? 'تم إنجاز: ${record.title}'
                               : 'تمت إضافة: ${record.title}',
                           style: const TextStyle(
-                            fontSize: 12.5,
+                            fontSize: 12,
                             fontWeight: FontWeight.w800,
                           ),
                         ),
@@ -958,7 +1045,7 @@ class _SmartCalendarScreenState extends State<SmartCalendarScreen> {
                           '${eventDate.day}/${eventDate.month}/${eventDate.year}  ${record.type}',
                           style: const TextStyle(
                             fontSize: 11,
-                            color: Color(0xFF64748B),
+                            color: Color(0xFF5C6B68),
                           ),
                         ),
                       ],
@@ -972,57 +1059,193 @@ class _SmartCalendarScreenState extends State<SmartCalendarScreen> {
     );
   }
 
+  /// أنواع ما في اليوم المختار: المتابعة والتخطيط (مهمة، موعد، عادة، تذكير،
+  /// ملاحظات)، وما سينتهي قريبًا (مستندات، ضمانات)، ثم المالية. الضغط على
+  /// نوع يعرض بنوده وحدها تحت.
+  /// مربعات اليوم المختار: «متابعة وتخطيط» خمسة مربعات (مهمة، موعد، عادة،
+  /// تذكير، ملاحظات)، و«مستندات» (منتهية، ستنتهي قريبًا — والضمانات
+  /// منها)، ثم المالية إن وُجدت. في كل مربع اسمه وتحته عدد ما يُتابَع،
+  /// والضغط عليه يعرض بنوده تحت.
   Widget _buildSmartReminders() {
-    final reminders = _smartRemindersForSelectedDate();
-    final dateLabel =
-        '${_selectedDate.day.toString().padLeft(2, '0')}/${_selectedDate.month.toString().padLeft(2, '0')}/${_selectedDate.year}';
-    return Container(
-      margin: const EdgeInsets.only(top: 12),
-      padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
-            color: AppTheme.surface,
-            borderRadius: BorderRadius.circular(AppTheme.rField),
+    final day = _itemsOfSelectedDay();
+    int count(String sub) =>
+        day.where((i) => !_isDone(i) && _subOf(i) == sub).length;
+    Widget tile(String sub, Color color) {
+      final n = count(sub);
+      final selected = _subFilter == sub;
+      return Expanded(
+        child: InkWell(
+          borderRadius: BorderRadius.circular(AppTheme.rInner),
+          onTap: () => setState(() => _subFilter = selected ? null : sub),
+          child: SizedBox(
+            height: 74,
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 3, vertical: 6),
+              decoration: BoxDecoration(
+                color: selected
+                    ? color.withValues(alpha: 0.18)
+                    : n == 0
+                    ? const Color(0xFFF2F6F5)
+                    : color.withValues(alpha: 0.08),
+                borderRadius: BorderRadius.circular(AppTheme.rInner),
+                border: Border.all(
+                  color: selected
+                      ? color
+                      : color.withValues(alpha: n == 0 ? 0.1 : 0.3),
+                  width: selected ? 1.5 : 1,
+                ),
+              ),
+              child: Column(
+                mainAxisAlignment: MainAxisAlignment.center,
+                children: [
+                  Text(
+                    sub,
+                    textAlign: TextAlign.center,
+                    maxLines: 3,
+                    style: TextStyle(
+                      fontSize: 10.5,
+                      height: 1.2,
+                      fontWeight: FontWeight.w800,
+                      color: n == 0 ? const Color(0xFF8C9A97) : color,
+                    ),
+                  ),
+                  const SizedBox(height: 4),
+                  Text(
+                    '$n',
+                    style: TextStyle(
+                      fontSize: 16,
+                      fontWeight: FontWeight.w900,
+                      color: n == 0 ? const Color(0xFF8C9A97) : color,
+                    ),
+                  ),
+                ],
+              ),
+            ),
           ),
+        ),
+      );
+    }
+
+    Widget section(String title, Color color, List<Widget> tiles) => Padding(
+      padding: const EdgeInsets.only(top: 8),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          Text(
-            'تذكيرات ذكية - $dateLabel',
-            style: const TextStyle(
-              fontSize: 14,
-              fontWeight: FontWeight.w900,
-              color: Color(0xFF0F172A),
-            ),
+          Row(
+            children: [
+              Container(
+                width: 7,
+                height: 7,
+                decoration: BoxDecoration(
+                  color: color,
+                  shape: BoxShape.circle,
+                ),
+              ),
+              const SizedBox(width: 6),
+              Text(
+                title,
+                style: const TextStyle(
+                  fontSize: 12,
+                  fontWeight: FontWeight.w900,
+                  color: Color(0xFF022E2A),
+                ),
+              ),
+            ],
           ),
-          const SizedBox(height: 10),
-          SingleChildScrollView(
-            scrollDirection: Axis.horizontal,
-            reverse: true,
-            child: Row(
-              children: reminders
-                  .map(
-                    (reminder) => Padding(
-                      padding: const EdgeInsets.only(left: 8),
-                      child: Chip(
-                        avatar: CircleAvatar(backgroundColor: reminder.color),
-                        label: Text(reminder.title),
-                        labelStyle: const TextStyle(
-                          fontSize: 11,
-                          fontWeight: FontWeight.w700,
-                        ),
-                        side: BorderSide(
-                          color: reminder.color.withValues(alpha: 0.3),
-                        ),
-                        backgroundColor: reminder.color.withValues(alpha: 0.08),
-                      ),
-                    ),
-                  )
-                  .toList(growable: false),
-            ),
+          const SizedBox(height: 6),
+          Row(
+            children: [
+              for (var i = 0; i < tiles.length; i++) ...[
+                if (i > 0) const SizedBox(width: 6),
+                tiles[i],
+              ],
+            ],
           ),
         ],
       ),
     );
+
+    final allCount = day.where((i) => !_isDone(i)).length;
+    final allSelected = _subFilter == null;
+    final allTile = Expanded(
+      child: InkWell(
+        borderRadius: BorderRadius.circular(AppTheme.rInner),
+        onTap: () => setState(() {
+          _subFilter = null;
+          _allDays = true;
+        }),
+        child: Container(
+          height: 54,
+          alignment: Alignment.center,
+          decoration: BoxDecoration(
+            color: allSelected
+                ? AppTheme.brand.withValues(alpha: 0.14)
+                : const Color(0xFFF2F6F5),
+            borderRadius: BorderRadius.circular(AppTheme.rInner),
+            border: Border.all(
+              color: allSelected
+                  ? AppTheme.brand
+                  : AppTheme.brand.withValues(alpha: 0.2),
+              width: allSelected ? 1.5 : 1,
+            ),
+          ),
+          child: Text(
+            '${AppTr.tr('الكل')} ($allCount)',
+            style: const TextStyle(
+              fontSize: 13,
+              fontWeight: FontWeight.w900,
+              color: AppTheme.brand,
+            ),
+          ),
+        ),
+      ),
+    );
+    final money = [
+      for (final entry in const [
+        (_gDue, _cDue),
+        (_gApproval, _cApproval),
+        (_gBudget, _cBudget),
+      ])
+        if (count(entry.$1) > 0) tile(entry.$1, entry.$2),
+    ];
+    return Container(
+      margin: const EdgeInsets.only(top: 12),
+      padding: const EdgeInsets.fromLTRB(12, 8, 12, 12),
+      decoration: BoxDecoration(
+        color: AppTheme.surface,
+        borderRadius: BorderRadius.circular(AppTheme.rField),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          section(_gFollow, _cFollow, [
+            for (final kind in _followKinds) tile(kind, _cFollow),
+          ]),
+          section('مستندات', _cExpiry, [
+            tile(_docsExpired, _cOverdue),
+            tile(_docsSoon, _cExpiry),
+          ]),
+          if (money.isNotEmpty) section('مالية', _cDue, money),
+          // «الكل»: كل البنود (كل الأيام إن لم يُختر يوم) الأحدث أولًا.
+          section('الكل', AppTheme.brand, [allTile]),
+        ],
+      ),
+    );
+  }
+
+  /// بنود اليوم بعد تصفية النوع المختار.
+  List<HomeCalendarItem> _visibleDayItems() {
+    final day = _itemsOfSelectedDay();
+    final filter = _subFilter;
+    final list = filter == null
+        ? [...day]
+        : day.where((i) => _subOf(i) == filter).toList();
+    // الأحدث أولًا: بالتاريخ ثم الوقت.
+    list.sort((a, b) {
+      final byDate = b.date.compareTo(a.date);
+      return byDate != 0 ? byDate : b.time.compareTo(a.time);
+    });
+    return list;
   }
 
   @override
@@ -1041,7 +1264,7 @@ class _SmartCalendarScreenState extends State<SmartCalendarScreen> {
           Padding(
             padding: const EdgeInsets.only(right: 12),
             child: Material(
-              color: const Color(0xFF0F6AA8),
+              color: const Color(0xFF0A5A50),
               borderRadius: BorderRadius.circular(12),
               child: InkWell(
                 borderRadius: BorderRadius.circular(12),
@@ -1072,25 +1295,29 @@ class _SmartCalendarScreenState extends State<SmartCalendarScreen> {
                         () => _showSmartReminders = !_showSmartReminders,
                       ),
                       icon: const Icon(Icons.notifications_active_outlined),
+                      // «الكل»: إرشاد بدل التاريخ؛ ومع يوم مختار تاريخه.
                       label: Text(
-                        '${_selectedDate.day.toString().padLeft(2, '0')}/${_selectedDate.month.toString().padLeft(2, '0')}/${_selectedDate.year}',
+                        _allDays
+                            ? 'اضغط على اليوم أو على الفئات التي في الأسفل'
+                            : '${_selectedDate.day.toString().padLeft(2, '0')}/${_selectedDate.month.toString().padLeft(2, '0')}/${_selectedDate.year}',
+                        textAlign: TextAlign.center,
                         style: const TextStyle(fontWeight: FontWeight.w800),
                       ),
                     ),
                   ),
                   if (_showSmartReminders) _buildSmartReminders(),
                   const SizedBox(height: 6),
-                  ..._itemsOfSelectedDay().map(_buildAgendaItem),
-                  if (_itemsOfSelectedDay().isEmpty)
+                  ..._visibleDayItems().map(_buildAgendaItem),
+                  if (_visibleDayItems().isEmpty)
                     const Padding(
                       padding: EdgeInsets.only(top: 12),
                       child: Text(
                         HomeStrings.noData,
                         textAlign: TextAlign.center,
                         style: TextStyle(
-                          fontSize: 12.5,
+                          fontSize: 12,
                           fontWeight: FontWeight.w700,
-                          color: Color(0xFF64748B),
+                          color: Color(0xFF5C6B68),
                         ),
                       ),
                     ),
@@ -1122,16 +1349,9 @@ class _CalendarLegend extends StatelessWidget {
         const SizedBox(width: 4),
         Text(
           label,
-          style: const TextStyle(fontSize: 10.5, color: Color(0xFF64748B)),
+          style: const TextStyle(fontSize: 10, color: Color(0xFF5C6B68)),
         ),
       ],
     );
   }
-}
-
-class _SmartReminder {
-  const _SmartReminder(this.title, this.color);
-
-  final String title;
-  final Color color;
 }

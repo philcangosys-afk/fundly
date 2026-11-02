@@ -29,6 +29,29 @@ class Text extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    // «عنوان الحقل *»: نجمة الحقل الإلزامي حمراء في كل التطبيق.
+    if (data.length > 2 && data.endsWith(' *')) {
+      return m.Text.rich(
+        TextSpan(
+          children: [
+            TextSpan(text: AppTr.tr(data.substring(0, data.length - 2))),
+            const TextSpan(
+              text: ' *',
+              style: TextStyle(
+                color: Color(0xFFC4392E),
+                fontWeight: FontWeight.w900,
+              ),
+            ),
+          ],
+        ),
+        style: style,
+        textAlign: AppTr.mapTextAlign(textAlign),
+        textDirection: textDirection,
+        maxLines: maxLines,
+        overflow: overflow,
+        softWrap: softWrap,
+      );
+    }
     return m.Text(
       AppTr.tr(data),
       style: style,

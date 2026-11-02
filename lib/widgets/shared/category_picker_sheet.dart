@@ -33,16 +33,16 @@ class CategoryGroup {
 /// ألوان ثابتة للتصنيفات، تُوزَّع بترتيب المجموعات فيبقى لون كل تصنيف
 /// ثابتًا في كل مرة يُفتح فيها المنتقي.
 const _kCategoryPalette = <Color>[
-  Color(0xFFE0632A),
-  Color(0xFF2E9E4F),
-  Color(0xFF2F80D8),
-  Color(0xFFB4741A),
-  Color(0xFF7C3AED),
-  Color(0xFF0D9488),
-  Color(0xFFC2415D),
-  Color(0xFF0F6AA8),
-  Color(0xFF6D28D9),
-  Color(0xFFD97706),
+  Color(0xFFD95A4E),
+  Color(0xFF178F7B),
+  Color(0xFF0E7161),
+  Color(0xFFA6691A),
+  Color(0xFF0E7161),
+  Color(0xFF178F7B),
+  Color(0xFFC4392E),
+  Color(0xFF0A5A50),
+  Color(0xFF0A5A50),
+  Color(0xFFCE8422),
 ];
 
 /// أيقونة معبّرة لكل تصنيف معروف، وأيقونة عامة لما عداه.
@@ -100,6 +100,14 @@ IconData categoryIconFor(String label) {
     'سداد أقساط': Icons.calendar_month_outlined,
     'خدمات حكومية': Icons.apartment_rounded,
     'مصروفات أخرى': Icons.more_horiz_rounded,
+    // فئات مصروفات الرحلة والالتزامات المشتركة.
+    'كوفيهات': Icons.local_cafe_outlined,
+    'مطاعم': Icons.restaurant_menu_rounded,
+    'مساعدات': Icons.volunteer_activism_outlined,
+    'تأجير سيارة': Icons.car_rental_rounded,
+    'أنشطة وجولات': Icons.hiking_rounded,
+    'دخول أماكن': Icons.confirmation_number_outlined,
+    'هدايا': Icons.card_giftcard_rounded,
     'الراتب/معاش': Icons.payments_outlined,
     'الراتب': Icons.account_balance_wallet_outlined,
     'عمولات': Icons.percent_rounded,
@@ -154,13 +162,13 @@ class CategoryPickerField extends StatelessWidget {
   Widget build(BuildContext context) {
     return FormField<String>(
       initialValue: main,
-      validator: (_) {
+      validator: trValidator((_) {
         if (required && main.isEmpty) return 'يرجى اختيار التصنيف';
         if (requireSub && (sub == null || sub!.isEmpty)) {
           return 'يرجى اختيار تصنيف فرعي';
         }
         return null;
-      },
+      }),
       builder: (state) => Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
@@ -190,25 +198,25 @@ class CategoryPickerField extends StatelessWidget {
                     ? Border.all(color: AppTheme.danger, width: 1.2)
                     : null,
               ),
+              // النص أولًا ليقع في يمين السطر، والسهم بعده في يساره.
               child: Row(
                 children: [
-                  const Icon(
-                    Icons.keyboard_arrow_down_rounded,
-                    color: AppTheme.chevron,
-                  ),
-                  const SizedBox(width: AppTheme.sSm),
                   Expanded(
-                    child: Text(
+                    child: FittedBox(fit: BoxFit.scaleDown, alignment: AlignmentDirectional.centerStart, child: Text(
                       _label,
                       maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
                       textAlign: TextAlign.end,
                       style: TextStyle(
-                        fontSize: 13.5,
+                        fontSize: 13,
                         fontWeight: FontWeight.w800,
                         color: main.isEmpty ? AppTheme.body : AppTheme.title,
                       ),
-                    ),
+                    )),
+                  ),
+                  const SizedBox(width: AppTheme.sSm),
+                  const Icon(
+                    Icons.keyboard_arrow_down_rounded,
+                    color: AppTheme.title,
                   ),
                 ],
               ),
@@ -219,7 +227,7 @@ class CategoryPickerField extends StatelessWidget {
               padding: const EdgeInsets.only(top: 6, right: 8),
               child: Text(
                 state.errorText!,
-                style: const TextStyle(fontSize: 11.5, color: AppTheme.danger),
+                style: const TextStyle(fontSize: 11, color: AppTheme.danger),
               ),
             ),
         ],
@@ -274,7 +282,7 @@ Future<CategoryPickResult?> showCategoryPickerSheet({
             heightFactor: 0.9,
             child: Container(
               decoration: const BoxDecoration(
-                color: Color(0xFFF8FAFC),
+                color: Color(0xFFF7FAF9),
                 borderRadius: BorderRadius.vertical(
                   top: Radius.circular(AppTheme.rCard),
                 ),
@@ -286,8 +294,8 @@ Future<CategoryPickResult?> showCategoryPickerSheet({
                     height: 4,
                     margin: const EdgeInsets.only(top: 10, bottom: 12),
                     decoration: BoxDecoration(
-                      color: const Color(0xFFCBD5E1),
-                      borderRadius: BorderRadius.circular(4),
+                      color: const Color(0xFFD5DEDB),
+                      borderRadius: BorderRadius.circular(8),
                     ),
                   ),
                   Padding(
@@ -298,9 +306,9 @@ Future<CategoryPickResult?> showCategoryPickerSheet({
                           child: Text(
                             title,
                             style: const TextStyle(
-                              fontSize: 18,
+                              fontSize: 17,
                               fontWeight: FontWeight.w900,
-                              color: Color(0xFF0F172A),
+                              color: Color(0xFF022E2A),
                             ),
                           ),
                         ),
@@ -383,7 +391,7 @@ Future<CategoryPickResult?> showCategoryPickerSheet({
                         // "+ إضافة أخرى" في قوائم التصنيف.
                         if (allowCustom)
                           _CategoryRow(
-                            label: '+ إضافة تصنيف جديد',
+                            label: '+ إضافة أخرى',
                             subtitle: 'يُحفظ مع هذا الإدخال',
                             icon: Icons.add_rounded,
                             color: accent,
@@ -429,40 +437,16 @@ Future<CategoryPickResult?> showCategoryPickerSheet({
   ).whenComplete(searchController.dispose);
 }
 
-/// حوار صغير لاسم تصنيف جديد.
+/// حوار صغير لاسم الإضافة الجديدة — يستعمل الحوار الموحّد الآمن.
 Future<String?> _askCustomCategory(
   BuildContext context,
   String initialText,
-) async {
-  final controller = TextEditingController(text: initialText);
-  final name = await showDialog<String>(
-    context: context,
-    builder: (dialogContext) => Directionality(
-      textDirection: AppTr.uiDir,
-      child: AlertDialog(
-        title: const Text('تصنيف جديد'),
-        content: TextField(
-          controller: controller,
-          autofocus: true,
-          decoration: InputDecoration(labelText: AppTr.tr('اسم التصنيف')),
-        ),
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(dialogContext),
-            child: const Text('إلغاء'),
-          ),
-          ElevatedButton(
-            onPressed: () =>
-                Navigator.pop(dialogContext, controller.text.trim()),
-            child: const Text('إضافة'),
-          ),
-        ],
-      ),
-    ),
-  );
-  controller.dispose();
-  return (name == null || name.isEmpty) ? null : name;
-}
+) => askTextDialog(
+  context,
+  title: 'إضافة أخرى',
+  label: 'الاسم',
+  initialText: initialText,
+);
 
 class _CategoryRow extends StatelessWidget {
   const _CategoryRow({
@@ -487,7 +471,11 @@ class _CategoryRow extends StatelessWidget {
   Widget build(BuildContext context) {
     return Padding(
       padding: const EdgeInsets.only(bottom: 8),
-      child: Material(
+      // التصنيف الفرعي يبدأ مُزاحًا عن الرئيسي بمقدار كلمة تقريبًا،
+      // فيظهر بوضوح أنه فرع مما فوقه لا بندًا مستقلًا.
+      child: Padding(
+        padding: EdgeInsetsDirectional.only(start: isSub ? 44 : 0),
+        child: Material(
         color: selected ? AppTheme.accentSoft : AppTheme.surface,
         borderRadius: BorderRadius.circular(AppTheme.rField),
         clipBehavior: Clip.antiAlias,
@@ -508,16 +496,14 @@ class _CategoryRow extends StatelessWidget {
                     children: [
                       Text(
                         label,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
+                        maxLines: 3,
                         style: AppTheme.rowTitle,
                       ),
                       if (subtitle != null) ...[
                         const SizedBox(height: 2),
                         Text(
                           subtitle!,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
+                          maxLines: 3,
                           style: AppTheme.rowSubtitle,
                         ),
                       ],
@@ -545,6 +531,7 @@ class _CategoryRow extends StatelessWidget {
               ],
             ),
           ),
+        ),
         ),
       ),
     );

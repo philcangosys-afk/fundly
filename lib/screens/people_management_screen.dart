@@ -7,20 +7,131 @@ import 'package:share_plus/share_plus.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../data/app_settings.dart';
+import '../widgets/shared/fnd_lookup.dart';
+import 'salary_receipts_screen.dart';
+import '../data/salary_receipts.dart';
+import '../widgets/shared/follow_filters.dart';
+import '../data/fundly_account.dart';
 import '../data/app_reminders_store.dart';
+import '../data/page_customization_store.dart';
+import '../data/delegations_repository.dart';
+import '../data/document_store.dart';
+import '../data/personal_entries_repository.dart';
+import '../data/custody_sharing.dart';
+import 'package:geolocator/geolocator.dart';
+import 'package:image_picker/image_picker.dart' show XFile;
+import 'package:url_launcher/url_launcher.dart';
+import 'personal_commitments_screen.dart';
 import '../widgets/detail_page_chrome.dart';
 import '../widgets/followup_center_card.dart';
 import '../widgets/management_dashboard_chrome.dart';
 import '../widgets/shared/app_design.dart';
+import '../widgets/shared/archive_sheet.dart';
 import '../widgets/shared/app_filter_sheet.dart';
+import 'global_summary_screen.dart';
 import '../widgets/shared/followup_center_sheet.dart';
 import 'smart_calendar_screen.dart';
 import '../widgets/shared/module_shared_widgets.dart';
 import '../widgets/shared/measured_pinned_header.dart';
+import '../data/subscription_plans.dart';
+import '../widgets/shared/plan_gate.dart';
 
 /// تاريخ اليوم بصيغة d/M/yyyy — تُخزَّن التواريخ كنص بهذه الصيغة في سجلات
 /// الأشخاص. كانت تُكتب سابقًا بالكلمة الثابتة 'اليوم'، فيظل سجل أُنشئ قبل
 /// أشهر يعرض "اليوم"، والأسوأ أن الترتيب كان يقارن هذه النصوص حرفيًا.
+/// خيارات التذكير — بنفس مسمّيات AppRemindersStore حتى تُقرأ مباشرة،
+/// ومشتركة بين نموذج الإنشاء ونوافذ الإضافة داخل السجل.
+/// الأنواع التي يُسأل فيها «مستحق له أم عليه» — وهي وحدها ما يُنشئ دَينًا.
+/// الراتب والمصروف لا معنى لسؤالهم «له أم عليه».
+const List<String> _directionKinds = [
+  'المصروفات الشخصية',
+  'إيراد',
+  'دين / قرض / سلفة',
+  'قسط',
+  'غرامة',
+];
+
+/// نوع العهدة وحالاتها — منقولتان حرفيًا من نموذج «عهدة مالية» في
+/// الالتزامات الشخصية، فلا يختلف النموذجان في الشاشتين. كانت القائمة هنا
+/// «فئة العهدة» بقيم لا وجود لها هناك.
+const List<String> _custodyTypes = ['مؤقتة', 'مستديمة'];
+
+const List<String> _custodyStates = [
+  'مستلمة',
+  'قيد الاستخدام',
+  'تمت التسوية',
+  'معادة',
+  'متأخرة',
+];
+
+const String _kReminderNone = 'بلا تذكير';
+const String _kReminderCustom = 'مخصص';
+const List<String> _kReminderOptions = [
+  _kReminderNone,
+  'قبل يوم',
+  'قبل 3 أيام',
+  'قبل أسبوع',
+  'قبل أسبوعين',
+  'قبل شهر',
+  _kReminderCustom,
+];
+
+/// الوثائق الرسمية التي يُسأل عنها عند إنشاء الفرد: لكل واحدة رقم وتاريخ
+/// انتهاء وتذكير ومرفق، بمفاتيح ثابتة داخل خانة التفاصيل.
+class _IdentityDoc {
+  const _IdentityDoc(this.title, this.icon);
+  final String title;
+  final IconData icon;
+
+  String get numberKey => 'رقم $title';
+  String get expiryKey => 'انتهاء $title';
+  String get reminderKey => 'تذكير $title';
+  String get fileKey => 'مرفق $title';
+
+  static const List<_IdentityDoc> all = [
+    _IdentityDoc('الهوية', Icons.badge_outlined),
+    _IdentityDoc('جواز السفر', Icons.travel_explore_outlined),
+    _IdentityDoc('الضمان الصحي', Icons.health_and_safety_outlined),
+  ];
+}
+
+/// وثيقة جهة: اسم حر وتاريخ انتهاء وتذكير ومرفق. الجهة لا هوية لها ولا
+/// جواز، فقوائم الأفراد الثابتة لا تناسبها.
+class _EntityDoc {
+  final TextEditingController name = TextEditingController();
+  final TextEditingController expiry = TextEditingController();
+  String reminder = _kReminderNone;
+  String file = '';
+
+  void dispose() {
+    name.dispose();
+    expiry.dispose();
+  }
+}
+
+/// الجهة (شركة/مؤسسة) تبدأ مفاتيحها بـ entity_، وما عداها فرد.
+bool _isEntityKind(String key) => key.startsWith('entity_');
+
+/// مستحقات تحتاج متابعة: «له» و«عليه» إن وُجد أيّهما.
+int _dueFollowUpCount(_PersonItem person) =>
+    (person.dueToYou > 0 ? 1 : 0) + (person.dueOnYou > 0 ? 1 : 0);
+
+/// مستندات تحتاج متابعة — نفس تعريف «وثائق للمتابعة» في مركز المتابعة،
+/// فلا يختلف رقم البطاقة عن رقم المركز.
+int _docsFollowUpCount(_PersonItem person) =>
+    person.statusNote.contains('مستند') ? 1 : 0;
+
+/// سطر التصنيف بلا تكرار: سجل تصنيفه «قريب» ودوره «قريب» كان يظهر
+/// «قريب · قريب».
+String _personTypeLine(_PersonItem person, {bool withRole = true}) {
+  final parts = <String>[
+    person.categoryName,
+    ...person.additionalCategoryNames,
+    if (withRole) person.roleTitle,
+  ].map((e) => e.trim()).where((e) => e.isNotEmpty).toSet().toList();
+  return parts.join(' · ');
+}
+
 String _todayStamp() {
   final now = DateTime.now();
   return '${now.day}/${now.month}/${now.year}';
@@ -43,11 +154,129 @@ DateTime _parsePersonDate(String value) {
   return DateTime.fromMillisecondsSinceEpoch(0);
 }
 
+/// فلتر الأفراد والجهات — لفلتر الصفحة الرئيسية.
+AppFilterModuleConfig peopleFilterModuleConfig() =>
+    _PeopleManagementScreenState.moduleConfig();
+
 class PeopleManagementScreen extends StatefulWidget {
-  const PeopleManagementScreen({super.key});
+  /// فلتر يُطبَّق عند الفتح (من فلتر الصفحة الرئيسية).
+  final AppFilterValues? initialFilter;
+
+  /// فتح نموذج «إضافة فرد/جهة» مباشرة بهذا النوع (مفتاحه مثل
+  /// person_employee)، ثم الرجوع بعد إغلاقه — يُستعمل من العقارات
+  /// والأنشطة والمركبات لتكون الإضافة واحدة في التطبيق.
+  /// [kAddAnyType]: النموذج نفسه والنوع يُختار داخله من كل الأنواع.
+  final String? openAddForType;
+
+  /// قيمة [openAddForType]: النوع يُختار داخل النموذج (أفراد وجهات معًا).
+  static const String kAddAnyType = 'any';
+
+  /// تفاصيل تُحفظ مع السجل الجديد (ربطه بالأصل الذي أُضيف منه).
+  final Map<String, String> linkDetails;
+
+  /// فتح تفاصيل فرد/جهة بالاسم مباشرة (من المثبّت في الرئيسية) ثم الرجوع.
+  final String? openPersonName;
+
+  const PeopleManagementScreen({
+    super.key,
+    this.initialFilter,
+    this.openPersonName,
+    this.openAddForType,
+    this.linkDetails = const {},
+  });
 
   @override
   State<PeopleManagementScreen> createState() => _PeopleManagementScreenState();
+}
+
+/// يُعيَّن في main.dart: يفتح نموذج «تفويض جديد» نفسه الموجود في
+/// «المزيد ← التفويضات» والمفوَّض معبّأ باسم الفرد.
+Future<void> Function(BuildContext context, String delegateName)?
+openDelegationFormForPerson;
+
+/// مفتاح ربط بند في الالتزامات الشخصية بفرد أُضيف البند من تفاصيله.
+const String kLinkedPersonKey = 'الفرد المرتبط';
+
+/// حالات منتهية لا تحتاج متابعة.
+const Set<String> _closedStatuses = {
+  'مكتملة',
+  'مكتمل',
+  'مؤرشف',
+  'محذوف',
+  'تمت التسوية',
+  'ملغاة',
+};
+
+/// أنواع «المتابعة والتخطيط» في الالتزامات الشخصية.
+const Set<String> _organizationEntryTypes = {
+  'مهمة',
+  'موعد',
+  'عادة',
+  'تذكير',
+  'ملاحظات',
+  'متابعة',
+  'تسجيل / تخطيط',
+  'تجديد',
+};
+
+/// هل هذا البند من الالتزامات الشخصية يخص هذا الفرد؟
+bool _recordLinkedTo(PersonalEntryRecord record, _PersonItem person) {
+  if (record.status == 'محذوف') return false;
+  final name = person.fullName.trim();
+  if ((record.details[kLinkedPersonKey] ?? '').trim() == name) return true;
+  // العهدة والدين المرتبطان بالرقم التعريفي: هذا الشخص طرفها الآخر.
+  final personId = (person.details['الرقم التعريفي'] ?? '').trim();
+  if (personId.isNotEmpty &&
+      (record.entryType == 'عهدة مالية' ||
+          record.entryType == 'دين / قرض / سلفة')) {
+    final holder = (record.details[CustodyAssignment.kHolderId] ?? '').trim();
+    final owner = (record.details[CustodyAssignment.kOwnerId] ?? '').trim();
+    if (holder == personId || owner == personId) return true;
+  }
+  if (person.typeKey == 'person_self' &&
+      (record.entryType == 'مستند' || record.entryType == 'ضمانات')) {
+    return true;
+  }
+  if (record.entryType == 'أدوية') {
+    final who = (record.details['لمن هذا الدواء'] ?? '').trim();
+    if (person.typeKey == 'person_self') return who == 'أدوية لي';
+    if (who == 'أدوية لشخص آخر') {
+      return (record.details['اسم المستفيد'] ?? '').trim() == name;
+    }
+    return who == name;
+  }
+  return false;
+}
+
+/// كم يومًا بين اليوم وتاريخ بصيغة يوم/شهر/سنة (سالب = فات).
+int? _daysFromToday(String raw) {
+  final date = AppRemindersStore.parseDisplayDate(raw);
+  if (date == null) return null;
+  return DateUtils.dateOnly(date)
+      .difference(DateUtils.dateOnly(DateTime.now()))
+      .inDays;
+}
+
+/// حالة دواء: اليوم (ساري)، قادمة (لم يبدأ)، منتهية.
+String _medicineState(PersonalEntryRecord record) {
+  final from = _daysFromToday(record.details['من تاريخ'] ?? '');
+  final to = _daysFromToday(
+    record.details['إلى تاريخ'] ?? record.dueDate,
+  );
+  if (to != null && to < 0) return 'أدوية منتهية';
+  if (from != null && from > 0) return 'أدوية قادمة';
+  return 'أدوية اليوم';
+}
+
+/// حالة بند متابعة وتخطيط حسب موعده.
+String _planState(PersonalEntryRecord record) {
+  if (_closedStatuses.contains(record.status)) return 'مكتملة';
+  final days = _daysFromToday(record.dueDate);
+  if (days == null) return 'نشطة';
+  if (days < 0) return 'متأخرة';
+  if (days == 0) return 'حان وقتها';
+  if (days <= 7) return 'قريبًا';
+  return 'نشطة';
 }
 
 class _PeopleManagementScreenState extends State<PeopleManagementScreen> {
@@ -66,7 +295,7 @@ class _PeopleManagementScreenState extends State<PeopleManagementScreen> {
       nickName: 'سليم',
       roleTitle: 'سائق خاص',
       badge: 'متابعة',
-      badgeColor: const Color(0xFF0EA5E9),
+      badgeColor: const Color(0xFF34A894),
       statusNote: 'مستند ينتهي خلال 10 أيام',
       extraNote: 'مفوّض (بناية الشامخة)',
       typeKey: 'person_employee',
@@ -90,7 +319,7 @@ class _PeopleManagementScreenState extends State<PeopleManagementScreen> {
       nickName: 'يحتاج متابعة',
       roleTitle: 'محاسب',
       badge: 'تنبيه',
-      badgeColor: const Color(0xFFF59E0B),
+      badgeColor: const Color(0xFFF2A93F),
       statusNote: 'مستند قارب على الانتهاء بعد 60 يوم',
       extraNote: 'لديه عهدة نشطة',
       typeKey: 'person_employee',
@@ -114,7 +343,7 @@ class _PeopleManagementScreenState extends State<PeopleManagementScreen> {
       nickName: 'عاجل',
       roleTitle: 'فني كهرباء',
       badge: 'عاجل',
-      badgeColor: const Color(0xFFE11D48),
+      badgeColor: const Color(0xFFC4392E),
       statusNote: 'مستند منتهي منذ يومين',
       extraNote: 'لا يوجد عليه مستحقات',
       typeKey: 'person_relative',
@@ -138,13 +367,172 @@ class _PeopleManagementScreenState extends State<PeopleManagementScreen> {
   @override
   void initState() {
     super.initState();
-    _loadSavedPeople();
+    final initial = widget.initialFilter;
+    if (initial != null) _applyFilterValues(initial);
+    final loaded = _loadSavedPeople();
+    // جوال آخر أضاف أو عدّل: تُعاد القراءة حتى لا يُحفظ فوقه ما في الذاكرة.
+    FundlyAccount.cloudRevision.addListener(_onCloudChanged);
+    _loadDelegations();
+    _loadPersonalRecords();
+    final openName = widget.openPersonName?.trim() ?? '';
+    if (openName.isNotEmpty) {
+      WidgetsBinding.instance.addPostFrameCallback((_) async {
+        await loaded;
+        if (!mounted) return;
+        _PersonItem? found;
+        for (final person in _people) {
+          if (person.fullName.trim() == openName) found = person;
+        }
+        // غير موجود: تبقى القائمة ظاهرة.
+        if (found == null) return;
+        await _openPersonDetailsAwait(found);
+        if (mounted) Navigator.of(context).pop();
+      });
+    }
+    final typeKey = widget.openAddForType;
+    if (typeKey != null) {
+      WidgetsBinding.instance.addPostFrameCallback((_) async {
+        // تُقرأ السجلات المحفوظة أولًا، وإلا كُتب فوقها عند الحفظ.
+        await loaded;
+        if (!mounted) return;
+        _TypeFilterDef? type;
+        for (final filter in _allTypeFilters) {
+          if (filter.key == typeKey) type = filter;
+        }
+        await _openContactFormSheet(
+          isEntity: typeKey.startsWith('entity_'),
+          type: type,
+          anyType: typeKey == PeopleManagementScreen.kAddAnyType,
+        );
+        if (mounted) Navigator.of(context).pop();
+      });
+    }
+  }
+
+  /// بنود الالتزامات الشخصية: الطلبات والعهد والأدوية والمتابعات المرتبطة
+  /// بكل فرد — لمركز المتابعة الموحّد.
+  List<PersonalEntryRecord> _personalRecords = const [];
+
+  Future<void> _loadPersonalRecords() async {
+    try {
+      final rows = await SupabasePersonalEntriesRepository().fetchAll();
+      if (!mounted) return;
+      setState(() => _personalRecords = rows);
+    } catch (_) {
+      // مركز المتابعة يعمل ببيانات الأفراد وحدها إن تعذّر التحميل.
+    }
+  }
+
+  /// تفويضات كل السجلات — تُقرأ مرة واحدة ليعرف مركز المتابعة ما يقارب
+  /// الانتهاء. التفويض محفوظ في جدول «delegations» لا في تفاصيل الشخص.
+  List<DelegationRecord> _allDelegations = const [];
+
+  Future<void> _loadDelegations() async {
+    try {
+      final rows = await SupabaseDelegationsRepository().fetchDelegations();
+      if (!mounted) return;
+      setState(() => _allDelegations = rows);
+    } catch (_) {
+      // تعذّر الاتصال: تبقى المجموعة فارغة بلا إسقاط الشاشة.
+    }
+  }
+
+  /// تفويضات هذا السجل التي تقارب الانتهاء.
+  /// تفويضات هذا السجل — يُربط بالمرجع أولًا ثم بالاسم للسجلات القديمة.
+  List<DelegationRecord> _delegationsOf(_PersonItem person) {
+    final name = person.fullName.trim();
+    if (name.isEmpty) return const [];
+    return _allDelegations.where((record) {
+      final ref = (record.delegateRef ?? '').trim();
+      if (ref == 'person:$name') return true;
+      if (ref.startsWith('person:')) return false;
+      return record.delegateName.trim() == name;
+    }).toList(growable: false);
+  }
+
+  int _expiringDelegationsFor(_PersonItem person) =>
+      _delegationsOf(person).where((record) => record.isExpiringSoon).length;
+
+  /// التفويضات التي انقضى أجلها — كانت غائبة عن مركز المتابعة تمامًا، فلا
+  /// ينبّه شيء إلى تفويض ساقط ما زال المستخدم يحسبه ساريًا.
+  int _endedDelegationsFor(_PersonItem person) =>
+      _delegationsOf(person).where((record) => record.isEnded).length;
+
+  /// تاريخ الاستحقاق المكتوب داخل سطر السجل بصيغة «ينتهي d/m/yyyy».
+  /// بنود السجل نصوص مركَّبة، ومن دون قراءة هذا التاريخ تبقى أرقام مركز
+  /// المتابعة مبنية على أعلام الواجهة (مثبّت/مجمّد) لا على مواعيد حقيقية.
+  static DateTime? _entryDueDate(String line) {
+    final match = RegExp(r'ينتهي\s+(\d{1,2})/(\d{1,2})/(\d{4})').firstMatch(line);
+    if (match == null) return null;
+    final d = int.tryParse(match.group(1)!);
+    final m = int.tryParse(match.group(2)!);
+    final y = int.tryParse(match.group(3)!);
+    if (d == null || m == null || y == null) return null;
+    return DateTime(y, m, d);
+  }
+
+  /// عدد بنود قسم بعينه الواقعة في نافذة زمنية بالنسبة لليوم:
+  /// bucket = 'soon' خلال الأيام القادمة، 'today' اليوم، 'late' فات موعدها.
+  int _dueEntryCount(_PersonItem person, String category, String bucket) {
+    final now = DateTime.now();
+    final today = DateTime(now.year, now.month, now.day);
+    var count = 0;
+    for (final line in person.activityLog) {
+      if (!line.startsWith(category)) continue;
+      final due = _entryDueDate(line);
+      if (due == null) continue;
+      final days = due.difference(today).inDays;
+      final matched = switch (bucket) {
+        'today' => days == 0,
+        'late' => days < 0,
+        _ => days > 0 && days <= 7,
+      };
+      if (matched) count++;
+    }
+    return count;
   }
 
   void _openSmartCalendar() {
     Navigator.of(
       context,
     ).push(MaterialPageRoute(builder: (_) => const SmartCalendarScreen()));
+  }
+
+  /// الأشخاص والجهات المؤرشفة — الأرشفة علامة داخل الملاحظة الإضافية.
+  List<_PersonItem> get _archivedPeople => _people
+      .where((person) => person.extraNote.contains('[مؤرشف]'))
+      .toList(growable: false);
+
+  /// نافذة الأرشيف: إلغاء الأرشفة تنزع العلامة وتُلغي التجميد.
+  Future<void> _openArchiveSheet() async {
+    final changed = await showArchiveSheet(
+      context,
+      title: 'الأفراد والجهات',
+      entries: [
+        for (final person in _archivedPeople)
+          ArchiveEntry(
+            title: person.fullName,
+            subtitle: person.extraNote.replaceAll('[مؤرشف]', '').trim(),
+            icon: Icons.person_outline_rounded,
+            onUnarchive: () async {
+              final index = _people.indexOf(person);
+              if (index == -1) return false;
+              setState(() {
+                _people[index] = person.copyWith(
+                  extraNote: person.extraNote
+                      .replaceAll('[مؤرشف]', '')
+                      .trim(),
+                  isFrozen: false,
+                );
+              });
+              await _persistWithFeedback();
+              return true;
+            },
+          ),
+      ],
+    );
+    if (!changed || !mounted) return;
+    setState(() {});
   }
 
   Future<void> _loadSavedPeople() async {
@@ -203,27 +591,35 @@ class _PeopleManagementScreenState extends State<PeopleManagementScreen> {
     await prefs.setString(_peopleStorageKey, encoded);
   }
 
-  final List<_TypeFilterDef> _allTypeFilters = const [
-    _TypeFilterDef('all', 'الكل', Color(0xFF0B3A78)),
-    _TypeFilterDef('person_relative', 'قريب', Color(0xFF0F6AA8)),
-    _TypeFilterDef('person_friend', 'صديق', Color(0xFF10B981)),
-    _TypeFilterDef('person_employee', 'موظف', Color(0xFFF59E0B)),
-    _TypeFilterDef('person_client', 'عميل', Color(0xFF2563EB)),
-    _TypeFilterDef('person_tenant', 'مستأجر', Color(0xFFEC4899)),
-    _TypeFilterDef('person_supplier', 'مورد', Color(0xFFEA580C)),
-    _TypeFilterDef('person_contractor', 'مقاول', Color(0xFF7C3AED)),
-    _TypeFilterDef('person_partner', 'شريك', Color(0xFF16A34A)),
-    _TypeFilterDef('person_landlord', 'مؤجر', Color(0xFF0891B2)),
-    _TypeFilterDef('person_representative', 'مندوب', Color(0xFF0284C7)),
-    _TypeFilterDef('person_consultant', 'استشاري', Color(0xFF4F46E5)),
-    _TypeFilterDef('person_other', 'أخرى', Color(0xFF64748B)),
-    _TypeFilterDef('entity_company', 'الشركات', Color(0xFF0F6AA8)),
-    _TypeFilterDef('entity_government', 'جهات حكومية', Color(0xFF2563EB)),
-    _TypeFilterDef('entity_bank', 'بنك', Color(0xFF10B981)),
-    _TypeFilterDef('entity_education', 'مؤسسات تعليمية', Color(0xFFF59E0B)),
-    _TypeFilterDef('entity_health', 'مؤسسات صحية', Color(0xFFEC4899)),
-    _TypeFilterDef('entity_organization', 'منظمات', Color(0xFF7C3AED)),
-    _TypeFilterDef('entity_other', 'جهات أخرى', Color(0xFF64748B)),
+  static const List<_TypeFilterDef> _allTypeFilters = [
+    _TypeFilterDef('all', 'الكل', Color(0xFF022E2A)),
+    _TypeFilterDef('person_relative', 'قريب', Color(0xFF0A5A50)),
+    _TypeFilterDef('person_friend', 'صديق', Color(0xFF34A894)),
+    _TypeFilterDef('person_employee', 'موظف', Color(0xFFF2A93F)),
+    _TypeFilterDef('person_client', 'عميل', Color(0xFF0A5A50)),
+    _TypeFilterDef('person_tenant', 'مستأجر', Color(0xFFD95A4E)),
+    _TypeFilterDef('person_supplier', 'مورد', Color(0xFFCE8422)),
+    _TypeFilterDef('person_contractor', 'مقاول', Color(0xFF0E7161)),
+    _TypeFilterDef('person_partner', 'شريك', Color(0xFF34A894)),
+    _TypeFilterDef('person_landlord', 'مؤجر', Color(0xFF178F7B)),
+    _TypeFilterDef('person_representative', 'مندوب', Color(0xFF0E7161)),
+    _TypeFilterDef('person_consultant', 'استشاري', Color(0xFF0A5A50)),
+    _TypeFilterDef('person_other', 'أخرى', Color(0xFF5C6B68)),
+    _TypeFilterDef('entity_company', 'الشركات', Color(0xFF0A5A50)),
+    _TypeFilterDef('entity_government', 'جهات حكومية', Color(0xFF0A5A50)),
+    _TypeFilterDef('entity_bank', 'بنك', Color(0xFF34A894)),
+    _TypeFilterDef('entity_education', 'مؤسسات تعليمية', Color(0xFFF2A93F)),
+    _TypeFilterDef('entity_health', 'مؤسسات صحية', Color(0xFFD95A4E)),
+    _TypeFilterDef('entity_organization', 'منظمات', Color(0xFF0E7161)),
+    _TypeFilterDef('entity_other', 'جهات أخرى', Color(0xFF5C6B68)),
+  ];
+
+  /// تصنيفات لا تُضاف يدويًا من هنا: «مستأجر» و«مؤجر» ينشآن تلقائيًا حين
+  /// يُربط الشخص بعقد في العقارات أو الآليات أو الأنشطة التجارية. يبقيان في
+  /// قوائم الفلترة ليظهر من أُنشئ منهما.
+  static const List<String> _autoOnlyTypeKeys = [
+    'person_tenant',
+    'person_landlord',
   ];
 
   List<_TypeFilterDef> _createTypeFilters(bool isEntity) {
@@ -231,6 +627,7 @@ class _PeopleManagementScreenState extends State<PeopleManagementScreen> {
         .where(
           (filter) =>
               filter.key != 'all' &&
+              !_autoOnlyTypeKeys.contains(filter.key) &&
               (isEntity
                   ? filter.key.startsWith('entity_')
                   : filter.key.startsWith('person_')),
@@ -240,35 +637,73 @@ class _PeopleManagementScreenState extends State<PeopleManagementScreen> {
 
   @override
   void dispose() {
+    FundlyAccount.cloudRevision.removeListener(_onCloudChanged);
     _searchController.dispose();
     super.dispose();
   }
 
+  void _onCloudChanged() {
+    if (!mounted || _storageBlocked) return;
+    _loadSavedPeople();
+  }
+
+  // ---------------- تخصيص الصفحة ----------------
+
+  /// «الأفراد» أو «الجهات» — فئة النوع في «تخصيص الصفحات».
+  static String _scopeTitleOf(String typeKey) =>
+      typeKey.startsWith('entity_') ? 'الجهات' : 'الأفراد';
+
+  /// نوع مخفي (هو أو فئته كلها) من «تخصيص الصفحات».
+  static bool _typeKeyHidden(String typeKey) {
+    var label = '';
+    for (final filter in _allTypeFilters) {
+      if (filter.key == typeKey) label = filter.label;
+    }
+    return PageCustomizationStore.itemHidden(
+      PageCustomizationStore.people,
+      _scopeTitleOf(typeKey),
+      label,
+    );
+  }
+
+  static bool _scopeHidden(bool isEntity) =>
+      PageCustomizationStore.categoryHidden(
+        PageCustomizationStore.people,
+        isEntity ? 'الجهات' : 'الأفراد',
+      );
+
+  /// السجلات الظاهرة — المخفي من «تخصيص الصفحات» لا يُعرض ولا يُعدّ.
+  List<_PersonItem> get _visiblePeople => _people
+      .where((person) => !_typeKeyHidden(person.typeKey))
+      .toList(growable: false);
+
   int _countByType(String key) {
-    if (key == 'all') return _people.length;
+    final people = _visiblePeople;
+    if (key == 'all') return people.length;
     if (key == 'all_people') {
-      return _people.where((person) => _isPersonType(person.typeKey)).length;
+      return people.where((person) => _isPersonType(person.typeKey)).length;
     }
     if (key == 'all_entities') {
-      return _people.where((person) => _isEntityType(person.typeKey)).length;
+      return people.where((person) => _isEntityType(person.typeKey)).length;
     }
     if (key.startsWith('status_')) {
-      return _people
+      return people
           .where((person) => _isPersonType(person.typeKey))
           .where((person) => _matchesPeopleStatusFilter(person, key))
           .length;
     }
-    return _people.where((person) => person.typeKey == key).length;
+    return people.where((person) => person.typeKey == key).length;
   }
 
   int _countByScope(String scopeKey) {
+    final people = _visiblePeople;
     if (scopeKey == 'scope_people') {
-      return _people.where((person) => _isPersonType(person.typeKey)).length;
+      return people.where((person) => _isPersonType(person.typeKey)).length;
     }
     if (scopeKey == 'scope_entities') {
-      return _people.where((person) => _isEntityType(person.typeKey)).length;
+      return people.where((person) => _isEntityType(person.typeKey)).length;
     }
-    return _people.length;
+    return people.length;
   }
 
   bool _isPersonType(String key) => key.startsWith('person_');
@@ -336,9 +771,9 @@ class _PeopleManagementScreenState extends State<PeopleManagementScreen> {
 
     return [
       build(allKey, allLabel, allIcon),
-      ..._createTypeFilters(
-        isEntity,
-      ).map((filter) => build(filter.key, filter.label, _typeIcon(filter.key))),
+      ..._createTypeFilters(isEntity)
+          .where((filter) => !_typeKeyHidden(filter.key))
+          .map((filter) => build(filter.key, filter.label, _typeIcon(filter.key))),
     ];
   }
 
@@ -347,8 +782,14 @@ class _PeopleManagementScreenState extends State<PeopleManagementScreen> {
 
   bool _matchesAdvancedPeopleFilters(_PersonItem person) {
     switch (_filter.status) {
-      case 'نشط':
+      case 'نشط' || 'نشطة':
         if (person.isFrozen) return false;
+      case 'مكتملة':
+        if (person.openTasks > 0 ||
+            person.dueToYou > 0 ||
+            person.dueOnYou > 0) {
+          return false;
+        }
       case 'المستحق بعد 7 أيام':
         if (person.openTasks <= 0) return false;
       case 'متأخر':
@@ -362,6 +803,28 @@ class _PeopleManagementScreenState extends State<PeopleManagementScreen> {
         if (!person.badge.contains('ملغا')) return false;
       case 'مؤرشف':
         if (!person.isFrozen) return false;
+    }
+    // الدين ▼: «لي» مستحقات لك، «عليّ» مستحقات عليك.
+    switch (_filter.debtDirection) {
+      case 'لي':
+        if (person.dueToYou <= 0) return false;
+      case 'عليّ':
+        if (person.dueOnYou <= 0) return false;
+    }
+    // المبلغ — الفلتر ▼: قريبة الاستحقاق / مستحقة / متأخرة.
+    final dueBucket = switch (_filter.dueState) {
+      'قريبة الاستحقاق' => 'soon',
+      'مستحقة' => 'today',
+      'متأخرة' => 'late',
+      _ => null,
+    };
+    if (dueBucket != null && _dueEntryCount(person, 'مالية', dueBucket) == 0) {
+      return false;
+    }
+    // المستند — الفلتر ▼: قريبة الانتهاء / منتهية.
+    if (_filter.documentState != null &&
+        !_personDocMatches(person, _filter.documentState!)) {
+      return false;
     }
     // اختصارات المبلغ: "لي" مستحقات لك، "عليّ" مستحقات عليك.
     switch (_filter.amountShortcut) {
@@ -406,6 +869,33 @@ class _PeopleManagementScreenState extends State<PeopleManagementScreen> {
     return true;
   }
 
+  /// تواريخ انتهاء مستندات الشخص/الجهة (الهوية، الجواز، وثائق الجهة...).
+  List<DateTime> _personDocExpiries(_PersonItem person) => [
+    for (final entry in person.details.entries)
+      if (entry.key.startsWith('انتهاء ') || entry.key == 'تاريخ الانتهاء')
+        if (_parsePeopleDate(entry.value.trim()) case final date?) date,
+  ];
+
+  /// مستندات قريبة الانتهاء (خلال 30 يومًا) أو منتهية.
+  bool _personDocMatches(_PersonItem person, String label) {
+    final today = DateUtils.dateOnly(DateTime.now());
+    final expiries = _personDocExpiries(person);
+    final note = person.statusNote;
+    if (label.contains('قريب')) {
+      return expiries.any((date) {
+            final days = date.difference(today).inDays;
+            return days >= 0 && days <= 30;
+          }) ||
+          (note.contains('مستند') &&
+              (note.contains('قريب') || note.contains('ينتهي')));
+    }
+    if (label.contains('منته')) {
+      return expiries.any((date) => date.isBefore(today)) ||
+          (note.contains('مستند') && note.contains('منته'));
+    }
+    return true;
+  }
+
   /// تحويل تاريخ نصّي (d/M/yyyy) إلى DateTime، أو null إن تعذّر.
   DateTime? _parsePeopleDate(String raw) {
     final parts = raw.split('/');
@@ -417,10 +907,44 @@ class _PeopleManagementScreenState extends State<PeopleManagementScreen> {
     return DateTime(year, month, day);
   }
 
+  /// صاحب الحساب نفسه — بطاقة تُبنى من الملف الشخصي في الإعدادات، ولا
+  /// تُخزَّن ولا تُعدَّل من هنا. كان على المستخدم أن يُدخل نفسه يدويًا.
+  _PersonItem _selfRecord() {
+    final settings = AppSettings.instance;
+    final owner = settings.name.trim();
+    return _PersonItem(
+      fullName: 'أنا (${owner.isEmpty ? 'صاحب الحساب' : owner})',
+      nickName: 'صاحب الحساب',
+      roleTitle: 'صاحب الحساب',
+      badge: 'أنا',
+      badgeColor: const Color(0xFF0E7161),
+      statusNote: 'بياناتك من الملف الشخصي',
+      extraNote: '',
+      typeKey: 'person_self',
+      categoryName: 'صاحب الحساب',
+      dueToYou: 0,
+      dueOnYou: 0,
+      openTasks: 0,
+      documentsCount: 0,
+      lastUpdate: _todayStamp(),
+      createdAt: _todayStamp(),
+      sharedCommitments: const [],
+      documents: const [],
+      isPinned: true,
+      details: {
+        'رقم الهاتف': settings.phone,
+        'البريد الإلكتروني': settings.email,
+        'تاريخ الميلاد': settings.birthday,
+        'العنوان': settings.city,
+        'معلومات إضافية': settings.social,
+      },
+    );
+  }
+
   List<_PersonItem> _filteredPeople() {
     final query = _searchController.text.trim();
 
-    final filtered = _people.where((person) {
+    final filtered = _visiblePeople.where((person) {
       final scopeMatches =
           _selectedScopeKey == 'scope_all' ||
           (_selectedScopeKey == 'scope_people' &&
@@ -474,53 +998,38 @@ class _PeopleManagementScreenState extends State<PeopleManagementScreen> {
       return a.isPinned ? -1 : 1;
     }
 
-    // الفلتر الصغير يُقدّم المطابق ولا يُخفي غيره.
-    int rank(_PersonItem person) {
-      switch (_selectedSort) {
-        case 'نشط':
-          return person.isFrozen ? 1 : 0;
-        case 'مستندات قريبة الإنتهاء':
-          return person.statusNote.contains('قريب') &&
-                  person.statusNote.contains('مستند')
-              ? 0
-              : 1;
-        case 'مستندات منتهية':
-          return person.statusNote.contains('منته') &&
-                  person.statusNote.contains('مستند')
-              ? 0
-              : 1;
-        default:
-          return 0;
-      }
-    }
+    // الفلتر الصغير: كل خيار يُظهر ما يطابقه فقط، و«الأحدث أولاً» ترتيب.
+    filtered.removeWhere(
+      (person) => switch (_selectedSort) {
+        'نشط' => person.isFrozen,
+        'مستندات قريبة الانتهاء' ||
+        'مستندات قريبة الإنتهاء' => !_personDocMatches(person, 'قريبة'),
+        'مستندات منتهية' => !_personDocMatches(person, 'منتهية'),
+        _ => false,
+      },
+    );
 
     filtered.sort((a, b) {
       final pinned = byPinned(a, b);
       if (pinned != 0) return pinned;
-      // "أعلى مستحقات" من الفلتر الكبير يتقدّم على ترتيب الفلتر الصغير.
-      if (_filter.amountShortcut == 'أعلى مستحقات') {
+      // الدين ▼: «الأعلى/الأقل مطالبة» ترتيب بإجمالي المستحقات.
+      if (_filter.amountShortcut == 'أعلى مستحقات' ||
+          _filter.debtDirection == 'الأعلى مطالبة') {
         final byDue = (b.dueToYou + b.dueOnYou).compareTo(
           a.dueToYou + a.dueOnYou,
         );
         if (byDue != 0) return byDue;
+      } else if (_filter.debtDirection == 'الأقل مطالبة') {
+        final byDue = (a.dueToYou + a.dueOnYou).compareTo(
+          b.dueToYou + b.dueOnYou,
+        );
+        if (byDue != 0) return byDue;
       }
-      final byRank = rank(a).compareTo(rank(b));
-      if (byRank != 0) return byRank;
       return _parsePersonDate(
         b.lastUpdate,
       ).compareTo(_parsePersonDate(a.lastUpdate));
     });
     return filtered;
-  }
-
-  List<_PersonItem> _peopleForSelectedType() {
-    if (_selectedScopeKey == 'scope_people') {
-      return _people.where((person) => _isPersonType(person.typeKey)).toList();
-    }
-    if (_selectedScopeKey == 'scope_entities') {
-      return _people.where((person) => _isEntityType(person.typeKey)).toList();
-    }
-    return List.of(_people);
   }
 
   IconData _typeIcon(String key) {
@@ -554,9 +1063,9 @@ class _PeopleManagementScreenState extends State<PeopleManagementScreen> {
 
     final all = [
       ..._allTypeFilters,
-      const _TypeFilterDef('status_near', 'قريب الانتهاء', Color(0xFF0284C7)),
-      const _TypeFilterDef('status_urgent', 'مستعجل', Color(0xFFD97706)),
-      const _TypeFilterDef('status_late', 'متأخر', Color(0xFFDC2626)),
+      const _TypeFilterDef('status_near', 'قريب الانتهاء', Color(0xFF0E7161)),
+      const _TypeFilterDef('status_urgent', 'مستعجل', Color(0xFFCE8422)),
+      const _TypeFilterDef('status_late', 'متأخر', Color(0xFFC4392E)),
     ];
     for (final item in all) {
       if (item.key == _selectedTypeKey) return item.label;
@@ -591,7 +1100,7 @@ class _PeopleManagementScreenState extends State<PeopleManagementScreen> {
     FollowUpEntry entryFor(_PersonItem person, String trailing) => FollowUpEntry(
       title: person.fullName,
       subtitle: person.categoryName,
-      icon: person.typeKey == 'entity'
+      icon: _isEntityKind(person.typeKey)
           ? Icons.apartment_rounded
           : Icons.person_outline_rounded,
       color: person.badgeColor,
@@ -599,118 +1108,279 @@ class _PeopleManagementScreenState extends State<PeopleManagementScreen> {
       onTap: () => _openPersonDetails(person),
     );
 
+    /// مقياس يعدّ لكل فرد عدد بنوده المطابقة ويعرض من له بند واحد فأكثر.
+    FollowUpMetric metric(
+      String label,
+      IconData icon,
+      int Function(_PersonItem person) count,
+    ) => FollowUpMetric(
+      label: label,
+      icon: icon,
+      entries: [
+        for (final person in people)
+          if (count(person) > 0) entryFor(person, '${count(person)}'),
+      ],
+    );
+
+    final myId = AppIdentity.id;
+    List<PersonalEntryRecord> linked(_PersonItem person) => [
+      for (final record in _personalRecords)
+        if (_recordLinkedTo(record, person)) record,
+    ];
+
+    int planCount(_PersonItem person, String state) {
+      final bucket = switch (state) {
+        'متأخرة' => 'late',
+        'حان وقتها' => 'today',
+        _ => 'soon',
+      };
+      return _dueEntryCount(person, 'متابعة وتخطيط', bucket) +
+          linked(person)
+              .where(
+                (r) =>
+                    _organizationEntryTypes.contains(r.entryType) &&
+                    _planState(r) == state,
+              )
+              .length;
+    }
+
+    int docsCount(_PersonItem person, bool expired) {
+      var count = 0;
+      for (final doc in _IdentityDoc.all) {
+        final days = _daysFromToday(person.details[doc.expiryKey] ?? '');
+        if (days == null) continue;
+        if (expired ? days < 0 : days >= 0 && days <= 30) count++;
+      }
+      for (final line in person.activityLog) {
+        if (!line.startsWith('مستندات')) continue;
+        final due = _entryDueDate(line);
+        if (due == null) continue;
+        final days = DateUtils.dateOnly(due)
+            .difference(DateUtils.dateOnly(DateTime.now()))
+            .inDays;
+        if (expired ? days < 0 : days >= 0 && days <= 30) count++;
+      }
+      return count;
+    }
+
+    // العهدة: ما سُلِّم لهذا الفرد من «عهدة مالية» في الالتزامات الشخصية.
+    List<PersonalEntryRecord> custodyOf(_PersonItem person) => [
+      for (final record in _personalRecords)
+        if (record.entryType == 'عهدة مالية' &&
+            !_closedStatuses.contains(record.status) &&
+            (record.details['اسم المستلم'] ?? '').trim() ==
+                person.fullName.trim())
+          record,
+    ];
+
+    // نفس مجموعات مركز المتابعة في الالتزامات الشخصية وبمسمياتها نفسها،
+    // ومعها التفويضات الخاصة بالأفراد والجهات.
     return [
-        FollowUpGroup(
-          title: 'المستحقات',
-          icon: Icons.account_balance_wallet_outlined,
-          color: const Color(0xFF07835C),
-          metrics: [
-            FollowUpMetric(
-              label: 'مستحقات لك',
-              icon: Icons.call_received_rounded,
-              entries: [
-                for (final person in people.where((p) => p.dueToYou > 0))
-                  entryFor(
-                    person,
-                    '${person.dueToYou} ${AppSettings.currencySuffix}',
-                  ),
-              ],
-            ),
-            FollowUpMetric(
-              label: 'مستحقات عليك',
-              icon: Icons.call_made_rounded,
-              entries: [
-                for (final person in people.where((p) => p.dueOnYou > 0))
-                  entryFor(
-                    person,
-                    '${person.dueOnYou} ${AppSettings.currencySuffix}',
-                  ),
-              ],
-            ),
-          ],
-        ),
-        FollowUpGroup(
-          title: 'المهام',
-          icon: Icons.task_alt_rounded,
-          color: const Color(0xFFB56A09),
-          metrics: [
-            FollowUpMetric(
-              label: 'مهام مفتوحة',
-              icon: Icons.pending_actions_outlined,
-              entries: [
-                for (final person in people.where((p) => p.openTasks > 0))
-                  entryFor(person, '${person.openTasks}'),
-              ],
-            ),
-          ],
-        ),
-        FollowUpGroup(
-          title: 'المستندات',
-          icon: Icons.folder_outlined,
-          color: const Color(0xFF0F6AA8),
-          metrics: [
-            FollowUpMetric(
-              label: 'وثائق للمتابعة',
-              icon: Icons.description_outlined,
-              entries: [
-                for (final person in people.where(
-                  (p) => p.statusNote.contains('مستند'),
-                ))
-                  entryFor(person, person.statusNote),
-              ],
-            ),
-            FollowUpMetric(
-              label: 'بلا مستندات',
-              icon: Icons.folder_off_outlined,
-              entries: [
-                for (final person in people.where((p) => p.documentsCount == 0))
-                  entryFor(person, '0'),
-              ],
-            ),
-          ],
-        ),
-        FollowUpGroup(
-          title: 'الحالة',
-          icon: Icons.flag_outlined,
-          color: const Color(0xFFC73E4D),
-          metrics: [
-            FollowUpMetric(
-              label: 'مجمّدة',
-              icon: Icons.ac_unit_rounded,
-              entries: [
-                for (final person in people.where((p) => p.isFrozen))
-                  entryFor(person, 'مجمّد'),
-              ],
-            ),
-            FollowUpMetric(
-              label: 'مثبّتة',
-              icon: Icons.push_pin_outlined,
-              entries: [
-                for (final person in people.where((p) => p.isPinned))
-                  entryFor(person, 'مثبّت'),
-              ],
-            ),
-          ],
-        ),
-      ];
+      FollowUpGroup(
+        title: 'الطلبات',
+        icon: Icons.hourglass_top_rounded,
+        color: const Color(0xFFA6691A),
+        metrics: [
+          metric('بانتظار قبولي', Icons.move_to_inbox_outlined, (person) {
+            if (myId.isEmpty) return 0;
+            return _personalRecords.where((r) {
+              final a = CustodyAssignment.decode(r.details);
+              return a.isPending &&
+                  a.holderId == myId &&
+                  a.ownerName.trim() == person.fullName.trim();
+            }).length;
+          }),
+          metric('أرسلتها بانتظار القبول', Icons.outbox_outlined, (person) {
+            if (myId.isEmpty) return 0;
+            return _personalRecords.where((r) {
+              final a = CustodyAssignment.decode(r.details);
+              return a.isPending &&
+                  a.ownerId == myId &&
+                  a.holderName.trim() == person.fullName.trim();
+            }).length;
+          }),
+        ],
+      ),
+      FollowUpGroup(
+        title: 'المتابعة والتخطيط',
+        icon: Icons.checklist_rounded,
+        color: const Color(0xFF0E7161),
+        metrics: [
+          metric(
+            'متأخرة',
+            Icons.error_outline_rounded,
+            (person) => planCount(person, 'متأخرة'),
+          ),
+          metric(
+            'حان وقتها',
+            Icons.today_outlined,
+            (person) => planCount(person, 'حان وقتها'),
+          ),
+          metric(
+            'قريبة',
+            Icons.hourglass_bottom_rounded,
+            (person) => planCount(person, 'قريبًا'),
+          ),
+        ],
+      ),
+      FollowUpGroup(
+        title: 'مالية (عام)',
+        icon: Icons.account_balance_wallet_outlined,
+        color: const Color(0xFF34A894),
+        metrics: [
+          metric(
+            'متأخرة',
+            Icons.error_outline_rounded,
+            (person) => _dueEntryCount(person, 'مالية', 'late'),
+          ),
+          metric(
+            'مستحقة',
+            Icons.payments_outlined,
+            (person) => _dueEntryCount(person, 'مالية', 'today'),
+          ),
+          metric(
+            'قريبة الاستحقاق',
+            Icons.hourglass_bottom_rounded,
+            (person) => _dueEntryCount(person, 'مالية', 'soon'),
+          ),
+          FollowUpMetric(
+            label: 'مبالغ لي',
+            icon: Icons.south_west_rounded,
+            entries: [
+              for (final person in people.where((p) => p.dueToYou > 0))
+                entryFor(
+                  person,
+                  '${person.dueToYou} ${AppSettings.currencySuffix}',
+                ),
+            ],
+          ),
+          FollowUpMetric(
+            label: 'مبالغ عليّ',
+            icon: Icons.north_east_rounded,
+            entries: [
+              for (final person in people.where((p) => p.dueOnYou > 0))
+                entryFor(
+                  person,
+                  '${person.dueOnYou} ${AppSettings.currencySuffix}',
+                ),
+            ],
+          ),
+        ],
+      ),
+      FollowUpGroup(
+        title: 'أدوية',
+        icon: Icons.medication_outlined,
+        color: const Color(0xFFC4392E),
+        metrics: [
+          metric(
+            'منتهية',
+            Icons.event_busy_outlined,
+            (person) => linked(person)
+                .where(
+                  (r) =>
+                      r.entryType == 'أدوية' &&
+                      _medicineState(r) == 'أدوية منتهية',
+                )
+                .length,
+          ),
+          metric('قريبة الانتهاء', Icons.hourglass_top_rounded, (person) {
+            return linked(person).where((r) {
+              if (r.entryType != 'أدوية') return false;
+              final days = _daysFromToday(
+                r.details['إلى تاريخ'] ?? r.dueDate,
+              );
+              return days != null && days >= 0 && days <= 7;
+            }).length;
+          }),
+        ],
+      ),
+      FollowUpGroup(
+        title: 'مستندات (عام)',
+        icon: Icons.description_outlined,
+        color: const Color(0xFFCE8422),
+        metrics: [
+          metric(
+            'منتهية',
+            Icons.assignment_late_outlined,
+            (person) => docsCount(person, true),
+          ),
+          metric(
+            'قريبة الانتهاء',
+            Icons.event_busy_outlined,
+            (person) => docsCount(person, false),
+          ),
+        ],
+      ),
+      FollowUpGroup(
+        title: 'عهدة مالية',
+        icon: Icons.inventory_2_outlined,
+        color: const Color(0xFF0A5A50),
+        metrics: [
+          metric('مستنفدة', Icons.money_off_csred_outlined, (person) {
+            return custodyOf(person).where((r) {
+              return r.amount > 0 && personalCustodySpent(r.details) >= r.amount;
+            }).length;
+          }),
+          metric('قريبة الاستنفاد', Icons.trending_down_rounded, (person) {
+            return custodyOf(person).where((r) {
+              if (r.amount <= 0) return false;
+              final remaining = r.amount - personalCustodySpent(r.details);
+              return remaining > 0 && remaining <= r.amount * 0.2;
+            }).length;
+          }),
+        ],
+      ),
+      FollowUpGroup(
+        title: 'تفويضات',
+        icon: Icons.assignment_ind_outlined,
+        color: const Color(0xFF0A5A50),
+        metrics: [
+          metric(
+            'تقارب الانتهاء',
+            Icons.assignment_late_outlined,
+            _expiringDelegationsFor,
+          ),
+          metric(
+            'منتهية',
+            Icons.assignment_turned_in_outlined,
+            _endedDelegationsFor,
+          ),
+        ],
+      ),
+    ];
   }
 
   void _openFollowUpSheet(List<_PersonItem> people) {
     showFollowUpCenterSheet(
       context: context,
-      accent: const Color(0xFF7C3AED),
-      title: _selectedTypeKey == 'all'
-          ? 'مركز المتابعة'
-          : 'متابعة ${_activeSearchFilterLabel()}',
+      accent: const Color(0xFF0E7161),
+      title: 'مركز المتابعة',
+      subtitle: 'الأفراد والجهات',
       groups: _followUpGroups(people),
     );
   }
 
   void _openPersonDetails(_PersonItem person) {
-    Navigator.of(context).push(
+    _openPersonDetailsAwait(person);
+  }
+
+  Future<void> _openPersonDetailsAwait(_PersonItem person) {
+    return Navigator.of(context).push(
       MaterialPageRoute(
         builder: (_) => PersonDetailsScreen(
           person: person,
+          onFullEdit: (current) {
+            final isEntity = _isEntityKind(current.typeKey);
+            _TypeFilterDef? type;
+            for (final option in _createTypeFilters(isEntity)) {
+              if (option.key == current.typeKey) type = option;
+            }
+            return _openContactFormSheet(
+              isEntity: isEntity,
+              type: type,
+              editing: current,
+            );
+          },
           onPersonUpdated: (previous, updated) async {
             final index = _people.indexOf(previous);
             if (index == -1) return;
@@ -736,7 +1406,7 @@ class _PeopleManagementScreenState extends State<PeopleManagementScreen> {
     showAppFilterSheet(
       context: context,
       title: 'أفراد وجهات',
-      accent: const Color(0xFF7C3AED),
+      accent: const Color(0xFF0E7161),
       values: _filter
         ..mainCategory = _selectedScopeKey == 'scope_entities'
             ? 'جهات'
@@ -744,69 +1414,87 @@ class _PeopleManagementScreenState extends State<PeopleManagementScreen> {
             ? 'أفراد'
             : 'الكل',
       mainCategories: const ['الكل', 'أفراد', 'جهات'],
-      subCategoriesFor: (main) => main == 'أفراد'
-          ? _allTypeFilters
-                .where((filter) => filter.key.startsWith('person_'))
-                .map((filter) => filter.label)
-                .toList(growable: false)
-          : main == 'جهات'
-          ? _allTypeFilters
-                .where((filter) => filter.key.startsWith('entity_'))
-                .map((filter) => filter.label)
-                .toList(growable: false)
-          : const <String>[],
+      subCategoriesFor: _subCategoriesFor,
       // بلا مدخل "الكل": القالب يضيف رقاقة "الكل" بنفسه، فكانت تظهر مرتين
       // والثانية تُفلتر على تصنيف اسمه "الكل" فلا يطابق أحدًا.
       personCategories: _allTypeFilters
           .where((filter) => filter.key != 'all')
           .map((filter) => filter.label)
           .toList(growable: false),
-      documentStates: const [],
-      amountShortcuts: const ['لي', 'عليّ', 'أعلى مستحقات'],
-      sections: const [
-        AppFilterSection.mainCategory,
-        AppFilterSection.subCategory,
-        AppFilterSection.people,
-        AppFilterSection.delegates,
-        AppFilterSection.date,
-        AppFilterSection.status,
-        AppFilterSection.amount,
-        AppFilterSection.document,
-        AppFilterSection.place,
-      ],
-      onApply: (values) => setState(() {
-        _selectedScopeKey = values.mainCategory == 'أفراد'
-            ? 'scope_people'
-            : values.mainCategory == 'جهات'
-            ? 'scope_entities'
-            : 'scope_all';
-        final matching = _allTypeFilters
-            .where((filter) => filter.label == values.subCategory)
-            .toList(growable: false);
-        _selectedTypeKey = matching.isNotEmpty
-            ? matching.first.key
-            : _selectedScopeKey == 'scope_people'
-            ? 'all_people'
-            : _selectedScopeKey == 'scope_entities'
-            ? 'all_entities'
-            : 'all';
-        _filter
-          ..mainCategory = values.mainCategory
-          ..subCategory = values.subCategory
-          ..dateFrom = values.dateFrom
-          ..dateTo = values.dateTo
-          ..status = values.status
-          ..amountFrom = values.amountFrom
-          ..amountTo = values.amountTo
-          ..amountShortcut = values.amountShortcut
-          ..documentName = values.documentName
-          ..documentState = values.documentState
-          ..personName = values.personName
-          ..personCategory = values.personCategory
-          ..delegateName = values.delegateName
-          ..placeName = values.placeName;
-      }),
+      // حسب الورقة: الفئات الرئيسية، الفرعية، الحالة ▼، المستند (الاسم +
+      // الفلتر ▼)، الدين ▼، التفويض، المواقع والأماكن.
+      sections: _peopleFilterSections,
+      selectStatuses: _peopleStatuses,
+      delegatesLabel: 'التفويض',
+      placeLabel: 'المواقع والأماكن',
+      placeHint: 'اكتب اسم الموقع أو المكان',
+      onApply: (values) => setState(() => _applyFilterValues(values)),
     );
+  }
+
+  static const List<AppFilterSection> _peopleFilterSections = [
+    AppFilterSection.mainCategory,
+    AppFilterSection.subCategory,
+    AppFilterSection.statusSelect,
+    AppFilterSection.documentSelect,
+    // المبلغ في مستطيل + الفلتر ▼ (قريبة الاستحقاق، مستحقة، متأخرة).
+    AppFilterSection.dueAmount,
+    AppFilterSection.debtSelect,
+    AppFilterSection.delegates,
+    AppFilterSection.place,
+  ];
+
+  /// الحالة ▼ للأفراد والجهات.
+  static const List<String> _peopleStatuses = [
+    'الأحدث أولاً',
+    'نشطة',
+    'مكتملة',
+  ];
+
+  /// الفئات الفرعية بترتيبها في نموذج الإضافة: فئات الأفراد أو الجهات.
+  static List<String> _subCategoriesFor(String main) {
+    final prefix = main == 'أفراد'
+        ? 'person_'
+        : main == 'جهات'
+        ? 'entity_'
+        : null;
+    if (prefix == null) return const <String>[];
+    return [
+      for (final filter in _allTypeFilters)
+        if (filter.key.startsWith(prefix) &&
+            !_autoOnlyTypeKeys.contains(filter.key))
+          filter.label,
+    ];
+  }
+
+  /// إعداد الفلتر نفسه لفلتر الصفحة الرئيسية.
+  static AppFilterModuleConfig moduleConfig() => AppFilterModuleConfig(
+    mainCategories: const ['الكل', 'أفراد', 'جهات'],
+    subCategoriesFor: _subCategoriesFor,
+    sectionsFor: (_) => _peopleFilterSections,
+    selectStatuses: _peopleStatuses,
+    delegatesLabel: 'التفويض',
+    placeLabel: 'المواقع والأماكن',
+    placeHint: 'اكتب اسم الموقع أو المكان',
+  );
+
+  void _applyFilterValues(AppFilterValues values) {
+    _selectedScopeKey = values.mainCategory == 'أفراد'
+        ? 'scope_people'
+        : values.mainCategory == 'جهات'
+        ? 'scope_entities'
+        : 'scope_all';
+    final matching = _allTypeFilters
+        .where((filter) => filter.label == values.subCategory)
+        .toList(growable: false);
+    _selectedTypeKey = matching.isNotEmpty
+        ? matching.first.key
+        : _selectedScopeKey == 'scope_people'
+        ? 'all_people'
+        : _selectedScopeKey == 'scope_entities'
+        ? 'all_entities'
+        : 'all';
+    _filter.assignFrom(values);
   }
 
   void _openQuickCreateSheet() {
@@ -839,8 +1527,8 @@ class _PeopleManagementScreenState extends State<PeopleManagementScreen> {
                     width: 44,
                     height: 5,
                     decoration: BoxDecoration(
-                      color: const Color(0xFFE2E8F0),
-                      borderRadius: BorderRadius.circular(99),
+                      color: const Color(0xFFE4EAE8),
+                      borderRadius: BorderRadius.circular(999),
                     ),
                   ),
                 ),
@@ -854,9 +1542,9 @@ class _PeopleManagementScreenState extends State<PeopleManagementScreen> {
                           Text(
                             'اختيار نوع الإضافة',
                             style: TextStyle(
-                              fontSize: 21,
+                              fontSize: 20,
                               fontWeight: FontWeight.w900,
-                              color: Color(0xFF0F172A),
+                              color: Color(0xFF022E2A),
                             ),
                           ),
                           SizedBox(height: 4),
@@ -864,7 +1552,7 @@ class _PeopleManagementScreenState extends State<PeopleManagementScreen> {
                             'اختر النوع لإظهار الإدخالات والفئات المناسبة',
                             style: TextStyle(
                               fontSize: 13,
-                              color: Color(0xFF64748B),
+                              color: Color(0xFF5C6B68),
                               fontWeight: FontWeight.w600,
                             ),
                           ),
@@ -887,33 +1575,36 @@ class _PeopleManagementScreenState extends State<PeopleManagementScreen> {
           ),
                   child: Row(
                     children: [
+                      if (!_scopeHidden(false))
                       Expanded(
                         child: _CreateTypeChoiceCard(
-                          title: 'إضافة شخص',
+                          title: 'إضافة فرد',
                           subtitle: 'أفراد وعائلة وموظفون',
                           icon: Icons.person_add_alt_1_rounded,
-                          color: const Color(0xFF0F6AA8),
+                          color: const Color(0xFF0A5A50),
                           onTap: () {
                             Navigator.pop(sheetContext);
                             Future<void>.delayed(
                               Duration.zero,
-                              () => _openCreateActionsSheet(isEntity: false),
+                              () => _openContactFormSheet(isEntity: false),
                             );
                           },
                         ),
                       ),
-                      const SizedBox(width: 10),
+                      if (!_scopeHidden(false) && !_scopeHidden(true))
+                        const SizedBox(width: 10),
+                      if (!_scopeHidden(true))
                       Expanded(
                         child: _CreateTypeChoiceCard(
                           title: 'إضافة جهة',
                           subtitle: 'شركات ومؤسسات وجهات',
                           icon: Icons.apartment_rounded,
-                          color: const Color(0xFF7C3AED),
+                          color: const Color(0xFF0E7161),
                           onTap: () {
                             Navigator.pop(sheetContext);
                             Future<void>.delayed(
                               Duration.zero,
-                              () => _openCreateActionsSheet(isEntity: true),
+                              () => _openContactFormSheet(isEntity: true),
                             );
                           },
                         ),
@@ -929,162 +1620,259 @@ class _PeopleManagementScreenState extends State<PeopleManagementScreen> {
     );
   }
 
-  void _openCreateActionsSheet({required bool isEntity}) {
-    final typeFilters = _createTypeFilters(isEntity);
-    final documentTypes = isEntity
-        ? const ['عقود', 'رخص تجارية', 'مستندات مالية']
-        : const ['الهوية', 'جواز السفر', 'رخصة القيادة', 'صور', 'ملفات أخرى'];
-
-    showModalBottomSheet<void>(
+  /// تنبيه فوق النموذج المفتوح (رسالة أسفل الشاشة تختفي خلفه).
+  Future<void> _formNotice(BuildContext context, String message) {
+    return showDialog<void>(
       context: context,
-      isScrollControlled: true,
-      backgroundColor: Colors.transparent,
-      builder: (sheetContext) {
-        return Container(
-          height: MediaQuery.of(sheetContext).size.height * 0.78,
-          padding: const EdgeInsets.fromLTRB(16, 12, 16, 20),
-          decoration: const BoxDecoration(
-            color: Colors.white,
-            borderRadius: BorderRadius.vertical(top: Radius.circular(AppTheme.rCard)),
-            boxShadow: [
-              BoxShadow(
-                color: Color(0x1A000000),
-                blurRadius: 24,
-                offset: Offset(0, -4),
-              ),
-            ],
+      builder: (dialogContext) => Directionality(
+        textDirection: AppTr.uiDir,
+        child: AlertDialog(
+          backgroundColor: Colors.white,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(AppTheme.rInner),
           ),
-          child: Directionality(
-            textDirection: AppTr.uiDir,
+          title: const Text(
+            'تنبيه',
+            textAlign: TextAlign.right,
+            style: TextStyle(
+              fontSize: 15,
+              fontWeight: FontWeight.w900,
+              color: Color(0xFF022E2A),
+            ),
+          ),
+          content: Text(
+            message,
+            textAlign: TextAlign.right,
+            style: const TextStyle(
+              fontSize: 12.5,
+              height: 1.7,
+              fontWeight: FontWeight.w600,
+              color: Color(0xFF46534F),
+            ),
+          ),
+          actions: [
+            FilledButton(
+              style: FilledButton.styleFrom(
+                backgroundColor: AppTheme.brand,
+                foregroundColor: Colors.white,
+              ),
+              onPressed: () => Navigator.of(dialogContext).pop(),
+              child: const Text('حسنًا'),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// «موقعك ومكانك»: الموقع الحالي من الجوال، أو فتح الخريطة لاختياره.
+  Future<void> _pickPlaceInto(
+    BuildContext context,
+    TextEditingController controller,
+    VoidCallback onChanged,
+  ) async {
+    final choice = await showModalBottomSheet<String>(
+      context: context,
+      backgroundColor: AppTheme.page,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(
+          top: Radius.circular(AppTheme.rCard),
+        ),
+      ),
+      builder: (sheetContext) => Directionality(
+        textDirection: AppTr.uiDir,
+        child: SafeArea(
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(16, 14, 16, 16),
             child: Column(
+              mainAxisSize: MainAxisSize.min,
               crossAxisAlignment: CrossAxisAlignment.stretch,
               children: [
-                Center(
-                  child: Container(
-                    width: 44,
-                    height: 5,
-                    decoration: BoxDecoration(
-                      color: const Color(0xFFE2E8F0),
-                      borderRadius: BorderRadius.circular(99),
-                    ),
+                const Text(
+                  'موقعك ومكانك',
+                  textAlign: TextAlign.right,
+                  style: TextStyle(
+                    fontSize: 15,
+                    fontWeight: FontWeight.w900,
+                    color: AppTheme.title,
                   ),
                 ),
-                const SizedBox(height: 14),
-                Row(
-                  children: [
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(
-                            isEntity ? 'إدخالات الجهات' : 'إدخالات الأشخاص',
-                            style: const TextStyle(
-                              fontSize: 21,
-                              fontWeight: FontWeight.w900,
-                              color: Color(0xFF0F172A),
-                            ),
-                          ),
-                          const SizedBox(height: 3),
-                          const Text(
-                            'اختر التصنيف أو الإجراء المطلوب',
-                            style: TextStyle(
-                              fontSize: 13,
-                              color: Color(0xFF64748B),
-                              fontWeight: FontWeight.w600,
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                    IconButton(
-                      tooltip: AppTr.tr('إغلاق'),
-                      onPressed: () => Navigator.pop(sheetContext),
-                      icon: const Icon(Icons.close_rounded),
-                    ),
-                  ],
-                ),
-                const SizedBox(height: 12),
-                Expanded(
-                  child: ListView(
-                    children: [
-                      _CreateActionSection(
-                        title: 'إضافة تواصل',
-                        icon: Icons.person_add_alt_1_rounded,
-                        color: const Color(0xFF0F6AA8),
-                        actions: typeFilters
-                            .map(
-                              (filter) => _CreateActionItem(
-                                label: filter.label,
-                                icon: isEntity
-                                    ? Icons.apartment_rounded
-                                    : Icons.person_outline_rounded,
-                                color: filter.color,
-                                onTap: () {
-                                  Navigator.pop(sheetContext);
-                                  Future<void>.delayed(
-                                    Duration.zero,
-                                    () => _openContactFormSheet(
-                                      isEntity: isEntity,
-                                      type: filter,
-                                    ),
-                                  );
-                                },
-                              ),
-                            )
-                            .toList(growable: false),
-                      ),
-                      const SizedBox(height: 12),
-                      _CreateActionSection(
-                        title: 'إضافة مستند',
-                        icon: Icons.description_outlined,
-                        color: const Color(0xFF7C3AED),
-                        actions: documentTypes
-                            .map(
-                              (documentType) => _CreateActionItem(
-                                label: documentType,
-                                icon: Icons.description_outlined,
-                                color: const Color(0xFF7C3AED),
-                                onTap: () {
-                                  Navigator.pop(sheetContext);
-                                  Future<void>.delayed(
-                                    Duration.zero,
-                                    () => _openDocumentFormSheet(
-                                      isEntity: isEntity,
-                                      documentType: documentType,
-                                    ),
-                                  );
-                                },
-                              ),
-                            )
-                            .toList(growable: false),
-                      ),
-                    ],
+                const SizedBox(height: 8),
+                ListTile(
+                  contentPadding: EdgeInsets.zero,
+                  leading: const Icon(
+                    Icons.my_location_rounded,
+                    color: Color(0xFF0E7161),
                   ),
+                  title: const Text(
+                    'استخدام موقعي الحالي',
+                    textAlign: TextAlign.right,
+                  ),
+                  onTap: () => Navigator.pop(sheetContext, 'gps'),
+                ),
+                ListTile(
+                  contentPadding: EdgeInsets.zero,
+                  leading: const Icon(
+                    Icons.map_outlined,
+                    color: Color(0xFF0E7161),
+                  ),
+                  title: const Text(
+                    'اختيار من الخريطة',
+                    textAlign: TextAlign.right,
+                  ),
+                  subtitle: const Text(
+                    'تُفتح الخريطة: حدّد المكان ثم انسخ رابطه والصقه في الحقل',
+                    textAlign: TextAlign.right,
+                    style: TextStyle(fontSize: 11),
+                  ),
+                  onTap: () => Navigator.pop(sheetContext, 'map'),
                 ),
               ],
             ),
           ),
-        );
-      },
+        ),
+      ),
     );
+    if (choice == 'map') {
+      final query = controller.text.trim();
+      final uri = Uri.parse(
+        query.isEmpty
+            ? 'https://www.google.com/maps'
+            : 'https://www.google.com/maps/search/?api=1&query='
+                  '${Uri.encodeComponent(query)}',
+      );
+      await launchUrl(uri, mode: LaunchMode.externalApplication);
+      return;
+    }
+    if (choice != 'gps') return;
+    try {
+      if (!await Geolocator.isLocationServiceEnabled()) {
+        if (context.mounted) {
+          await _formNotice(
+            context,
+            'خدمة الموقع مغلقة على الجهاز — فعّلها ثم أعد المحاولة',
+          );
+        }
+        return;
+      }
+      var permission = await Geolocator.checkPermission();
+      if (permission == LocationPermission.denied) {
+        permission = await Geolocator.requestPermission();
+      }
+      if (permission == LocationPermission.denied ||
+          permission == LocationPermission.deniedForever) {
+        if (context.mounted) {
+          await _formNotice(context, 'لم يُسمح بالوصول إلى الموقع');
+        }
+        return;
+      }
+      final position = await Geolocator.getCurrentPosition();
+      controller.text =
+          'https://www.google.com/maps/search/?api=1&query='
+          '${position.latitude.toStringAsFixed(6)},'
+          '${position.longitude.toStringAsFixed(6)}';
+      onChanged();
+    } catch (_) {
+      if (context.mounted) await _formNotice(context, 'تعذر جلب الموقع');
+    }
   }
 
-  void _openContactFormSheet({
+  /// [editing]: نفس نموذج الإضافة لتعديل فرد/جهة موجود — يُملأ ببياناته،
+  /// ويعيد السجل المعدَّل بدل إضافة سجل جديد.
+  Future<_PersonItem?> _openContactFormSheet({
     required bool isEntity,
-    required _TypeFilterDef type,
+    _TypeFilterDef? type,
+    bool anyType = false,
+    _PersonItem? editing,
   }) {
+    // [anyType]: قائمة النوع فيها الأفراد والجهات معًا، ونوع الجهة يحوّل
+    // النموذج إلى نموذج الجهة، والباقي نموذج الفرد.
+    List<_TypeFilterDef> typeOptions() => anyType
+        ? [..._createTypeFilters(false), ..._createTypeFilters(true)]
+        : _createTypeFilters(isEntity);
+    // النوع أول خانة في النموذج نفسه (بدل صفحة اختيار مستقلة).
+    var selectedType = type;
     final controllers = <String, TextEditingController>{
       'name': TextEditingController(),
       'phone': TextEditingController(),
       'email': TextEditingController(),
       'birthday': TextEditingController(),
+      'nationality': TextEditingController(),
       'address': TextEditingController(),
       'notes': TextEditingController(),
       'extra': TextEditingController(),
       'location': TextEditingController(),
     };
 
-    showModalBottomSheet<void>(
+    // لكل وثيقة رسمية: رقم، تاريخ انتهاء، تذكير، ومرفق.
+    final docNumbers = <String, TextEditingController>{
+      for (final doc in _IdentityDoc.all) doc.title: TextEditingController(),
+    };
+    final docExpiries = <String, TextEditingController>{
+      for (final doc in _IdentityDoc.all) doc.title: TextEditingController(),
+    };
+    final docReminders = <String, String>{
+      for (final doc in _IdentityDoc.all) doc.title: _kReminderNone,
+    };
+    final docFiles = <String, String>{
+      for (final doc in _IdentityDoc.all) doc.title: '',
+    };
+    // مرفقات حرّة يضيفها المستخدم قبل الحفظ (أي وثائق أخرى).
+    final otherFiles = <String>[];
+    // وثائق الجهة: اسم حر وتاريخ انتهاء وتذكير ومرفق، وتُكرَّر بلا حد.
+    final entityDocs = <_EntityDoc>[_EntityDoc()];
+
+    // التعديل: الحقول بقيم السجل الحالية.
+    final old = editing;
+    if (old != null) {
+      String v(String key) => (old.details[key] ?? '').trim();
+      controllers['name']!.text = old.fullName;
+      controllers['phone']!.text = v('رقم الهاتف');
+      controllers['email']!.text = v('البريد الإلكتروني');
+      controllers['birthday']!.text = v(
+        isEntity ? 'تاريخ التأسيس' : 'تاريخ الميلاد',
+      );
+      controllers['nationality']!.text = v('الجنسية');
+      controllers['address']!.text = v('العنوان');
+      controllers['location']!.text = v('الموقع على الخريطة');
+      controllers['extra']!.text = v('معلومات إضافية');
+      controllers['notes']!.text =
+          old.extraNote == 'بانتظار استكمال البيانات' ? '' : old.extraNote;
+      if (!isEntity) {
+        for (final doc in _IdentityDoc.all) {
+          docNumbers[doc.title]!.text = v(doc.numberKey);
+          docExpiries[doc.title]!.text = v(doc.expiryKey);
+          final reminder = v(doc.reminderKey);
+          if (reminder.isNotEmpty) docReminders[doc.title] = reminder;
+          docFiles[doc.title] = v(doc.fileKey);
+        }
+      } else {
+        final names = [
+          for (final key in old.details.keys)
+            if (key.startsWith('انتهاء ')) key.substring('انتهاء '.length),
+        ];
+        if (names.isNotEmpty) {
+          for (final doc in entityDocs) {
+            doc.dispose();
+          }
+          entityDocs.clear();
+          for (final name in names) {
+            final doc = _EntityDoc();
+            doc.name.text = name;
+            doc.expiry.text = v('انتهاء $name');
+            final reminder = v('تذكير $name');
+            if (reminder.isNotEmpty) doc.reminder = reminder;
+            doc.file = v('مرفق $name');
+            entityDocs.add(doc);
+          }
+        }
+      }
+      otherFiles.addAll(
+        v('مرفقات أخرى').split('|').where((p) => p.trim().isNotEmpty),
+      );
+    }
+
+    return showModalBottomSheet<_PersonItem>(
       context: context,
       isScrollControlled: true,
       backgroundColor: Colors.transparent,
@@ -1092,12 +1880,14 @@ class _PeopleManagementScreenState extends State<PeopleManagementScreen> {
         // تصنيفات فرعية إضافية يمكن اختيار أكثر من واحدة منها (بجانب
         // التصنيف الرئيسي "type" الذي تم اختياره في الخطوة السابقة) — لدعم
         // حالة الفرد/الجهة الذي له أكثر من تصنيف في نفس الوقت.
-        final additionalOptions = _createTypeFilters(
-          isEntity,
-        ).where((option) => option.key != type.key).toList(growable: false);
-        final selectedAdditional = <String>{};
+        final selectedAdditional = <String>{
+          ...?old?.additionalCategoryNames,
+        };
         return StatefulBuilder(
           builder: (sheetContext, setSheetState) {
+            final additionalOptions = _createTypeFilters(isEntity)
+                .where((option) => option.key != selectedType?.key)
+                .toList(growable: false);
             return SafeArea(
               top: false,
               child: Container(
@@ -1122,46 +1912,126 @@ class _PeopleManagementScreenState extends State<PeopleManagementScreen> {
                           width: 44,
                           height: 5,
                           decoration: BoxDecoration(
-                            color: const Color(0xFFE2E8F0),
-                            borderRadius: BorderRadius.circular(99),
+                            color: const Color(0xFFE4EAE8),
+                            borderRadius: BorderRadius.circular(999),
                           ),
                         ),
                       ),
                       const SizedBox(height: 14),
+                      // من العقارات والأنشطة والمركبات النوع مخلوط بين فرد
+                      // وجهة، فالعنوان «إضافة فرد / جهة».
                       Text(
-                        '${isEntity ? 'إضافة جهة' : 'إضافة شخص'} · ${type.label}',
+                        old != null
+                            ? (isEntity ? 'تعديل بيانات جهة' : 'تعديل بيانات فرد')
+                            : selectedType == null
+                            ? (anyType
+                                  ? 'إضافة فرد / جهة'
+                                  : (isEntity ? 'إضافة جهة' : 'إضافة فرد'))
+                            : '${anyType ? 'إضافة فرد / جهة' : (isEntity ? 'إضافة جهة' : 'إضافة فرد')} · '
+                                  '${selectedType!.label}',
                         style: const TextStyle(
                           fontSize: 20,
                           fontWeight: FontWeight.w900,
-                          color: Color(0xFF0F172A),
+                          color: Color(0xFF022E2A),
                         ),
                       ),
                       const SizedBox(height: 12),
                       Expanded(
                         child: ListView(
                           children: [
-                            _inputField(
-                              controllers['name']!,
-                              isEntity ? 'اسم الجهة' : 'الاسم',
+                            // أول خانة: النوع (التصنيف)، ثم الاسم.
+                            DropdownButtonFormField<String>(
+                              initialValue: selectedType?.key,
+                              isExpanded: true,
+                              decoration: InputDecoration(
+                                hintText: AppTr.tr(
+                                  isEntity ? 'نوع الجهة *' : 'النوع *',
+                                ),
+                                border: OutlineInputBorder(
+                                  borderRadius: BorderRadius.circular(12),
+                                ),
+                                isDense: true,
+                              ),
+                              items: [
+                                for (final option in typeOptions())
+                                  // النوع المخفي من «تخصيص الصفحات» لا يُختار.
+                                  if (!_typeKeyHidden(option.key) ||
+                                      option.key == selectedType?.key)
+                                  DropdownMenuItem(
+                                    value: option.key,
+                                    child: Text(option.label),
+                                  ),
+                              ],
+                              onChanged: (key) => setSheetState(() {
+                                selectedType = typeOptions()
+                                    .firstWhere((option) => option.key == key);
+                                if (anyType) {
+                                  isEntity = selectedType!.key.startsWith(
+                                    'entity_',
+                                  );
+                                  selectedAdditional.clear();
+                                }
+                                selectedAdditional.remove(
+                                  selectedType!.label,
+                                );
+                              }),
                             ),
                             const SizedBox(height: 9),
-                            _inputField(controllers['phone']!, 'رقم الهاتف'),
+                            _inputField(
+                              controllers['name']!,
+                              isEntity ? 'اسم الجهة *' : 'الاسم *',
+                            ),
+                            const SizedBox(height: 9),
+                            _inputField(controllers['phone']!, 'رقم الهاتف *'),
                             const SizedBox(height: 9),
                             _inputField(
                               controllers['email']!,
                               'البريد الإلكتروني',
                             ),
                             const SizedBox(height: 9),
-                            _inputField(
+                            // الجنسية للأفراد فقط — الجهة لا جنسية لها.
+                            if (!isEntity) ...[
+                              _inputField(
+                                controllers['nationality']!,
+                                'الجنسية',
+                              ),
+                              const SizedBox(height: 9),
+                            ],
+                            // تقويم لا لوحة مفاتيح: التاريخ يُختار، فلا
+                            // تُكتب صيغة مخالفة تكسر الترتيب والتذكير.
+                            _dateField(
+                              sheetContext,
                               controllers['birthday']!,
-                              isEntity ? 'تاريخ التأسيس' : 'تاريخ الميلاد',
+                              isEntity ? 'تاريخ التأسيس *' : 'تاريخ الميلاد *',
+                              onPicked: () => setSheetState(() {}),
                             ),
                             const SizedBox(height: 9),
                             _inputField(controllers['address']!, 'العنوان'),
                             const SizedBox(height: 9),
-                            _inputField(
-                              controllers['location']!,
-                              'الموقع على الخريطة',
+                            // موقعك ومكانك: يُكتب، أو يُحدَّد بالزر في آخر
+                            // المستطيل نفسه (الموقع الحالي أو الخريطة).
+                            TextField(
+                              controller: controllers['location'],
+                              textDirection: AppTr.uiDir,
+                              decoration: InputDecoration(
+                                hintText: AppTr.tr('موقعك ومكانك'),
+                                border: OutlineInputBorder(
+                                  borderRadius: BorderRadius.circular(12),
+                                ),
+                                isDense: true,
+                                suffixIcon: IconButton(
+                                  tooltip: AppTr.tr('تحديد من الخريطة'),
+                                  icon: const Icon(
+                                    Icons.add_location_alt_outlined,
+                                    color: Color(0xFF0E7161),
+                                  ),
+                                  onPressed: () => _pickPlaceInto(
+                                    sheetContext,
+                                    controllers['location']!,
+                                    () => setSheetState(() {}),
+                                  ),
+                                ),
+                              ),
                             ),
                             const SizedBox(height: 9),
                             if (additionalOptions.isNotEmpty) ...[
@@ -1173,7 +2043,7 @@ class _PeopleManagementScreenState extends State<PeopleManagementScreen> {
                                   style: TextStyle(
                                     fontSize: 12,
                                     fontWeight: FontWeight.w700,
-                                    color: Color(0xFF475569),
+                                    color: Color(0xFF46534F),
                                   ),
                                 ),
                               ),
@@ -1210,23 +2080,233 @@ class _PeopleManagementScreenState extends State<PeopleManagementScreen> {
                               controllers['extra']!,
                               'معلومات إضافية',
                             ),
+                            const SizedBox(height: 14),
+                            // الوثائق الرسمية: رقم وتاريخ انتهاء وتذكير
+                            // ومرفق لكل واحدة — فلا يمرّ تاريخ انتهاء بلا
+                            // من ينبّه إليه.
+                            if (isEntity) ...[
+                              _entityDocsBlock(
+                                sheetContext,
+                                docs: entityDocs,
+                                onAdd: () => setSheetState(
+                                  () => entityDocs.add(_EntityDoc()),
+                                ),
+                                onRemove: (doc) => setSheetState(() {
+                                  doc.dispose();
+                                  entityDocs.remove(doc);
+                                }),
+                                onRefresh: () => setSheetState(() {}),
+                              ),
+                              const SizedBox(height: 10),
+                            ],
+                            if (!isEntity)
+                            for (final doc in _IdentityDoc.all) ...[
+                              _identityDocBlock(
+                                sheetContext,
+                                doc: doc,
+                                numberCtrl: docNumbers[doc.title]!,
+                                expiryCtrl: docExpiries[doc.title]!,
+                                reminder: docReminders[doc.title]!,
+                                onReminder: (value) => setSheetState(
+                                  () => docReminders[doc.title] = value,
+                                ),
+                                attachment: docFiles[doc.title]!,
+                                onPick: () async {
+                                  final path =
+                                      await DocumentStore.pickAndStore(context: context);
+                                  if (path == null) return;
+                                  setSheetState(
+                                    () => docFiles[doc.title] = path,
+                                  );
+                                },
+                                onRemove: () =>
+                                    setSheetState(() => docFiles[doc.title] = ''),
+                                onRefresh: () => setSheetState(() {}),
+                              ),
+                              const SizedBox(height: 10),
+                            ],
+                            // أي وثائق أخرى قبل الحفظ — للأفراد وحدهم.
+                            // الجهة لها بالفعل «إضافة وثيقة أخرى» داخل
+                            // كتلة وثائقها، فكان الصندوقان يفعلان الشيء
+                            // نفسه في الشاشة الواحدة.
+                            if (!isEntity)
+                              _otherFilesBlock(
+                                files: otherFiles,
+                                onAdd: () async {
+                                  final path =
+                                      await DocumentStore.pickAndStore(context: context);
+                                  if (path == null) return;
+                                  setSheetState(() => otherFiles.add(path));
+                                },
+                                onRemove: (path) => setSheetState(
+                                  () => otherFiles.remove(path),
+                                ),
+                              ),
                           ],
                         ),
                       ),
                       const SizedBox(height: 12),
                       ElevatedButton.icon(
-                        onPressed: () {
+                        onPressed: () async {
                           final name = controllers['name']!.text.trim();
-                          if (name.isEmpty) {
-                        ScaffoldMessenger.of(sheetContext).showSnackBar(
-                          const SnackBar(
-                            content: Text('أدخل الاسم أولاً'),
-                            behavior: SnackBarBehavior.floating,
-                          ),
+                          // حقول إلزامية: بلا اسم ورقم وتاريخ ميلاد يصير
+                          // السجل بلا هوية ولا وسيلة تواصل ولا ترتيب.
+                          final missing = <String>[
+                            if (selectedType == null)
+                              isEntity ? 'نوع الجهة' : 'النوع',
+                            if (name.isEmpty)
+                              isEntity ? 'اسم الجهة' : 'الاسم',
+                            // التعديل لا يُلزم بما لم يكن مسجّلًا أصلًا.
+                            if (old == null &&
+                                controllers['phone']!.text.trim().isEmpty)
+                              'رقم الهاتف',
+                            if (old == null &&
+                                controllers['birthday']!.text.trim().isEmpty)
+                              isEntity ? 'تاريخ التأسيس' : 'تاريخ الميلاد',
+                          ];
+                          if (missing.isNotEmpty) {
+                            await _formNotice(
+                              sheetContext,
+                              'أكمل: ${missing.join('، ')}',
+                            );
+                            return;
+                          }
+                          if (!sheetContext.mounted) return;
+                          final confirmed = await confirmAction(
+                            sheetContext,
+                            title: 'تأكيد الحفظ',
+                            message: old != null
+                                ? 'هل تريد حفظ تعديلات «$name»؟'
+                                : isEntity
+                                ? 'هل تريد حفظ الجهة «$name»؟'
+                                : 'هل تريد حفظ الفرد «$name»؟',
+                            confirmLabel: 'حفظ',
+                          );
+                          if (!confirmed) return;
+                          final type = selectedType!;
+                          // المستندات المرفقة تُسجَّل باسمها في قائمة السجل،
+                      // فيطابق العدّاد ما هو موجود فعلًا.
+                      final namedEntityDocs = entityDocs
+                          .where((doc) => doc.name.text.trim().isNotEmpty)
+                          .toList(growable: false);
+                      final createdDocuments = <String>[
+                        if (!isEntity)
+                          for (final doc in _IdentityDoc.all)
+                            if (docNumbers[doc.title]!.text.trim().isNotEmpty ||
+                                docFiles[doc.title]!.isNotEmpty)
+                              doc.title,
+                        if (isEntity)
+                          for (final doc in namedEntityDocs)
+                            doc.expiry.text.trim().isEmpty
+                                ? doc.name.text.trim()
+                                : '${doc.name.text.trim()} · ينتهي ${doc.expiry.text.trim()}',
+                        for (final path in otherFiles)
+                          DocumentStore.fileName(path),
+                      ];
+
+                      // تذكير لكل وثيقة لها تاريخ انتهاء.
+                      for (final doc in _IdentityDoc.all) {
+                        if (isEntity) break;
+                        // التعديل: تذكير جديد فقط لما تغيّر تاريخه أو تذكيره.
+                        if (old != null &&
+                            (old.details[doc.expiryKey] ?? '').trim() ==
+                                docExpiries[doc.title]!.text.trim() &&
+                            (old.details[doc.reminderKey] ?? _kReminderNone) ==
+                                docReminders[doc.title]) {
+                          continue;
+                        }
+                        await _registerExpiryReminder(
+                          title: '${doc.title} — $name',
+                          dateText: docExpiries[doc.title]!.text,
+                          reminder: docReminders[doc.title]!,
                         );
+                      }
+                      for (final doc in namedEntityDocs) {
+                        final docName = doc.name.text.trim();
+                        if (old != null &&
+                            (old.details['انتهاء $docName'] ?? '').trim() ==
+                                doc.expiry.text.trim() &&
+                            (old.details['تذكير $docName'] ?? _kReminderNone) ==
+                                doc.reminder) {
+                          continue;
+                        }
+                        await _registerExpiryReminder(
+                          title: '${doc.name.text.trim()} — $name',
+                          dateText: doc.expiry.text,
+                          reminder: doc.reminder,
+                        );
+                      }
+                      if (!mounted) return;
+
+                      if (old != null) {
+                        final notes = controllers['notes']!.text.trim();
+                        final base = Map<String, String>.of(old.details);
+                        // وثائق الجهة تُكتب من جديد (قد يتغيّر اسم الوثيقة).
+                        if (isEntity) {
+                          base.removeWhere(
+                            (key, _) =>
+                                key.startsWith('انتهاء ') ||
+                                key.startsWith('تذكير ') ||
+                                key.startsWith('مرفق '),
+                          );
+                        }
+                        final documents = <String>[
+                          ...old.documents,
+                          for (final doc in createdDocuments)
+                            if (!old.documents.contains(doc)) doc,
+                        ];
+                        final updated = old.copyWith(
+                          fullName: name,
+                          roleTitle: type.label,
+                          typeKey: type.key,
+                          categoryName: type.label,
+                          additionalCategoryNames: selectedAdditional.toList(
+                            growable: false,
+                          ),
+                          extraNote: notes.isEmpty ? old.extraNote : notes,
+                          documents: documents,
+                          documentsCount: documents.length,
+                          lastUpdate: _todayStamp(),
+                          details: {
+                            ...base,
+                            'رقم الهاتف': controllers['phone']!.text.trim(),
+                            'البريد الإلكتروني': controllers['email']!.text
+                                .trim(),
+                            isEntity ? 'تاريخ التأسيس' : 'تاريخ الميلاد':
+                                controllers['birthday']!.text.trim(),
+                            'الجنسية': controllers['nationality']!.text.trim(),
+                            'العنوان': controllers['address']!.text.trim(),
+                            'الموقع على الخريطة': controllers['location']!
+                                .text
+                                .trim(),
+                            'معلومات إضافية': controllers['extra']!.text
+                                .trim(),
+                            if (!isEntity)
+                              for (final doc in _IdentityDoc.all) ...{
+                                doc.numberKey: docNumbers[doc.title]!.text
+                                    .trim(),
+                                doc.expiryKey: docExpiries[doc.title]!.text
+                                    .trim(),
+                                doc.reminderKey: docReminders[doc.title]!,
+                                doc.fileKey: docFiles[doc.title]!,
+                              },
+                            if (isEntity)
+                              for (final doc in namedEntityDocs) ...{
+                                'انتهاء ${doc.name.text.trim()}':
+                                    doc.expiry.text.trim(),
+                                'تذكير ${doc.name.text.trim()}': doc.reminder,
+                                'مرفق ${doc.name.text.trim()}': doc.file,
+                              },
+                            'مرفقات أخرى': otherFiles.join('|'),
+                          },
+                        );
+                        if (sheetContext.mounted) {
+                          Navigator.pop(sheetContext, updated);
+                        }
                         return;
                       }
-                          setState(() {
+
+                      setState(() {
                             _people.insert(
                               0,
                               _PersonItem(
@@ -1249,23 +2329,43 @@ class _PeopleManagementScreenState extends State<PeopleManagementScreen> {
                                 dueToYou: 0,
                             dueOnYou: 0,
                             openTasks: 0,
-                            documentsCount: 0,
+                            documentsCount: createdDocuments.length,
                             lastUpdate: _todayStamp(),
                             createdAt: _todayStamp(),
                             sharedCommitments: const [],
-                            documents: const [],
+                            documents: createdDocuments,
                             details: {
                               'رقم الهاتف': controllers['phone']!.text.trim(),
                               'البريد الإلكتروني': controllers['email']!.text
                                   .trim(),
                               isEntity ? 'تاريخ التأسيس' : 'تاريخ الميلاد':
                                   controllers['birthday']!.text.trim(),
+                              'الجنسية': controllers['nationality']!.text
+                                  .trim(),
                               'العنوان': controllers['address']!.text.trim(),
                               'الموقع على الخريطة': controllers['location']!
                                   .text
                                   .trim(),
+                              ...widget.linkDetails,
                               'معلومات إضافية': controllers['extra']!.text
                                   .trim(),
+                              if (!isEntity)
+                                for (final doc in _IdentityDoc.all) ...{
+                                  doc.numberKey: docNumbers[doc.title]!.text
+                                      .trim(),
+                                  doc.expiryKey: docExpiries[doc.title]!.text
+                                      .trim(),
+                                  doc.reminderKey: docReminders[doc.title]!,
+                                  doc.fileKey: docFiles[doc.title]!,
+                                },
+                              if (isEntity)
+                                for (final doc in namedEntityDocs) ...{
+                                  'انتهاء ${doc.name.text.trim()}':
+                                      doc.expiry.text.trim(),
+                                  'تذكير ${doc.name.text.trim()}': doc.reminder,
+                                  'مرفق ${doc.name.text.trim()}': doc.file,
+                                },
+                              'مرفقات أخرى': otherFiles.join('|'),
                             },
                           ),
                         );
@@ -1279,12 +2379,26 @@ class _PeopleManagementScreenState extends State<PeopleManagementScreen> {
                       });
                       // يُبلّغ عند فشل الحفظ بدل إغلاق النافذة بصمت.
                       _persistWithFeedback();
-                      Navigator.pop(sheetContext);
+                      if (sheetContext.mounted) Navigator.pop(sheetContext);
+                      ScaffoldMessenger.of(this.context).showSnackBar(
+                        SnackBar(
+                          behavior: SnackBarBehavior.floating,
+                          content: Text(
+                            isEntity
+                                ? 'تم حفظ الجهة «$name» بنجاح'
+                                : 'تم حفظ الفرد «$name» بنجاح',
+                          ),
+                        ),
+                      );
                     },
                     icon: const Icon(Icons.save_outlined),
-                    label: Text(isEntity ? 'حفظ الجهة' : 'حفظ الشخص'),
+                    label: Text(
+                      old != null
+                          ? 'حفظ التعديلات'
+                          : (isEntity ? 'حفظ جهة' : 'حفظ فرد'),
+                    ),
                     style: ElevatedButton.styleFrom(
-                      backgroundColor: const Color(0xFF0B4A73),
+                      backgroundColor: const Color(0xFF04413B),
                       foregroundColor: Colors.white,
                       minimumSize: const Size.fromHeight(48),
                       shape: RoundedRectangleBorder(
@@ -1303,129 +2417,432 @@ class _PeopleManagementScreenState extends State<PeopleManagementScreen> {
     );
   }
 
-  void _openDocumentFormSheet({
-    required bool isEntity,
-    required String documentType,
-  }) {
-    final ownerController = TextEditingController();
-    final numberController = TextEditingController();
-    final dateController = TextEditingController();
-    final notesController = TextEditingController();
+  Future<void> _registerExpiryReminder({
+    required String title,
+    required String dateText,
+    required String reminder,
+    String customDays = '',
+  }) async {
+    final expiry = AppRemindersStore.parseDisplayDate(dateText);
+    if (expiry == null || reminder == _kReminderNone) return;
+    final days = reminder == _kReminderCustom
+        ? (int.tryParse(customDays.trim()) ?? 0)
+        : AppRemindersStore.reminderDaysFromLabel(reminder);
+    if (days <= 0) return;
+    await AppRemindersStore.upsert(
+      AppReminder(
+        id: 'person_doc_${DateTime.now().microsecondsSinceEpoch}_$title',
+        title: title,
+        module: 'الأفراد والجهات',
+        expiryDate: expiry,
+        remindBeforeDays: days,
+      ),
+    );
+  }
 
-    showModalBottomSheet<void>(
-      context: context,
-      isScrollControlled: true,
-      backgroundColor: Colors.transparent,
-      builder: (sheetContext) {
-        return Padding(
-          padding: EdgeInsets.only(
-            bottom: MediaQuery.of(sheetContext).viewInsets.bottom,
+  /// كتلة وثيقة رسمية: الرقم، تاريخ الانتهاء، التذكير، المرفق.
+  Widget _identityDocBlock(
+    BuildContext context, {
+    required _IdentityDoc doc,
+    required TextEditingController numberCtrl,
+    required TextEditingController expiryCtrl,
+    required String reminder,
+    required ValueChanged<String> onReminder,
+    required String attachment,
+    required Future<void> Function() onPick,
+    required VoidCallback onRemove,
+    required VoidCallback onRefresh,
+  }) {
+    return Container(
+      padding: const EdgeInsets.fromLTRB(12, 10, 12, 12),
+      decoration: BoxDecoration(
+        color: AppTheme.field,
+        borderRadius: BorderRadius.circular(AppTheme.rInner),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Row(
+            textDirection: AppTr.uiDir,
+            children: [
+              Icon(doc.icon, size: 17, color: const Color(0xFF0E7161)),
+              const SizedBox(width: 6),
+              Expanded(
+                child: Text(
+                  doc.title,
+                  textAlign: AppTr.alignEnd,
+                  maxLines: 3,
+                  style: const TextStyle(
+                    fontSize: 12.5,
+                    fontWeight: FontWeight.w900,
+                    color: Color(0xFF0F1F1C),
+                  ),
+                ),
+              ),
+            ],
           ),
-          child: Container(
-            padding: const EdgeInsets.fromLTRB(16, 12, 16, 20),
-            decoration: const BoxDecoration(
-              color: Colors.white,
-              borderRadius: BorderRadius.vertical(top: Radius.circular(AppTheme.rCard)),
+          const SizedBox(height: 8),
+          _inputField(numberCtrl, 'رقم ${doc.title}'),
+          const SizedBox(height: 8),
+          Row(
+            textDirection: AppTr.uiDir,
+            children: [
+              Expanded(
+                child: _dateField(
+                  context,
+                  expiryCtrl,
+                  'تاريخ الانتهاء',
+                  onPicked: onRefresh,
+                ),
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: DropdownButtonFormField<String>(
+                  initialValue: reminder,
+                  isExpanded: true,
+                  decoration: InputDecoration(
+                    hintText: AppTr.tr('تذكير'),
+                    filled: true,
+                    fillColor: Colors.white,
+                    border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(12),
+                    ),
+                    isDense: true,
+                  ),
+                  items: [
+                    for (final option in _kReminderOptions)
+                      DropdownMenuItem(
+                        value: option,
+                        child: FittedBox(fit: BoxFit.scaleDown, alignment: AlignmentDirectional.centerStart, child: Text(option, maxLines: 1)),
+                      ),
+                  ],
+                  onChanged: (value) => onReminder(value ?? reminder),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          if (attachment.isEmpty)
+            OutlinedButton.icon(
+              onPressed: onPick,
+              icon: const Icon(Icons.attach_file_rounded, size: 18),
+              label: const Text('إضافة مرفق'),
+              style: OutlinedButton.styleFrom(
+                foregroundColor: const Color(0xFF0E7161),
+                minimumSize: const Size.fromHeight(42),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(12),
+                ),
+              ),
+            )
+          else
+            _attachmentRow(
+              DocumentStore.shortName(attachment),
+              onRemove,
             ),
-            child: Directionality(
-              textDirection: AppTr.uiDir,
+        ],
+      ),
+    );
+  }
+
+  /// كتلة وثائق الجهة — تتكرّر بلا حد، ولكل وثيقة اسمها وانتهاؤها وتذكيرها.
+  Widget _entityDocsBlock(
+    BuildContext context, {
+    required List<_EntityDoc> docs,
+    required VoidCallback onAdd,
+    required ValueChanged<_EntityDoc> onRemove,
+    required VoidCallback onRefresh,
+  }) {
+    return Container(
+      padding: const EdgeInsets.fromLTRB(12, 10, 12, 12),
+      decoration: BoxDecoration(
+        color: AppTheme.field,
+        borderRadius: BorderRadius.circular(AppTheme.rInner),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Row(
+            textDirection: AppTr.uiDir,
+            children: [
+              const Icon(
+                Icons.description_outlined,
+                size: 17,
+                color: Color(0xFF0E7161),
+              ),
+              const SizedBox(width: 6),
+              const Expanded(
+                child: Text(
+                  'وثائق',
+                  textAlign: TextAlign.right,
+                  maxLines: 3,
+                  style: TextStyle(
+                    fontSize: 12.5,
+                    fontWeight: FontWeight.w900,
+                    color: Color(0xFF0F1F1C),
+                  ),
+                ),
+              ),
+            ],
+          ),
+          for (var index = 0; index < docs.length; index++) ...[
+            const SizedBox(height: 10),
+            Container(
+              padding: const EdgeInsets.fromLTRB(10, 10, 10, 10),
+              decoration: BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(12),
+              ),
               child: Column(
-                mainAxisSize: MainAxisSize.min,
                 crossAxisAlignment: CrossAxisAlignment.stretch,
                 children: [
-                  Text(
-                    'إضافة مستند · $documentType',
-                    style: const TextStyle(
-                      fontSize: 20,
-                      fontWeight: FontWeight.w900,
-                      color: Color(0xFF0F172A),
-                    ),
-                  ),
-                  const SizedBox(height: 12),
-                  _inputField(
-                    ownerController,
-                    isEntity ? 'اسم الجهة' : 'اسم الشخص',
-                  ),
-                  const SizedBox(height: 9),
-                  _inputField(numberController, 'رقم المستند أو المرجع'),
-                  const SizedBox(height: 9),
-                  _inputField(dateController, 'تاريخ الانتهاء'),
-                  const SizedBox(height: 9),
-                  _inputField(notesController, 'ملاحظات'),
-                  const SizedBox(height: 14),
-                  ElevatedButton.icon(
-                    onPressed: () {
-                      final owner = ownerController.text.trim();
-                      if (owner.isEmpty) {
-                        ScaffoldMessenger.of(sheetContext).showSnackBar(
-                          const SnackBar(
-                            content: Text('أدخل اسم صاحب المستند أولاً'),
-                            behavior: SnackBarBehavior.floating,
+                  Row(
+                    textDirection: AppTr.uiDir,
+                    children: [
+                      Expanded(child: _inputField(docs[index].name, 'اسم الوثيقة')),
+                      if (docs.length > 1) ...[
+                        const SizedBox(width: 6),
+                        InkWell(
+                          onTap: () => onRemove(docs[index]),
+                          child: const Icon(
+                            Icons.close_rounded,
+                            size: 18,
+                            color: Color(0xFF8C9A97),
                           ),
-                        );
-                        return;
-                      }
-                      final description = numberController.text.trim().isEmpty
-                          ? documentType
-                          : '$documentType · ${numberController.text.trim()}';
-                      setState(() {
-                        final index = _people.indexWhere(
-                          (person) => person.fullName == owner,
-                        );
-                        if (index >= 0) {
-                          _people[index] = _people[index].copyWithDocument(
-                            description,
-                          );
-                        } else {
-                          _people.insert(
-                            0,
-                            _PersonItem(
-                              fullName: owner,
-                              nickName: isEntity ? 'جهة جديدة' : 'جديد',
-                              roleTitle: isEntity ? 'جهة' : 'غير محدد',
-                              badge: 'جديد',
-                              badgeColor: const Color(0xFF7C3AED),
-                              statusNote: 'تمت إضافة مستند',
-                              extraNote: notesController.text.trim(),
-                              typeKey: isEntity
-                                  ? 'entity_other'
-                                  : 'person_other',
-                              categoryName: isEntity ? 'جهات أخرى' : 'أخرى',
-                              dueToYou: 0,
-                              dueOnYou: 0,
-                              openTasks: 0,
-                              documentsCount: 1,
-                              lastUpdate: _todayStamp(),
-                              createdAt: _todayStamp(),
-                              sharedCommitments: const [],
-                              documents: [description],
-                              details: {
-                                'تاريخ الانتهاء': dateController.text.trim(),
-                              },
-                            ),
-                          );
-                        }
-                        _selectedTypeKey = 'all';
-                        _selectedScopeKey = 'scope_all';
-                      });
-                      // يُبلّغ عند فشل الحفظ بدل إغلاق النافذة بصمت.
-                      _persistWithFeedback();
-                      Navigator.pop(sheetContext);
-                    },
-                    icon: const Icon(Icons.save_outlined),
-                    label: const Text('حفظ المستند'),
-                    style: ElevatedButton.styleFrom(
-                      backgroundColor: const Color(0xFF0B4A73),
-                      foregroundColor: Colors.white,
-                      minimumSize: const Size.fromHeight(48),
-                    ),
+                        ),
+                      ],
+                    ],
                   ),
+                  const SizedBox(height: 8),
+                  Row(
+                    textDirection: AppTr.uiDir,
+                    children: [
+                      Expanded(
+                        child: _dateField(
+                          context,
+                          docs[index].expiry,
+                          'تاريخ الانتهاء',
+                          onPicked: onRefresh,
+                        ),
+                      ),
+                      const SizedBox(width: 8),
+                      Expanded(
+                        child: DropdownButtonFormField<String>(
+                          initialValue: docs[index].reminder,
+                          isExpanded: true,
+                          decoration: InputDecoration(
+                            hintText: AppTr.tr('تذكير'),
+                            border: OutlineInputBorder(
+                              borderRadius: BorderRadius.circular(12),
+                            ),
+                            isDense: true,
+                          ),
+                          items: [
+                            for (final option in _kReminderOptions)
+                              DropdownMenuItem(
+                                value: option,
+                                child: FittedBox(fit: BoxFit.scaleDown, alignment: AlignmentDirectional.centerStart, child: Text(option, maxLines: 1)),
+                              ),
+                          ],
+                          onChanged: (value) {
+                            docs[index].reminder = value ?? docs[index].reminder;
+                            onRefresh();
+                          },
+                        ),
+                      ),
+                    ],
+                  ),
+                  const SizedBox(height: 8),
+                  if (docs[index].file.isEmpty)
+                    OutlinedButton.icon(
+                      onPressed: () async {
+                        final path = await DocumentStore.pickAndStore(context: context);
+                        if (path == null) return;
+                        docs[index].file = path;
+                        onRefresh();
+                      },
+                      icon: const Icon(Icons.attach_file_rounded, size: 18),
+                      label: const Text('إضافة مرفق'),
+                      style: OutlinedButton.styleFrom(
+                        foregroundColor: const Color(0xFF0E7161),
+                        minimumSize: const Size.fromHeight(42),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                      ),
+                    )
+                  else
+                    _attachmentRow(
+                      DocumentStore.shortName(docs[index].file),
+                      () {
+                        docs[index].file = '';
+                        onRefresh();
+                      },
+                    ),
                 ],
               ),
             ),
+          ],
+          const SizedBox(height: 10),
+          OutlinedButton.icon(
+            onPressed: onAdd,
+            icon: const Icon(Icons.add_rounded, size: 18),
+            label: const Text('إضافة وثيقة أخرى'),
+            style: OutlinedButton.styleFrom(
+              foregroundColor: const Color(0xFF0E7161),
+              minimumSize: const Size.fromHeight(42),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(12),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// أي وثائق أخرى يضيفها المستخدم قبل الحفظ.
+  Widget _otherFilesBlock({
+    required List<String> files,
+    required Future<void> Function() onAdd,
+    required ValueChanged<String> onRemove,
+  }) {
+    return Container(
+      padding: const EdgeInsets.fromLTRB(12, 10, 12, 12),
+      decoration: BoxDecoration(
+        color: AppTheme.field,
+        borderRadius: BorderRadius.circular(AppTheme.rInner),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Row(
+            textDirection: AppTr.uiDir,
+            children: [
+              const Icon(
+                Icons.folder_open_outlined,
+                size: 17,
+                color: Color(0xFF0E7161),
+              ),
+              const SizedBox(width: 6),
+              Expanded(
+                child: Text(
+                  'وثائق أخرى',
+                  textAlign: AppTr.alignEnd,
+                  maxLines: 3,
+                  style: const TextStyle(
+                    fontSize: 12.5,
+                    fontWeight: FontWeight.w900,
+                    color: Color(0xFF0F1F1C),
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 8),
+          for (final path in files) ...[
+            _attachmentRow(
+              DocumentStore.shortName(path),
+              () => onRemove(path),
+            ),
+            const SizedBox(height: 6),
+          ],
+          OutlinedButton.icon(
+            onPressed: onAdd,
+            icon: const Icon(Icons.attach_file_rounded, size: 18),
+            label: const Text('إضافة مرفق'),
+            style: OutlinedButton.styleFrom(
+              foregroundColor: const Color(0xFF0E7161),
+              minimumSize: const Size.fromHeight(42),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(12),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _attachmentRow(String label, VoidCallback onRemove) {
+    return Container(
+      padding: const EdgeInsets.fromLTRB(10, 8, 10, 8),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(12),
+      ),
+      child: Row(
+        textDirection: AppTr.uiDir,
+        children: [
+          const Icon(
+            Icons.description_outlined,
+            size: 16,
+            color: Color(0xFF0E7161),
+          ),
+          const SizedBox(width: 6),
+          Expanded(
+            child: Text(
+              label,
+              textAlign: AppTr.alignEnd,
+              maxLines: 3,
+              style: const TextStyle(
+                fontSize: 11.5,
+                fontWeight: FontWeight.w700,
+                color: Color(0xFF0F1F1C),
+              ),
+            ),
+          ),
+          InkWell(
+            onTap: onRemove,
+            child: const Icon(
+              Icons.close_rounded,
+              size: 17,
+              color: Color(0xFF8C9A97),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// حقل تاريخ يفتح التقويم عند الضغط — بنفس شكل بقية الحقول.
+  Widget _dateField(
+    BuildContext context,
+    TextEditingController controller,
+    String hint, {
+    VoidCallback? onPicked,
+  }) {
+    return TextField(
+      controller: controller,
+      textDirection: AppTr.uiDir,
+      readOnly: true,
+      onTap: () async {
+        final now = DateTime.now();
+        final picked = await showDatePicker(
+          context: context,
+          initialDate:
+              AppRemindersStore.parseDisplayDate(controller.text) ?? now,
+          firstDate: DateTime(now.year - 120),
+          lastDate: DateTime(now.year + 20),
+          builder: (pickerContext, child) => Directionality(
+            textDirection: AppTr.uiDir,
+            child: child ?? const SizedBox.shrink(),
           ),
         );
+        if (picked == null) return;
+        controller.text = '${picked.day}/${picked.month}/${picked.year}';
+        onPicked?.call();
       },
+      decoration: InputDecoration(
+        hintText: hint,
+        suffixIcon: const Icon(
+          Icons.calendar_today_rounded,
+          size: 18,
+          color: Color(0xFF0E7161),
+        ),
+        border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
+        isDense: true,
+      ),
     );
   }
 
@@ -1444,7 +2861,6 @@ class _PeopleManagementScreenState extends State<PeopleManagementScreen> {
   @override
   Widget build(BuildContext context) {
     final people = _filteredPeople();
-    final selectedPeople = _peopleForSelectedType();
 
     return Scaffold(
       backgroundColor: AppTheme.page,
@@ -1452,27 +2868,34 @@ class _PeopleManagementScreenState extends State<PeopleManagementScreen> {
         screenId: 'people_management',
         onPressed: _openQuickCreateSheet,
         label: 'إضافة',
-        backgroundColor: const Color(0xFF7C3AED),
+        backgroundColor: const Color(0xFF0E7161),
       ),
       body: Directionality(
         textDirection: AppTr.uiDir,
         child: CustomScrollView(
           slivers: [
             ManagementDashboardHeader(
-              title: 'إدارة الأفراد والجهات',
-              subtitle: 'تنظيم العلاقات والالتزامات وبيانات التواصل',
+              title: 'الأفراد والجهات',
+              subtitle: 'تسجيل ومتابعة الأفراد والجهات',
               icon: Icons.person_search_rounded,
-              colors: const [Color(0xFF6D28D9), Color(0xFF7C3AED)],
+              colors: const [Color(0xFF0A5A50), Color(0xFF0E7161)],
+              // لمسة لون الوحدة.
+              tint: const Color(0xFF6B6FC7),
               onSmartCalendarTap: _openSmartCalendar,
               onClose: () => Navigator.of(context).pop(),
             ),
+            // مستطيل الوحدة الملوّن: الترويسة والبحث ومركز المتابعة
+            // والملخص الشامل بلون الوحدة الخفيف.
+            moduleTintedGroup(
+              tint: const Color(0xFF6B6FC7),
+              slivers: [
             SliverPadding(
               padding: const EdgeInsets.fromLTRB(16, 16, 16, 2),
               sliver: SliverToBoxAdapter(
                 child: ManagementSearchBar(
                   controller: _searchController,
-                  hint: 'ابحث في جميع الأشخاص والجهات...',
-                  accentColor: const Color(0xFF7C3AED),
+                  hint: 'ابحث في الأفراد والجهات',
+                  accentColor: const Color(0xFF0E7161),
                   searchId: 'people_management',
                   suggestions: _people
                       .map((person) => person.fullName)
@@ -1487,24 +2910,20 @@ class _PeopleManagementScreenState extends State<PeopleManagementScreen> {
             // ميتًا دائمًا ويمنع مركز المتابعة من الاختفاء.
             SliverToBoxAdapter(
               child: ColoredBox(
-                color: AppTheme.page,
+                color: Colors.transparent,
                 child: Padding(
                   padding: const EdgeInsets.fromLTRB(16, 8, 16, 0),
-                  child: ManagementFollowUpCenter(
-                    subtitle: _selectedTypeKey == 'all'
-                        ? 'الأهم والأقرب من جميع الأشخاص والجهات'
-                        // _selectedFilterLabel لا يعرف مفاتيح الحالة
-                        // (متأخر/مستعجل/قريب) ولا all_people/all_entities،
-                        // فكان الرأس يقول "الكل" بينما القائمة مُصفّاة.
-                        : 'متابعة ${_activeSearchFilterLabel()}',
-                    // نفس لون الوحدة ونفس المؤشرات الثلاثة المبنية من
-                    // مجموعات مركز المتابعة نفسها — كالالتزامات الشخصية.
-                    accentColor: const Color(0xFF7C3AED),
-                    onMore: () => _openFollowUpSheet(selectedPeople),
+                  child: Column(
+  mainAxisSize: MainAxisSize.min,
+  crossAxisAlignment: CrossAxisAlignment.stretch,
+  children: [
+    ManagementFollowUpCenter(
+                    // ثابت في كل الفئات: يعرض دائمًا كل الأفراد والجهات.
+                    subtitle: 'متابعة الأفراد والجهات',
+                    accentColor: const Color(0xFF0E7161),
+                    onMore: () => _openFollowUpSheet(_people),
                     metrics: [
-                      for (final group in _followUpGroups(
-                        selectedPeople,
-                      ).take(3))
+                      for (final group in _followUpGroups(_people).take(3))
                         ManagementMetricData(
                           label: group.title,
                           count: group.total,
@@ -1513,10 +2932,17 @@ class _PeopleManagementScreenState extends State<PeopleManagementScreen> {
                         ),
                     ],
                   ),
+    const SizedBox(height: 8),
+    // «الملخص الشامل» لهذا القسم وحده.
+    const ModuleSummaryCard(tab: 3, subtitle: 'ملخص الأفراد والجهات'),
+  ],
+),
                 ),
               ),
             ),
             // عنوان "الفئات" يمرّ مع الصفحة، وشريط الشرائح وحده يثبت.
+              ],
+            ),
             SliverToBoxAdapter(
               child: Padding(
                 padding: const EdgeInsets.fromLTRB(16, 14, 16, 6),
@@ -1526,7 +2952,7 @@ class _PeopleManagementScreenState extends State<PeopleManagementScreen> {
                   style: TextStyle(
                     fontSize: 13,
                     fontWeight: FontWeight.w900,
-                    color: Color(0xFF334155),
+                    color: Color(0xFF2C3B38),
                   ),
                 ),
               ),
@@ -1547,7 +2973,7 @@ class _PeopleManagementScreenState extends State<PeopleManagementScreen> {
                           label: 'الكل',
                           count: _countByScope('scope_all'),
                           icon: Icons.grid_view_rounded,
-                          color: const Color(0xFF0B3A78),
+                          color: const Color(0xFF022E2A),
                           selected: _selectedScopeKey == 'scope_all',
                           onTap: () => setState(() {
                             _selectedScopeKey = 'scope_all';
@@ -1560,11 +2986,12 @@ class _PeopleManagementScreenState extends State<PeopleManagementScreen> {
                         // بسهم يفتح قائمة منسدلة أسفلها بستة عناصر ظاهرة
                         // ومؤشّر تمرير — بدل نافذة تملأ الشاشة بثلاثة عشر
                         // عنصرًا دفعةً واحدة.
+                        if (!_scopeHidden(false))
                         AppCategoryDropdownChip(
                           label: 'الأفراد',
                           count: _countByScope('scope_people'),
                           icon: Icons.person_outline_rounded,
-                          color: const Color(0xFF0F6AA8),
+                          color: const Color(0xFF0A5A50),
                           selected: _selectedScopeKey == 'scope_people',
                           onTap: () => setState(() {
                             _selectedScopeKey = 'scope_people';
@@ -1574,11 +3001,12 @@ class _PeopleManagementScreenState extends State<PeopleManagementScreen> {
                           items: _scopeDropdownItems(isEntity: false),
                         ),
                         const SizedBox(width: 8),
+                        if (!_scopeHidden(true))
                         AppCategoryDropdownChip(
                           label: 'الجهات',
                           count: _countByScope('scope_entities'),
                           icon: Icons.apartment_rounded,
-                          color: const Color(0xFF7C3AED),
+                          color: const Color(0xFF0E7161),
                           selected: _selectedScopeKey == 'scope_entities',
                           onTap: () => setState(() {
                             _selectedScopeKey = 'scope_entities';
@@ -1599,7 +3027,7 @@ class _PeopleManagementScreenState extends State<PeopleManagementScreen> {
                     options: const [
                       'الأحدث أولاً',
                       'نشط',
-                      'مستندات قريبة الإنتهاء',
+                      'مستندات قريبة الانتهاء',
                       'مستندات منتهية',
                     ],
                     onSelected: (value) =>
@@ -1608,7 +3036,7 @@ class _PeopleManagementScreenState extends State<PeopleManagementScreen> {
                         ? 'جميع الأفراد والجهات'
                         : _activeSearchFilterLabel(),
                     count: people.length,
-                    accentColor: const Color(0xFF7C3AED),
+                    accentColor: const Color(0xFF0E7161),
                   ),
                   ],
                 ),
@@ -1623,6 +3051,14 @@ class _PeopleManagementScreenState extends State<PeopleManagementScreen> {
                   // 46x46 + اسم مع نقطة حالة وتحته النوع + عمود "له/عليه"
                   // بعرض 108 + سهم تصفّح — بدل مكوّن ManagementCompactCard
                   // العام.
+                  // بطاقة «أنا» أول القائمة دائمًا، ولا تخضع للفلترة.
+                  Padding(
+                    padding: const EdgeInsets.only(bottom: 10),
+                    child: _PersonCard(
+                      person: _selfRecord(),
+                      onTap: () => _openPersonDetails(_selfRecord()),
+                    ),
+                  ),
                   ...people.map(
                     (person) => Padding(
                       padding: const EdgeInsets.only(bottom: 10),
@@ -1638,7 +3074,7 @@ class _PeopleManagementScreenState extends State<PeopleManagementScreen> {
                       child: Center(
                         child: Text(
                           'لا توجد نتائج ضمن هذه التصفية',
-                          style: TextStyle(color: Color(0xFF64748B)),
+                          style: TextStyle(color: Color(0xFF5C6B68)),
                         ),
                       ),
                     ),
@@ -1665,7 +3101,11 @@ class PersonDetailsScreen extends StatefulWidget {
     required this.person,
     this.onPersonUpdated,
     this.onPersonDeleted,
+    this.onFullEdit,
   });
+
+  /// «تعديل بيانات» بنموذج الإضافة نفسه (كل الحقول)، ويعيد السجل المعدَّل.
+  final Future<_PersonItem?> Function(_PersonItem person)? onFullEdit;
 
   final _PersonItem person;
   final void Function(_PersonItem previous, _PersonItem updated)?
@@ -1683,19 +3123,17 @@ class _PersonDetailsScreenState extends State<PersonDetailsScreen> {
   late _PersonItem _person;
   late _PersonItem _sourcePerson;
 
-  // تبويبات صفحة التفاصيل الآن مطابقة تماماً لفئات نافذة "+ إضافة" الستة
-  // (بالإضافة إلى "الملخص" الأساسي): مالية، متابعة وتخطيط، مستندات،
-  // إضافة إجراء، مواقع وأماكن. لا يوجد تبويب "السجل" أو "كلمات سر" أو
-  // "تفويض" مستقل — سجل الإضافات ينتقل إلى تبويب الملخص (حسب ملف
-  // المتطلبات: "في الملخص اسجل كل شي ضفته عند + إضافة")، وتفويض يدخل ضمن
-  // متابعة وتخطيط (بقرار المستخدم).
+  // التبويبات: «إضافة إجراء» حُذف، و«السجل» و«التفويضات» صارا تبويبين
+  // مستقلين. البيانات الأساسية كلها في الملخص.
   final List<String> _detailTabs = const [
     'الملخص',
     'مالية',
     'متابعة وتخطيط',
     'مستندات',
-    'إضافة إجراء',
+    'التفويضات',
+    'أدوية',
     'مواقع وأماكن',
+    'السجل',
   ];
 
   static const List<DetailSectionTab> _detailSections = [
@@ -1705,18 +3143,432 @@ class _PersonDetailsScreenState extends State<PersonDetailsScreen> {
       icon: Icons.account_balance_wallet_outlined,
     ),
     DetailSectionTab(
-      label: 'متابعة وتخطيط',
+      label: 'المتابعة والتخطيط',
       icon: Icons.event_note_outlined,
     ),
     DetailSectionTab(label: 'مستندات', icon: Icons.folder_outlined),
-    DetailSectionTab(label: 'إضافة إجراء', icon: Icons.gavel_outlined),
+    DetailSectionTab(
+      label: 'التفويضات',
+      icon: Icons.assignment_ind_outlined,
+    ),
+    DetailSectionTab(label: 'أدوية', icon: Icons.medication_outlined),
     DetailSectionTab(label: 'مواقع وأماكن', icon: Icons.place_outlined),
+    DetailSectionTab(label: 'السجل', icon: Icons.history_rounded),
   ];
+
+  /// فلاتر الأقسام: فئة البند (الشخصية/المشتركة/العقارات…) وحالته.
+  static const List<String> _sourceFilters = [
+    'الكل',
+    'الشخصية',
+    'المشتركة',
+    'العقارات',
+    'الأنشطة التجارية',
+    'المركبات ووسائل النقل',
+  ];
+
+  /// كلمات يُعرف بها مصدر البند من نصّه.
+  static const Map<String, List<String>> _sourceHints = {
+    'الشخصية': ['شخصي', 'الشخصية', 'التزام شخصي'],
+    'المشتركة': ['مشترك', 'المشتركة', 'رحلة', 'جمعية', 'مشاركة'],
+    'العقارات': ['عقار', 'إيجار', 'ايجار', 'وحدة', 'مبنى'],
+    'الأنشطة التجارية': ['نشاط', 'تجاري', 'مشروع', 'شركة'],
+    'المركبات ووسائل النقل': [
+      'آلية',
+      'اليات',
+      'معدة',
+      'معدات',
+      'مركبة',
+      'سيارة',
+      'قارب',
+      'طراد',
+      'يخت',
+    ],
+  };
+
+  String _sourceFilter = 'الكل';
+
+  /// «الكل» حُذفت من الحالة: الافتراضي هو النشط، وما انتهى أو أُغلق يُطلب
+  /// صراحةً.
+  String _statusFilter = 'نشطة';
+
+  /// تبويب المالية الفرعي: له / عليه / عهدة مالية.
+  int _financeTab = 0;
+
+  /// سهم الفلتر في المتابعة والتخطيط: الكل / مهمة / موعد / عادة / تذكير /
+  /// ملاحظات.
+  String _planKind = 'الكل';
+
+  bool _matchesSource(String value) {
+    if (_sourceFilter == 'الكل') return true;
+    if (_sourceFilter == 'أخرى') {
+      for (final hints in _sourceHints.values) {
+        for (final hint in hints) {
+          if (value.contains(hint)) return false;
+        }
+      }
+      return true;
+    }
+    for (final hint in _sourceHints[_sourceFilter] ?? const <String>[]) {
+      if (value.contains(hint)) return true;
+    }
+    return false;
+  }
+
+  /// كلمات تعني أن البند انتهى أو أُغلق.
+  static const List<String> _closedWords = [
+    'مكتمل',
+    'منتهي',
+    'ملغ',
+    'مؤرشف',
+    'تمت التسوية',
+  ];
+
+  bool _matchesStatus(String value, List<String> options) {
+    final status = _statusFor(options);
+    if (status == 'الأحدث أولاً') return true;
+    if (status == 'نشطة') return !_closedWords.any(value.contains);
+    if (status == 'مكتملة') {
+      return value.contains('مكتمل') || value.contains('تمت التسوية');
+    }
+    if (status == 'ملغية') return value.contains('ملغ');
+    if (value.contains(status)) return true;
+    // البنود بلا وسم حالة: يُحكم بآخر تاريخ مكتوب فيها.
+    final dates = RegExp(r'(\d{1,2}/\d{1,2}/\d{4})')
+        .allMatches(value)
+        .toList(growable: false);
+    if (dates.isEmpty) return false;
+    final days = _daysFromToday(dates.last.group(1)!);
+    if (days == null) return false;
+    return switch (status) {
+      'متأخرة' => days < 0,
+      'حان وقتها' || 'مستحقة' || 'أدوية اليوم' => days == 0,
+      'قريبًا' || 'قريبة الاستحقاق' => days > 0 && days <= 7,
+      'تنتهي قريبًا' => days >= 0 && days <= 30,
+      'منتهية' || 'أدوية منتهية' => days < 0,
+      'أدوية قادمة' => days > 0,
+      _ => false,
+    };
+  }
+
+  /// بند يحتاج متابعة: مستند انتهى أو ينتهي خلال 30 يومًا، أو متابعة حان
+  /// وقتها أو تأخرت. المكتمل والملغي والمؤرشف لا يُحسب.
+  bool _rowNeedsAttention(String value, {required bool document}) {
+    const done = ['مكتمل', 'ملغ', 'مؤرشف', 'تمت التسوية'];
+    if (done.any(value.contains)) return false;
+    if (!document && value.contains('منتهي')) return false;
+    if (value.contains('يحتاج متابعة') ||
+        value.contains('متأخر') ||
+        value.contains('حان وقت') ||
+        (document &&
+            (value.contains('منتهي') || value.contains('تنتهي قريب')))) {
+      return true;
+    }
+    final dates = RegExp(r'(\d{1,2}/\d{1,2}/\d{4})')
+        .allMatches(value)
+        .toList(growable: false);
+    if (dates.isEmpty) return false;
+    final days = _daysFromToday(dates.last.group(1)!);
+    if (days == null) return false;
+    return document ? days <= 30 : days <= 0;
+  }
+
+  /// يضمن أن الحالة المختارة موجودة ضمن خيارات هذا القسم بعد تبديل التبويب.
+  String _statusFor(List<String> options) =>
+      options.contains(_statusFilter) ? _statusFilter : options.first;
+
+  /// رأس القسم: العنوان ومعه الفلتران — المصدر على اليسار والحالة بجانبه.
+  Widget _sectionFilters(
+    List<String> statusOptions, {
+    List<String>? sourceOptions,
+  }) {
+    final sources = sourceOptions ?? _sourceFilters;
+    final sourceValue = sources.contains(_sourceFilter)
+        ? _sourceFilter
+        : sources.first;
+    Widget pill(String value, List<String> options, ValueChanged<String> onPick) {
+      // خيار واحد (الفئة في العهدة المالية): نص ثابت بلا قائمة ولا سهم.
+      if (options.length == 1) {
+        return Container(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+          decoration: BoxDecoration(
+            color: AppTheme.field,
+            borderRadius: BorderRadius.circular(AppTheme.rField),
+          ),
+          child: Text(
+            value,
+            textAlign: AppTr.alignEnd,
+            style: const TextStyle(
+              fontSize: 12,
+              fontWeight: FontWeight.w800,
+              color: Color(0xFF0F1F1C),
+            ),
+          ),
+        );
+      }
+      return InkWell(
+        borderRadius: BorderRadius.circular(AppTheme.rPill),
+        onTap: () async {
+          final picked = await showModalBottomSheet<String>(
+            context: context,
+            backgroundColor: AppTheme.page,
+            shape: const RoundedRectangleBorder(
+              borderRadius: BorderRadius.vertical(
+                top: Radius.circular(AppTheme.rCard),
+              ),
+            ),
+            builder: (sheetContext) => Directionality(
+              textDirection: AppTr.uiDir,
+              child: SafeArea(
+                child: ListView(
+                  shrinkWrap: true,
+                  padding: const EdgeInsets.fromLTRB(16, 14, 16, 18),
+                  children: [
+                    for (final option in options)
+                      ListTile(
+                        contentPadding: EdgeInsets.zero,
+                        leading: Icon(
+                          option == value
+                              ? Icons.radio_button_checked_rounded
+                              : Icons.radio_button_unchecked_rounded,
+                          color: const Color(0xFF0E7161),
+                        ),
+                        title: Text(
+                          option,
+                          textAlign: AppTr.alignEnd,
+                          style: const TextStyle(
+                            fontSize: 13,
+                            fontWeight: FontWeight.w800,
+                            color: Color(0xFF0F1F1C),
+                          ),
+                        ),
+                        onTap: () => Navigator.pop(sheetContext, option),
+                      ),
+                  ],
+                ),
+              ),
+            ),
+          );
+          if (picked != null) setState(() => onPick(picked));
+        },
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+          decoration: BoxDecoration(
+            color: AppTheme.field,
+            borderRadius: BorderRadius.circular(AppTheme.rField),
+          ),
+          child: Row(
+            textDirection: AppTr.uiDir,
+            children: [
+              Expanded(
+                child: Text(
+                  value,
+                  textAlign: AppTr.alignEnd,
+                  maxLines: 3,
+                  style: const TextStyle(
+                    fontSize: 12,
+                    fontWeight: FontWeight.w800,
+                    color: Color(0xFF0F1F1C),
+                  ),
+                ),
+              ),
+              const SizedBox(width: 4),
+              const Icon(
+                Icons.keyboard_arrow_down_rounded,
+                size: 18,
+                color: Color(0xFF0F1F1C),
+              ),
+            ],
+          ),
+        ),
+      );
+    }
+
+    // صندوقان متساويان: «الفئة» على اليمين و«الحالة» على اليسار، كلٌّ
+    // بعنوانه فوقه — بدل «الكل الكل» متلاصقتين بلا تسمية.
+    Widget box(
+      String label,
+      IconData icon,
+      String value,
+      List<String> options,
+      ValueChanged<String> onPick,
+    ) {
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Row(
+            textDirection: AppTr.uiDir,
+            children: [
+              Icon(icon, size: 15, color: const Color(0xFF5C6B68)),
+              const SizedBox(width: 5),
+              Expanded(
+                child: Text(
+                  label,
+                  textAlign: AppTr.alignEnd,
+                  maxLines: 3,
+                  style: const TextStyle(
+                    fontSize: 11,
+                    fontWeight: FontWeight.w800,
+                    color: Color(0xFF5C6B68),
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 5),
+          pill(value, options, onPick),
+        ],
+      );
+    }
+
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 10),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Row(
+            textDirection: AppTr.uiDir,
+            children: [
+              Expanded(
+                child: box(
+                  'الفئة',
+                  Icons.layers_outlined,
+                  sourceValue,
+                  sources,
+                  (v) => _sourceFilter = v,
+                ),
+              ),
+              const SizedBox(width: 10),
+              Expanded(
+                child: box(
+                  'الحالة',
+                  Icons.schedule_rounded,
+                  _statusFor(statusOptions),
+                  statusOptions,
+                  (v) => _statusFilter = v,
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 10),
+          Container(height: 1, color: AppTheme.hairline),
+        ],
+      ),
+    );
+  }
+
+  Future<void> _openAttachment(String path) async {
+    final error = await DocumentStore.open(path);
+    if (!mounted || error == null) return;
+    _notify(error);
+  }
+
+  /// قائمة بنود مرتبطة بعد تطبيق الفلترين.
+  Widget _filteredList(
+    List<String> items,
+    List<String> statusOptions,
+    String emptyText,
+    IconData icon, {
+    bool anySource = false,
+  }) {
+    final files = _attachments(_person.details);
+    final rows = items
+        .where(
+          (e) =>
+              (anySource || _matchesSource(e)) &&
+              _matchesStatus(e, statusOptions),
+        )
+        .toList();
+    if (rows.isEmpty) {
+      return Padding(
+        padding: const EdgeInsets.symmetric(vertical: 22),
+        child: Text(
+          emptyText,
+          textAlign: TextAlign.center,
+          style: const TextStyle(
+            fontSize: 11.5,
+            fontWeight: FontWeight.w700,
+            color: Color(0xFF8C9A97),
+          ),
+        ),
+      );
+    }
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        for (final row in rows)
+          InkWell(
+            onTap: _salaryRowIds[row] != null
+                ? () => _openSalaryReceipt(_salaryRowIds[row]!)
+                : _linkedRowIds[row] == null
+                ? null
+                : () => _openLinkedEntry(_linkedRowIds[row]!),
+            borderRadius: BorderRadius.circular(AppTheme.rInner),
+            child: Container(
+            margin: const EdgeInsets.only(bottom: 8),
+            padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(AppTheme.rInner),
+              border: Border.all(color: AppTheme.hairline),
+            ),
+            child: Row(
+              textDirection: AppTr.uiDir,
+              children: [
+                Icon(icon, size: 17, color: const Color(0xFF0E7161)),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    row,
+                    textAlign: AppTr.alignEnd,
+                    maxLines: 3,
+                    softWrap: true,
+                    style: const TextStyle(
+                      fontSize: 12.5,
+                      height: 1.35,
+                      fontWeight: FontWeight.w800,
+                      color: Color(0xFF0F1F1C),
+                    ),
+                  ),
+                ),
+                // المرفق يُفتح من الصف نفسه: صورة المستند أو الفاتورة.
+                if ((files[row] ?? '').isNotEmpty) ...[
+                  const SizedBox(width: 6),
+                  InkWell(
+                    onTap: () => _openAttachment(files[row]!),
+                    borderRadius: BorderRadius.circular(AppTheme.rPill),
+                    child: Container(
+                      padding: const EdgeInsets.all(6),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFF0E7161).withValues(alpha: 0.1),
+                        borderRadius: BorderRadius.circular(AppTheme.rPill),
+                      ),
+                      child: const Icon(
+                        Icons.visibility_outlined,
+                        size: 16,
+                        color: Color(0xFF0E7161),
+                      ),
+                    ),
+                  ),
+                ],
+                if (_linkedRowIds[row] != null ||
+                    _salaryRowIds[row] != null)
+                  const Icon(
+                    Icons.chevron_left_rounded,
+                    size: 20,
+                    color: Color(0xFF8C9A97),
+                  ),
+              ],
+            ),
+          ),
+          ),
+      ],
+    );
+  }
 
   String _detailValue(
     _PersonItem person,
     List<String> keys, {
-    String fallback = '(اختياري)',
+    String fallback = '-',
   }) {
     for (final key in keys) {
       final value = person.details[key]?.trim() ?? '';
@@ -1727,6 +3579,1363 @@ class _PersonDetailsScreenState extends State<PersonDetailsScreen> {
 
   void _notify(String text) {
     ScaffoldMessenger.of(context).showSnackBar(SnackBar(content: Text(text)));
+  }
+
+  /// مفتاح خريطة المرفقات داخل تفاصيل السجل: نص البند ← مسار الملف.
+  static const String _attachmentsKey = 'مرفقات البنود';
+
+  Map<String, String> _withAttachment(
+    Map<String, String> details,
+    String label,
+    String path,
+  ) {
+    final map = _attachments(details);
+    map[label] = path;
+    final next = Map<String, String>.from(details);
+    next[_attachmentsKey] = jsonEncode(map);
+    return next;
+  }
+
+  Map<String, String> _attachments(Map<String, String> details) {
+    final raw = (details[_attachmentsKey] ?? '').trim();
+    if (raw.isEmpty) return <String, String>{};
+    try {
+      final decoded = jsonDecode(raw);
+      if (decoded is! Map) return <String, String>{};
+      return decoded.map((key, value) => MapEntry('$key', '${value ?? ''}'));
+    } catch (_) {
+      return <String, String>{};
+    }
+  }
+
+  /// بنود «مالية» من السجل الزمني، موزَّعة على له/عليه/عهدة مالية.
+  List<String> _moneyEntries(_PersonItem person, int bucket) {
+    final lines = person.activityLog
+        .where((line) => line.startsWith('مالية'))
+        .toList()
+        .reversed
+        .toList(growable: false);
+    if (bucket == 2) {
+      return lines.where((line) => line.contains('عهدة')).toList();
+    }
+    final marker = bucket == 0 ? '· له ·' : '· عليه ·';
+    return lines
+        .where((line) => line.contains(marker) && !line.contains('عهدة'))
+        .toList();
+  }
+
+  /// بنود قسم بعينه كما سُجِّلت في السجل الزمني، الأحدث أولًا.
+  List<String> _logEntries(_PersonItem person, String category) => person
+      .activityLog
+      .where((line) => line.startsWith(category))
+      .toList()
+      .reversed
+      .toList(growable: false);
+
+  /// بنود المتابعة والتخطيط المسجَّلة في السجل الزمني.
+  List<String> _followUpEntries(_PersonItem person) =>
+      _logEntries(person, 'متابعة وتخطيط');
+
+  // =========================================================================
+  // التفويض — نفس جدول «delegations» ونفس نموذج DelegationRecord المستعمل
+  // في صفحة التفويضات بالإعدادات، فالتفويض الذي يُنشأ من هنا يظهر هناك
+  // والعكس. لا نظام تخزين موازٍ.
+  // =========================================================================
+
+  final DelegationsRepository _delegationsRepo = SupabaseDelegationsRepository();
+  List<DelegationRecord> _delegations = const [];
+  bool _delegationsLoading = true;
+  String _delegationsError = '';
+
+  /// يربط التفويض بسجل الفرد بدل الاعتماد على تطابق الاسم وحده.
+  static const String _delegateRefPrefix = 'person:';
+
+  String get _personRef =>
+      '$_delegateRefPrefix${_person.fullName.trim()}';
+
+  bool _isForThisPerson(DelegationRecord record) {
+    final ref = (record.delegateRef ?? '').trim();
+    if (ref == _personRef) return true;
+    if (ref.isNotEmpty && ref.startsWith(_delegateRefPrefix)) return false;
+    return record.delegateName.trim() == _person.fullName.trim();
+  }
+
+  /// بنود الالتزامات الشخصية المرتبطة بهذا الفرد: أدوية ومتابعات ومواقع
+  /// أُضيفت من تفاصيله بنفس نماذج الالتزامات الشخصية.
+  List<PersonalEntryRecord> _linked = const [];
+
+  Future<void> _loadLinked() async {
+    try {
+      final rows = await SupabasePersonalEntriesRepository().fetchAll();
+      if (!mounted) return;
+      setState(() {
+        _linked = [
+          for (final record in rows)
+            if (_recordLinkedTo(record, _person)) record,
+        ];
+      });
+    } catch (_) {
+      // تبقى القوائم ببنود السجل وحدها إن تعذّر التحميل.
+    }
+  }
+
+  /// يفتح نموذج الالتزامات الشخصية نفسه مربوطًا بهذا الفرد، فيُحفظ البند
+  /// هناك ويظهر هنا أيضًا.
+  Future<void> _openPersonalForm(
+    String formLabel, {
+    Map<String, String> prefill = const {},
+    Map<String, String> extraLink = const {},
+  }) async {
+    await Navigator.of(context).push(
+      MaterialPageRoute<PersonalEntryRecord?>(
+        builder: (_) => PersonalCommitmentsScreen(
+          openFormFor: formLabel,
+          prefill: prefill,
+          linkDetails: {
+            kLinkedPersonKey: _person.fullName.trim(),
+            ...extraLink,
+          },
+        ),
+      ),
+    );
+    await _loadLinked();
+  }
+
+  Future<void> _addMedicine() {
+    final isSelf = _person.typeKey == 'person_self';
+    return _openPersonalForm(
+      'أدوية',
+      prefill: {'لمن هذا الدواء': isSelf ? 'أدوية لي' : 'أدوية لشخص آخر'},
+      extraLink: {if (!isSelf) 'اسم المستفيد': _person.fullName.trim()},
+    );
+  }
+
+  /// + في المتابعة والتخطيط: اختيار النوع ثم نموذج الالتزامات الشخصية.
+  Future<void> _addFollowUp() async {
+    const kinds = <(String, IconData)>[
+      ('مهمة', Icons.task_alt_outlined),
+      ('موعد', Icons.event_outlined),
+      ('عادة', Icons.repeat_rounded),
+      ('تذكير', Icons.notifications_active_outlined),
+      ('ملاحظات', Icons.sticky_note_2_outlined),
+    ];
+    final picked = await showModalBottomSheet<String>(
+      context: context,
+      backgroundColor: AppTheme.page,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(
+          top: Radius.circular(AppTheme.rCard),
+        ),
+      ),
+      builder: (sheetContext) => Directionality(
+        textDirection: AppTr.uiDir,
+        child: SafeArea(
+          child: ListView(
+            shrinkWrap: true,
+            padding: const EdgeInsets.fromLTRB(16, 14, 16, 18),
+            children: [
+              const Text(
+                'المتابعة والتخطيط',
+                textAlign: TextAlign.right,
+                style: TextStyle(
+                  fontSize: 15,
+                  fontWeight: FontWeight.w900,
+                  color: AppTheme.title,
+                ),
+              ),
+              const SizedBox(height: 6),
+              for (final kind in kinds)
+                ListTile(
+                  contentPadding: EdgeInsets.zero,
+                  leading: Icon(kind.$2, color: const Color(0xFF0A5A50)),
+                  title: Text(
+                    kind.$1,
+                    textAlign: TextAlign.right,
+                    style: const TextStyle(
+                      fontSize: 13,
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                  onTap: () => Navigator.pop(sheetContext, kind.$1),
+                ),
+            ],
+          ),
+        ),
+      ),
+    );
+    if (picked == null || !mounted) return;
+    await _openPersonalForm(picked);
+  }
+
+  /// اتجاه المبلغ مع هذا الفرد لما يُضاف من «+» في «له» أو «عليه».
+  static const String _moneyDirectionKey = 'اتجاه المبلغ مع الفرد';
+
+  /// + في «مالية»: «له» = الإيراد بتصنيفاته ودين وقسط وغرامة، «عليه» = دين
+  /// وقسط وغرامة، و«عهدة مالية» تُسجَّل من الالتزامات الشخصية.
+  Future<void> _addFinance(int tab) async {
+    if (tab == 2) {
+      await showDialog<void>(
+        context: context,
+        builder: (dialogContext) => Directionality(
+          textDirection: AppTr.uiDir,
+          child: AlertDialog(
+            icon: const Icon(
+              Icons.inventory_2_outlined,
+              size: 30,
+              color: Color(0xFFA6691A),
+            ),
+            title: const Text('تسجيل عهدة مالية'),
+            content: const Text(
+              'العهدة المالية تُسجَّل من «الالتزامات الشخصية» ← «عهدة مالية»، '
+              'وعند إسنادها لهذا الشخص برقمه التعريفي تظهر هنا تلقائيًا.',
+              style: TextStyle(fontSize: 12.5, height: 1.6),
+            ),
+            actions: [
+              FilledButton(
+                onPressed: () => Navigator.pop(dialogContext),
+                child: const Text('حسنًا'),
+              ),
+            ],
+          ),
+        ),
+      );
+      return;
+    }
+    final name = _person.fullName.trim();
+    final options = <(String, String, Map<String, String>, IconData)>[
+      // الموظف: الراتب بقالب «سند قبض» نفسه الموجود في المستندات.
+      if (_isEmployeePerson(_person))
+        (
+          'سند قبض راتب',
+          _salaryOption,
+          const <String, String>{},
+          Icons.payments_outlined,
+        ),
+      if (tab == 0)
+        for (final category in const [
+          'الراتب/معاش',
+          'تعويض واسترجاع مصروف',
+          'كاش باك',
+        ])
+          (
+            'إيراد — $category',
+            'إيراد',
+            {'التصنيف الرئيسي': category},
+            Icons.trending_up,
+          ),
+      (
+        'دين / قرض / سلفة',
+        'دين / قرض / سلفة',
+        {
+          'نوع الدين': tab == 0 ? 'لي — يدين لي' : 'له — أدين له',
+          'اسم الجهة': name,
+        },
+        Icons.handshake_outlined,
+      ),
+      ('قسط', 'قسط', const <String, String>{}, Icons.calendar_month_outlined),
+      ('غرامة', 'غرامة', const <String, String>{}, Icons.gavel_outlined),
+    ];
+    final picked = await showModalBottomSheet<int>(
+      context: context,
+      backgroundColor: AppTheme.page,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(
+          top: Radius.circular(AppTheme.rCard),
+        ),
+      ),
+      builder: (sheetContext) => Directionality(
+        textDirection: AppTr.uiDir,
+        child: SafeArea(
+          child: ListView(
+            shrinkWrap: true,
+            padding: const EdgeInsets.fromLTRB(16, 14, 16, 18),
+            children: [
+              Text(
+                tab == 0 ? 'إضافة مبلغ له' : 'إضافة مبلغ عليه',
+                textAlign: TextAlign.right,
+                style: const TextStyle(
+                  fontSize: 15,
+                  fontWeight: FontWeight.w900,
+                  color: AppTheme.title,
+                ),
+              ),
+              const SizedBox(height: 6),
+              for (var i = 0; i < options.length; i++)
+                ListTile(
+                  contentPadding: EdgeInsets.zero,
+                  leading: Icon(options[i].$4, color: const Color(0xFF0A5A50)),
+                  title: Text(
+                    options[i].$1,
+                    textAlign: TextAlign.right,
+                    style: const TextStyle(
+                      fontSize: 13,
+                      fontWeight: FontWeight.w800,
+                    ),
+                  ),
+                  onTap: () => Navigator.pop(sheetContext, i),
+                ),
+            ],
+          ),
+        ),
+      ),
+    );
+    if (picked == null || !mounted) return;
+    final option = options[picked];
+    if (option.$2 == _salaryOption) {
+      await _addSalaryReceipt();
+      return;
+    }
+    await _openPersonalForm(
+      option.$2,
+      prefill: option.$3,
+      extraLink: {_moneyDirectionKey: tab == 0 ? 'له' : 'عليه'},
+    );
+  }
+
+  static const String _salaryOption = '__salary_receipt__';
+
+  /// سندات قبض هذا الموظف (برقمه التعريفي، وإلا باسمه) — تظهر في «له».
+  List<SalaryReceipt> _salaryReceipts = const [];
+
+  /// نص الصف ← معرّف السند (لفتحه بالضغط).
+  final Map<String, String> _salaryRowIds = {};
+
+  String get _personFnd => (_person.details['الرقم التعريفي'] ?? '').trim();
+
+  Future<void> _loadSalaryReceipts() async {
+    if (!_isEmployeePerson(_person)) return;
+    try {
+      final mine = await SalaryReceiptsRepository().fetchMine();
+      if (!mounted) return;
+      final fnd = _personFnd;
+      final name = _person.fullName.trim();
+      setState(() {
+        _salaryReceipts = [
+          for (final r in mine)
+            if (fnd.isNotEmpty
+                ? r.employeeFnd == fnd
+                : r.employeeName.trim() == name)
+              r,
+        ];
+      });
+    } catch (_) {
+      // تبقى القائمة بلا سندات إن تعذّر التحميل.
+    }
+  }
+
+  List<String> _salaryRows() {
+    final rows = <String>[];
+    for (final r in _salaryReceipts) {
+      final row = [
+        '${r.isSalary ? 'سند قبض راتب' : 'سند قبض'} — ${r.title}',
+        '${_salaryAmount(r.paid)} ${AppSettings.currencySuffix}',
+        if (r.receiptDate.trim().isNotEmpty) r.receiptDate.trim(),
+        r.status,
+      ].join(' · ');
+      rows.add(row);
+      if (r.id != null) _salaryRowIds[row] = r.id!;
+    }
+    return rows;
+  }
+
+  static String _salaryAmount(double v) =>
+      v == v.roundToDouble() ? v.round().toString() : v.toStringAsFixed(2);
+
+  /// + ← «سند قبض راتب»: نفس نموذج سند القبض، والموظف هذا الفرد.
+  Future<void> _addSalaryReceipt() async {
+    var mine = const <SalaryReceipt>[];
+    try {
+      mine = await SalaryReceiptsRepository().fetchMine();
+    } catch (_) {}
+    if (!mounted) return;
+    await Navigator.of(context).push<bool>(
+      MaterialPageRoute(
+        builder: (_) => SalaryReceiptFormScreen(
+          presetFnd: _personFnd,
+          presetName: _person.fullName.trim(),
+          others: mine,
+        ),
+      ),
+    );
+    if (!mounted) return;
+    await _loadSalaryReceipts();
+    await _loadLinked();
+  }
+
+  /// يفتح السند في شاشة «الرواتب وسندات القبض» ثم يعيد التحميل.
+  Future<void> _openSalaryReceipt(String id) async {
+    await Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => SalaryReceiptsScreen(
+          employeeFnd: _personFnd,
+          employeeName: _person.fullName.trim(),
+          openId: id,
+        ),
+      ),
+    );
+    if (!mounted) return;
+    await _loadSalaryReceipts();
+    await _loadLinked();
+  }
+
+  /// + في التفويضات: نموذج «المزيد ← التفويضات» نفسه.
+  Future<void> _addDelegation() async {
+    final opener = openDelegationFormForPerson;
+    if (opener == null) {
+      await _openDelegationSheet();
+      return;
+    }
+    await opener(context, _person.fullName.trim());
+    if (mounted) await _loadDelegations();
+  }
+
+  /// بنود مرتبطة كسطور للقوائم، بحالتها مكتوبة فيها.
+  /// نص الصف ← معرّف البند في الالتزامات الشخصية (لفتحه بالضغط).
+  final Map<String, String> _linkedRowIds = {};
+
+  /// يفتح البند في الالتزامات الشخصية (تفاصيله وتعديله وحذفه) ثم يعيد
+  /// تحميل ما يخص هذا الفرد.
+  Future<void> _openLinkedEntry(String id) async {
+    await Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => PersonalCommitmentsScreen(openEntryId: id),
+      ),
+    );
+    await _loadLinked();
+  }
+
+  List<String> _linkedRows(String kind) {
+    final rows = <String>[];
+    for (final r in _linked.reversed) {
+      final before = rows.length;
+      _addLinkedRow(rows, r, kind);
+      if (rows.length > before && r.id != null) {
+        _linkedRowIds[rows.last] = r.id!;
+      }
+    }
+    return rows;
+  }
+
+  void _addLinkedRow(List<String> rows, PersonalEntryRecord r, String kind) {
+    {
+      switch (kind) {
+        case 'مستندات':
+          if (r.entryType != 'مستند' && r.entryType != 'ضمانات') return;
+          rows.add(
+            [
+              r.title,
+              if (r.dueDate.trim().isNotEmpty) 'ينتهي ${r.dueDate.trim()}',
+              (r.details['التذكير قبل الانتهاء'] ?? '').trim(),
+            ].where((part) => part.isNotEmpty).join(' · '),
+          );
+        case 'أدوية':
+          if (r.entryType != 'أدوية') return;
+          final from = (r.details['من تاريخ'] ?? '').trim();
+          final to = (r.details['إلى تاريخ'] ?? '').trim();
+          rows.add(
+            [
+              r.title,
+              if (from.isNotEmpty || to.isNotEmpty)
+                'من ${from.isEmpty ? '-' : from} إلى ${to.isEmpty ? '-' : to}',
+              _medicineState(r),
+            ].join(' · '),
+          );
+        case 'متابعة وتخطيط':
+          if (!_organizationEntryTypes.contains(r.entryType)) return;
+          rows.add(
+            [
+              '${r.entryType} — ${r.title}',
+              if (r.dueDate.trim().isNotEmpty) r.dueDate.trim(),
+              _planState(r),
+            ].join(' · '),
+          );
+        case 'له':
+        case 'عليه':
+          // ما أُضيف من «+» هنا يحمل اتجاهه، والإيراد له، والدين حسب نوعه.
+          final direction = (r.details[_moneyDirectionKey] ?? '').trim();
+          final debtType = (r.details['نوع الدين'] ?? '').trim();
+          final forMe = direction == 'له' ||
+              (direction.isEmpty &&
+                  (r.entryType == 'إيراد' ||
+                      (r.entryType == 'دين / قرض / سلفة' &&
+                          debtType.startsWith('لي'))));
+          final onMe = direction == 'عليه' ||
+              (direction.isEmpty &&
+                  r.entryType == 'دين / قرض / سلفة' &&
+                  debtType.startsWith('له'));
+          if (kind == 'له' ? !forMe : !onMe) return;
+          rows.add(
+            [
+              '${r.entryType} — ${r.title}',
+              if (r.amount != 0) '${r.amount} ${AppSettings.currencySuffix}',
+              if (r.dueDate.trim().isNotEmpty) r.dueDate.trim(),
+              _closedStatuses.contains(r.status) ? 'مكتملة' : 'نشطة',
+            ].join(' · '),
+          );
+        case 'عهدة مالية':
+          if (r.entryType != 'عهدة مالية') return;
+          // قيمة العهدة والمصروف منها والمتبقي، كما في الالتزامات الشخصية.
+          final spent = personalCustodySpent(r.details);
+          final currency = AppSettings.currencySuffix;
+          // ملغاة ← «ملغية»، ومسوّاة أو مؤرشفة بعد تسوية ← «مكتملة».
+          final custodyState = (r.details['حالة العهدة'] ?? '').trim();
+          final stateLabel = r.status == 'ملغاة' || custodyState == 'ملغاة'
+              ? 'ملغية'
+              : _closedStatuses.contains(r.status) ||
+                    r.status == 'تمت التسوية' ||
+                    r.status == 'مؤرشف'
+              ? 'مكتملة'
+              : 'نشطة';
+          rows.add(
+            [
+              'عهدة مالية — ${r.title}',
+              '${AppTr.tr('قيمة العهدة')} ${r.amount} $currency',
+              '${AppTr.tr('المصروف')} $spent $currency',
+              '${AppTr.tr('المتبقي')} ${r.amount - spent} $currency',
+              stateLabel,
+            ].join(' · '),
+          );
+        case 'مواقع وأماكن':
+          if (r.entryType != 'مواقع وأماكن') return;
+          rows.add(
+            [
+              r.title,
+              (r.details['العنوان'] ?? '').trim(),
+              (r.details['التصنيف'] ?? '').trim(),
+            ].where((part) => part.isNotEmpty).join(' · '),
+          );
+      }
+    }
+  }
+
+  Future<void> _loadDelegations() async {
+    if (!mounted) return;
+    setState(() {
+      _delegationsLoading = _delegations.isEmpty;
+      _delegationsError = '';
+    });
+    try {
+      final rows = await _delegationsRepo.fetchDelegations();
+      if (!mounted) return;
+      setState(() {
+        _delegations = rows.where(_isForThisPerson).toList(growable: false);
+        _delegationsLoading = false;
+      });
+    } catch (_) {
+      if (!mounted) return;
+      setState(() {
+        _delegationsLoading = false;
+        _delegationsError = 'تعذّر تحميل التفويضات — تحقّق من الاتصال';
+      });
+    }
+  }
+
+  /// اسم مستوى الصلاحية من قائمة الصلاحيات المخزَّنة.
+  static String _permissionLevelLabel(List<String> permissions) {
+    final set = DelegationRecord.plainPermissions(permissions)
+        .where((p) => p != DelegationRecord.kNeedsOwnerApproval)
+        .toSet();
+    if (set.isEmpty) return 'بلا صلاحيات';
+    if (!set.containsAll(DelegationRecord.allPermissions)) {
+      return DelegationRecord.levelOf(set);
+    }
+    for (final entry in DelegationRecord.permissionLevels.entries) {
+      if (entry.value.toSet().difference(set).isEmpty &&
+          set.difference(entry.value.toSet()).isEmpty) {
+        return entry.key;
+      }
+    }
+    return '${set.length} صلاحية';
+  }
+
+  static String _formatDate(DateTime? value) => value == null
+      ? ''
+      : '${value.day}/${value.month}/${value.year}';
+
+  /// نموذج التفويض: النطاق والأقسام الفرعية ومستوى الصلاحية والمدة.
+  Future<void> _openDelegationSheet({DelegationRecord? existing}) async {
+    const accent = Color(0xFF0A5A50);
+    var scope = DelegationRecord.mainScopeOf(existing?.scope);
+    final subs = <String>{...DelegationRecord.subScopesOf(existing?.scope)};
+    var level = existing == null
+        ? 'اطّلاع فقط'
+        : _permissionLevelLabel(existing.permissions);
+    if (!DelegationRecord.permissionLevels.containsKey(level)) {
+      level = 'اطّلاع فقط';
+    }
+    var start = existing?.startDate ?? DateTime.now();
+    DateTime? end = existing?.endDate;
+    final noteCtrl = TextEditingController(text: existing?.notes ?? '');
+
+    Future<DateTime?> pick(DateTime? initial) => showDatePicker(
+      context: context,
+      initialDate: initial ?? DateTime.now(),
+      firstDate: DateTime(DateTime.now().year - 5),
+      lastDate: DateTime(DateTime.now().year + 20),
+      builder: (pickerContext, child) => Directionality(
+        textDirection: AppTr.uiDir,
+        child: child ?? const SizedBox.shrink(),
+      ),
+    );
+
+    final saved = await showModalBottomSheet<bool>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (sheetContext) => Directionality(
+        textDirection: AppTr.uiDir,
+        child: StatefulBuilder(
+          builder: (context, setSheetState) => Padding(
+            padding: EdgeInsets.only(
+              bottom: MediaQuery.of(context).viewInsets.bottom,
+            ),
+            child: Container(
+              constraints: BoxConstraints(
+                maxHeight: MediaQuery.of(context).size.height * 0.9,
+              ),
+              padding: const EdgeInsets.fromLTRB(16, 12, 16, 20),
+              decoration: const BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.vertical(
+                  top: Radius.circular(AppTheme.rCard),
+                ),
+              ),
+              child: SingleChildScrollView(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    Center(
+                      child: Container(
+                        width: 42,
+                        height: 4,
+                        decoration: BoxDecoration(
+                          color: const Color(0xFFD5DEDB),
+                          borderRadius: BorderRadius.circular(999),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 14),
+                    Text(
+                      existing == null ? 'تفويض جديد' : 'تعديل التفويض',
+                      style: const TextStyle(
+                        fontSize: 17,
+                        fontWeight: FontWeight.w900,
+                        color: Color(0xFF022E2A),
+                      ),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      'المفوَّض له: ${_person.fullName}',
+                      style: const TextStyle(
+                        fontSize: 11.5,
+                        fontWeight: FontWeight.w700,
+                        color: Color(0xFF5C6B68),
+                      ),
+                    ),
+                    const SizedBox(height: 14),
+                    DropdownButtonFormField<String>(
+                      initialValue: scope,
+                      isExpanded: true,
+                      decoration: InputDecoration(
+                        labelText: AppTr.tr('النطاق'),
+                        border: const OutlineInputBorder(),
+                        isDense: true,
+                      ),
+                      items: [
+                        for (final item in DelegationRecord.scopes)
+                          DropdownMenuItem(
+                            value: item,
+                            child: Text(item, maxLines: 2),
+                          ),
+                      ],
+                      onChanged: (value) => setSheetState(() {
+                        scope = value ?? scope;
+                        subs.clear();
+                      }),
+                    ),
+                    if ((DelegationRecord.subScopes[scope] ?? const [])
+                        .isNotEmpty) ...[
+                      const SizedBox(height: 10),
+                      const Text(
+                        'أقسام داخل النطاق (اتركها فارغة ليشمل النطاق كله)',
+                        textAlign: TextAlign.right,
+                        maxLines: 2,
+                        style: TextStyle(
+                          fontSize: 11,
+                          height: 1.3,
+                          fontWeight: FontWeight.w700,
+                          color: Color(0xFF5C6B68),
+                        ),
+                      ),
+                      const SizedBox(height: 6),
+                      Wrap(
+                        spacing: 6,
+                        runSpacing: 6,
+                        textDirection: AppTr.uiDir,
+                        children: [
+                          for (final sub
+                              in DelegationRecord.subScopes[scope] ??
+                                  const <String>[])
+                            InkWell(
+                              borderRadius: BorderRadius.circular(
+                                AppTheme.rPill,
+                              ),
+                              onTap: () => setSheetState(() {
+                                if (!subs.add(sub)) subs.remove(sub);
+                              }),
+                              child: Container(
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 10,
+                                  vertical: 7,
+                                ),
+                                decoration: BoxDecoration(
+                                  color: subs.contains(sub)
+                                      ? accent.withValues(alpha: 0.12)
+                                      : AppTheme.field,
+                                  borderRadius: BorderRadius.circular(
+                                    AppTheme.rPill,
+                                  ),
+                                ),
+                                child: Text(
+                                  sub,
+                                  maxLines: 2,
+                                  style: TextStyle(
+                                    fontSize: 11.5,
+                                    height: 1.25,
+                                    fontWeight: FontWeight.w800,
+                                    color: subs.contains(sub)
+                                        ? accent
+                                        : AppTheme.body,
+                                  ),
+                                ),
+                              ),
+                            ),
+                        ],
+                      ),
+                    ],
+                    const SizedBox(height: 14),
+                    const Text(
+                      'مستوى الصلاحية',
+                      textAlign: TextAlign.right,
+                      style: TextStyle(
+                        fontSize: 12.5,
+                        fontWeight: FontWeight.w900,
+                        color: Color(0xFF0F1F1C),
+                      ),
+                    ),
+                    const SizedBox(height: 6),
+                    for (final entry
+                        in DelegationRecord.permissionLevels.entries)
+                      InkWell(
+                        borderRadius: BorderRadius.circular(AppTheme.rField),
+                        onTap: () => setSheetState(() => level = entry.key),
+                        child: Padding(
+                          padding: const EdgeInsets.symmetric(vertical: 4),
+                          child: Row(
+                            textDirection: AppTr.uiDir,
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              Icon(
+                                level == entry.key
+                                    ? Icons.radio_button_checked_rounded
+                                    : Icons.radio_button_unchecked_rounded,
+                                size: 20,
+                                color: accent,
+                              ),
+                              const SizedBox(width: 8),
+                              Expanded(
+                                child: Column(
+                                  crossAxisAlignment:
+                                      CrossAxisAlignment.stretch,
+                                  children: [
+                                    Text(
+                                      entry.key,
+                                      textAlign: AppTr.alignEnd,
+                                      maxLines: 2,
+                                      style: const TextStyle(
+                                        fontSize: 12.5,
+                                        fontWeight: FontWeight.w900,
+                                        color: Color(0xFF0F1F1C),
+                                      ),
+                                    ),
+                                    Text(
+                                      entry.value.join('، '),
+                                      textAlign: AppTr.alignEnd,
+                                      maxLines: 3,
+                                      softWrap: true,
+                                      style: const TextStyle(
+                                        fontSize: 10.5,
+                                        height: 1.35,
+                                        fontWeight: FontWeight.w600,
+                                        color: Color(0xFF8C9A97),
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                    const SizedBox(height: 14),
+                    Row(
+                      textDirection: AppTr.uiDir,
+                      children: [
+                        Expanded(
+                          child: _DelegationDateField(
+                            label: 'من تاريخ',
+                            value: _formatDate(start),
+                            onTap: () async {
+                              final picked = await pick(start);
+                              if (picked != null) {
+                                setSheetState(() => start = picked);
+                              }
+                            },
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: _DelegationDateField(
+                            label: 'إلى تاريخ',
+                            value: end == null ? 'مفتوح' : _formatDate(end),
+                            onTap: () async {
+                              final picked = await pick(end);
+                              if (picked != null) {
+                                setSheetState(() => end = picked);
+                              }
+                            },
+                            onClear: end == null
+                                ? null
+                                : () => setSheetState(() => end = null),
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 10),
+                    TextField(
+                      controller: noteCtrl,
+                      maxLines: 2,
+                      decoration: InputDecoration(
+                        labelText: AppTr.tr('ملاحظات ومستند مرفق'),
+                        border: const OutlineInputBorder(),
+                        isDense: true,
+                      ),
+                    ),
+                    const SizedBox(height: 16),
+                    ElevatedButton.icon(
+                      onPressed: () => Navigator.pop(sheetContext, true),
+                      icon: const Icon(Icons.check_circle_outline_rounded),
+                      label: Text(
+                        existing == null ? 'حفظ التفويض' : 'حفظ التعديل',
+                      ),
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: accent,
+                        foregroundColor: Colors.white,
+                        minimumSize: const Size.fromHeight(48),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(AppTheme.rField),
+                        ),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+
+    final note = noteCtrl.text.trim();
+    noteCtrl.dispose();
+    if (saved != true || !mounted) return;
+
+    final record = DelegationRecord(
+      id: existing?.id,
+      delegateName: _person.fullName,
+      delegateRef: _personRef,
+      scope: DelegationRecord.composeScope(scope, subs),
+      permissions: DelegationRecord.withLog(
+        [
+          ...DelegationRecord.applyHierarchy(
+            (DelegationRecord.permissionLevels[level] ?? const <String>[])
+                .toSet(),
+          ),
+          // الموافقة والسقف والعناصر المحددة والسجل لا تضيع هنا.
+          ...DelegationRecord.carriedMeta(existing?.permissions, subs),
+        ],
+        existing == null
+            ? 'إنشاء التفويض من صفحة الشخص'
+            : 'تعديل التفويض من صفحة الشخص',
+      ),
+      startDate: start,
+      endDate: end,
+      isPaused: existing?.isPaused ?? false,
+      notes: note.isEmpty ? null : note,
+    );
+    await _saveDelegation(
+      record,
+      existing == null
+          ? 'تم منح تفويض لـ ${_person.fullName}'
+          : 'تم تعديل التفويض',
+    );
+  }
+
+  Future<void> _saveDelegation(DelegationRecord record, String notice) async {
+    try {
+      await _delegationsRepo.upsertDelegation(record);
+      if (!mounted) return;
+      await _loadDelegations();
+      if (!mounted) return;
+      _applyPersonUpdate(
+        _person.copyWith(
+          activityLog: [
+            ..._person.activityLog,
+            'تفويض — ${DelegationRecord.mainScopeOf(record.scope)} · ${_permissionLevelLabel(record.permissions)}',
+          ],
+          lastUpdate: _todayStamp(),
+        ),
+        notice: notice,
+      );
+    } catch (error) {
+      if (!mounted) return;
+      if (error is PlanLockedException) {
+        PlanGate.canEdit(context, PlanModules.delegations);
+        return;
+      }
+      _notify('تعذّر حفظ التفويض — تحقّق من الاتصال');
+    }
+  }
+
+  /// خيارات التفويض الواحد: تعديل، إيقاف/تشغيل، حذف.
+  Future<void> _openDelegationActions(DelegationRecord item) async {
+    final action = await showModalBottomSheet<String>(
+      context: context,
+      backgroundColor: AppTheme.page,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(
+          top: Radius.circular(AppTheme.rCard),
+        ),
+      ),
+      builder: (sheetContext) => Directionality(
+        textDirection: AppTr.uiDir,
+        child: SafeArea(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              const SizedBox(height: 8),
+              ListTile(
+                leading: const Icon(
+                  Icons.edit_outlined,
+                  color: Color(0xFF0A5A50),
+                ),
+                title: const Text('تعديل التفويض', textAlign: TextAlign.right),
+                onTap: () => Navigator.pop(sheetContext, 'edit'),
+              ),
+              ListTile(
+                leading: Icon(
+                  item.isPaused
+                      ? Icons.play_arrow_rounded
+                      : Icons.pause_rounded,
+                  color: const Color(0xFFA6691A),
+                ),
+                title: Text(
+                  item.isPaused ? 'تشغيل التفويض' : 'إيقاف التفويض',
+                  textAlign: TextAlign.right,
+                ),
+                onTap: () => Navigator.pop(sheetContext, 'toggle'),
+              ),
+              ListTile(
+                leading: const Icon(
+                  Icons.delete_outline_rounded,
+                  color: Color(0xFFC4392E),
+                ),
+                title: const Text('حذف التفويض', textAlign: TextAlign.right),
+                onTap: () => Navigator.pop(sheetContext, 'delete'),
+              ),
+              const SizedBox(height: 8),
+            ],
+          ),
+        ),
+      ),
+    );
+    if (action == null || !mounted) return;
+    switch (action) {
+      case 'edit':
+        await _openDelegationSheet(existing: item);
+      case 'toggle':
+        await _saveDelegation(
+          item.copyWith(
+            isPaused: !item.isPaused,
+            permissions: DelegationRecord.withLog(
+              item.permissions,
+              item.isPaused ? 'إعادة تفعيل التفويض' : 'إيقاف التفويض مؤقتًا',
+            ),
+          ),
+          item.isPaused ? 'تم تشغيل التفويض' : 'تم إيقاف التفويض',
+        );
+      case 'delete':
+        final id = item.id;
+        if (id == null) return;
+        try {
+          await _delegationsRepo.deleteDelegation(id);
+          if (!mounted) return;
+          await _loadDelegations();
+          if (!mounted) return;
+          _notify('تم حذف التفويض');
+        } catch (_) {
+          if (!mounted) return;
+          _notify('تعذّر حذف التفويض — تحقّق من الاتصال');
+        }
+    }
+  }
+
+  /// العهد المالية المسندة إلى هذا الشخص (يديرها بتفويض من صاحبها).
+  List<PersonalEntryRecord> get _custodiesManagedByPerson {
+    final personId = (_person.details['الرقم التعريفي'] ?? '').trim();
+    if (personId.isEmpty) return const [];
+    return [
+      for (final r in _linked)
+        if (r.entryType == 'عهدة مالية' &&
+            (r.details[CustodyAssignment.kHolderId] ?? '').trim() == personId)
+          r,
+    ];
+  }
+
+  Widget _custodyDelegationRow(PersonalEntryRecord record) {
+    final assignment = CustodyAssignment.decode(record.details);
+    final closed = _closedStatuses.contains(record.status);
+    final state = closed
+        ? record.status
+        : assignment.isPending
+        ? 'بانتظار قبوله'
+        : assignment.isRejected
+        ? 'رفضها'
+        : 'نشطة';
+    final color = closed || assignment.isRejected
+        ? const Color(0xFF8C9A97)
+        : assignment.isPending
+        ? const Color(0xFFA6691A)
+        : const Color(0xFF0E7161);
+    return InkWell(
+      borderRadius: BorderRadius.circular(AppTheme.rInner),
+      onTap: record.id == null ? null : () => _openLinkedEntry(record.id!),
+      child: Container(
+        margin: const EdgeInsets.only(bottom: 8),
+        padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(AppTheme.rInner),
+          border: Border.all(color: AppTheme.hairline),
+        ),
+        child: Row(
+          textDirection: AppTr.uiDir,
+          children: [
+            const Icon(
+              Icons.inventory_2_outlined,
+              size: 17,
+              color: Color(0xFFA6691A),
+            ),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Text(
+                    '${AppTr.tr('مفوَّض بإدارة عهدة مالية')} — ${record.title}',
+                    textAlign: AppTr.alignEnd,
+                    maxLines: 2,
+                    softWrap: true,
+                    style: const TextStyle(
+                      fontSize: 12.5,
+                      fontWeight: FontWeight.w900,
+                      color: Color(0xFF0F1F1C),
+                    ),
+                  ),
+                  const SizedBox(height: 3),
+                  Text(
+                    [
+                      if (record.amount != 0)
+                        '${record.amount} ${AppSettings.currencySuffix}',
+                      if ((record.details[CustodyAssignment.kAssignedAt] ?? '')
+                          .trim()
+                          .isNotEmpty)
+                        '${AppTr.tr('منذ')} ${record.details[CustodyAssignment.kAssignedAt]!.trim()}',
+                    ].join(' · '),
+                    textAlign: AppTr.alignEnd,
+                    style: const TextStyle(
+                      fontSize: 10.5,
+                      fontWeight: FontWeight.w700,
+                      color: Color(0xFF5C6B68),
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            const SizedBox(width: 6),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+              decoration: BoxDecoration(
+                color: color.withValues(alpha: 0.1),
+                borderRadius: BorderRadius.circular(999),
+              ),
+              child: Text(
+                state,
+                style: TextStyle(
+                  fontSize: 10,
+                  fontWeight: FontWeight.w900,
+                  color: color,
+                ),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// موظف إن كان نوعه أو تصنيفه الرئيسي أو أحد تصنيفاته الإضافية «موظف».
+  bool _isEmployeePerson(_PersonItem person) =>
+      person.typeKey == 'person_employee' ||
+      person.categoryName == 'موظف' ||
+      person.additionalCategoryNames.contains('موظف');
+
+  /// زر «الرواتب وسندات القبض» — يفتح سندات الموظف وبطاقة رواتبه.
+  Widget _salaryReceiptsButton(_PersonItem person, Color color) => Padding(
+        padding: const EdgeInsets.only(bottom: 10),
+        child: OutlinedButton.icon(
+          style: OutlinedButton.styleFrom(
+            foregroundColor: color,
+            minimumSize: const Size.fromHeight(44),
+          ),
+          onPressed: () => Navigator.of(context).push(
+            MaterialPageRoute<void>(
+              builder: (_) => SalaryReceiptsScreen(
+                employeeFnd: (person.details['الرقم التعريفي'] ?? '').trim(),
+                employeeName: person.fullName,
+              ),
+            ),
+          ),
+          icon: const Icon(Icons.payments_outlined, size: 19),
+          label: const Text('الرواتب وسندات القبض'),
+        ),
+      );
+
+  /// قسم التفويضات داخل تبويب المستندات.
+  Widget _buildDelegationsSection() {
+    final custodies = _custodiesManagedByPerson;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        AppSectionAddRow(
+          title: 'التفويضات الممنوحة له',
+          icon: Icons.assignment_ind_outlined,
+          accent: const Color(0xFF0A5A50),
+          count: _delegations.length + custodies.length,
+          onAdd: _person.isFrozen ? null : _addDelegation,
+        ),
+        if (_delegationsLoading)
+          const Padding(
+            padding: EdgeInsets.symmetric(vertical: 18),
+            child: Center(
+              child: SizedBox(
+                width: 20,
+                height: 20,
+                child: CircularProgressIndicator(strokeWidth: 2),
+              ),
+            ),
+          )
+        else if (_delegationsError.isNotEmpty)
+          Padding(
+            padding: const EdgeInsets.symmetric(vertical: 16),
+            child: Text(
+              _delegationsError,
+              textAlign: TextAlign.center,
+              maxLines: 2,
+              style: const TextStyle(
+                fontSize: 11.5,
+                fontWeight: FontWeight.w700,
+                color: Color(0xFFC4392E),
+              ),
+            ),
+          )
+        else if (_delegations.isEmpty && custodies.isEmpty)
+          const Padding(
+            padding: EdgeInsets.symmetric(vertical: 16),
+            child: Text(
+              'لا يوجد تفويض ممنوح لهذا السجل',
+              textAlign: TextAlign.center,
+              style: TextStyle(
+                fontSize: 11.5,
+                fontWeight: FontWeight.w700,
+                color: Color(0xFF8C9A97),
+              ),
+            ),
+          )
+        else ...[
+          for (final item in _delegations) _delegationRow(item),
+          for (final record in custodies) _custodyDelegationRow(record),
+        ],
+        const SizedBox(height: 6),
+      ],
+    );
+  }
+
+  Widget _delegationRow(DelegationRecord item) {
+    final status = item.statusLabel;
+    final statusColor = switch (status) {
+      'نشط' => const Color(0xFF0E7161),
+      'قارب الانتهاء' => const Color(0xFFA6691A),
+      'منتهي' => const Color(0xFFC4392E),
+      _ => const Color(0xFF8C9A97),
+    };
+    final period = item.endDate == null
+        ? 'من ${_formatDate(item.startDate)} · مفتوح'
+        : 'من ${_formatDate(item.startDate)} إلى ${_formatDate(item.endDate)}';
+    return InkWell(
+      borderRadius: BorderRadius.circular(AppTheme.rInner),
+      onTap: () => _openDelegationActions(item),
+      child: Container(
+        margin: const EdgeInsets.only(bottom: 8),
+        padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
+        decoration: BoxDecoration(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(AppTheme.rInner),
+          border: Border.all(color: AppTheme.hairline),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Row(
+              textDirection: AppTr.uiDir,
+              children: [
+                const Icon(
+                  Icons.assignment_ind_outlined,
+                  size: 17,
+                  color: Color(0xFF0A5A50),
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    item.scope,
+                    textAlign: AppTr.alignEnd,
+                    maxLines: 3,
+                    softWrap: true,
+                    style: const TextStyle(
+                      fontSize: 12.5,
+                      height: 1.3,
+                      fontWeight: FontWeight.w900,
+                      color: Color(0xFF0F1F1C),
+                    ),
+                  ),
+                ),
+                const SizedBox(width: 6),
+                Container(
+                  padding: const EdgeInsets.symmetric(
+                    horizontal: 8,
+                    vertical: 4,
+                  ),
+                  decoration: BoxDecoration(
+                    color: statusColor.withValues(alpha: 0.1),
+                    borderRadius: BorderRadius.circular(AppTheme.rPill),
+                  ),
+                  child: Text(
+                    status,
+                    maxLines: 3,
+                    style: TextStyle(
+                      fontSize: 10.5,
+                      fontWeight: FontWeight.w900,
+                      color: statusColor,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+            const SizedBox(height: 6),
+            Text(
+              _permissionLevelLabel(item.permissions),
+              textAlign: AppTr.alignEnd,
+              maxLines: 2,
+              softWrap: true,
+              style: const TextStyle(
+                fontSize: 11.5,
+                height: 1.3,
+                fontWeight: FontWeight.w700,
+                color: Color(0xFF46534F),
+              ),
+            ),
+            const SizedBox(height: 2),
+            Text(
+              (item.notes ?? '').trim().isEmpty
+                  ? period
+                  : '$period · ${(item.notes ?? '').trim()}',
+              textAlign: AppTr.alignEnd,
+              maxLines: 2,
+              softWrap: true,
+              style: const TextStyle(
+                fontSize: 11,
+                height: 1.3,
+                fontWeight: FontWeight.w600,
+                color: Color(0xFF8C9A97),
+              ),
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// سطر «مفوَّض منك في كذا» داخل الملخص — تذكير سريع بما يملكه هذا السجل.
+  Widget _buildDelegationSummaryLines() {
+    final active = _delegations.where((e) => e.isActive).toList();
+    if (active.isEmpty) return const SizedBox.shrink();
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        const SizedBox(height: 8),
+        const AppSectionAddRow(
+          title: 'تفويضات سارية',
+          icon: Icons.how_to_reg_outlined,
+          accent: Color(0xFF0A5A50),
+        ),
+        for (final item in active)
+          Container(
+            margin: const EdgeInsets.only(bottom: 8),
+            padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
+            decoration: BoxDecoration(
+              color: Colors.white,
+              borderRadius: BorderRadius.circular(AppTheme.rInner),
+              border: Border.all(color: AppTheme.hairline),
+            ),
+            child: Row(
+              textDirection: AppTr.uiDir,
+              children: [
+                const Icon(
+                  Icons.how_to_reg_outlined,
+                  size: 17,
+                  color: Color(0xFF0A5A50),
+                ),
+                const SizedBox(width: 8),
+                Expanded(
+                  child: Text(
+                    'مفوَّض منك في ${item.scope} · ${_permissionLevelLabel(item.permissions)}',
+                    textAlign: AppTr.alignEnd,
+                    maxLines: 3,
+                    softWrap: true,
+                    style: const TextStyle(
+                      fontSize: 12,
+                      height: 1.35,
+                      fontWeight: FontWeight.w800,
+                      color: Color(0xFF0F1F1C),
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+      ],
+    );
   }
 
   void _applyPersonUpdate(_PersonItem updated, {String? notice}) {
@@ -1744,6 +4953,13 @@ class _PersonDetailsScreenState extends State<PersonDetailsScreen> {
   }
 
   Future<void> _editPersonData() async {
+    final fullEdit = widget.onFullEdit;
+    if (fullEdit != null) {
+      final updated = await fullEdit(_person);
+      if (updated == null || !mounted) return;
+      _applyPersonUpdate(updated, notice: 'تم تحديث بيانات الشخص');
+      return;
+    }
     final nameController = TextEditingController(text: _person.fullName);
     final phoneController = TextEditingController(
       text: _detailValue(_person, const ['رقم الهاتف'], fallback: ''),
@@ -1779,11 +4995,11 @@ class _PersonDetailsScreenState extends State<PersonDetailsScreen> {
                 crossAxisAlignment: CrossAxisAlignment.end,
                 children: [
                   const Text(
-                    'تعديل البيانات',
+                    'تعديل بيانات',
                     style: TextStyle(
                       fontSize: 17,
                       fontWeight: FontWeight.w800,
-                      color: Color(0xFF0F172A),
+                      color: Color(0xFF022E2A),
                     ),
                   ),
                   const SizedBox(height: 10),
@@ -1891,7 +5107,7 @@ class _PersonDetailsScreenState extends State<PersonDetailsScreen> {
               FilledButton(
                 onPressed: () => Navigator.of(context).pop(true),
                 style: FilledButton.styleFrom(
-                  backgroundColor: const Color(0xFFDC2626),
+                  backgroundColor: const Color(0xFFC4392E),
                 ),
                 child: const Text('حذف'),
               ),
@@ -1904,27 +5120,6 @@ class _PersonDetailsScreenState extends State<PersonDetailsScreen> {
     if (confirmed != true || !mounted) return;
     widget.onPersonDeleted?.call(_sourcePerson);
     Navigator.of(context).pop();
-  }
-
-  void _toggleFreeze() {
-    final nowFrozen = !_person.isFrozen;
-    _applyPersonUpdate(
-      _person.copyWith(isFrozen: nowFrozen, lastUpdate: _todayStamp()),
-      notice: nowFrozen ? 'تم تجميد الشخص' : 'تم إلغاء التجميد',
-    );
-  }
-
-  void _togglePin() {
-    final nowPinned = !_person.isPinned;
-    _applyPersonUpdate(
-      _person.copyWith(isPinned: nowPinned, lastUpdate: _todayStamp()),
-      // الرسالة تصف ما يحدث فعلًا: التثبيت يرفع السجل إلى أعلى القائمة في
-      // هذه الشاشة. لا شيء في الصفحة الرئيسية يقرأ isPinned، فكان الوعد
-      // السابق بـ"تثبيت في الرئيسية" غير صحيح.
-      notice: nowPinned
-          ? 'تم تثبيت الشخص في أعلى القائمة'
-          : 'تم إلغاء التثبيت',
-    );
   }
 
   /// الأرشفة تُنفَّذ كتجميد قابل للتراجع بدل الكتابة فوق التصنيف والحالة.
@@ -1965,11 +5160,10 @@ class _PersonDetailsScreenState extends State<PersonDetailsScreen> {
       case ThreeDotMenuAction.archive:
         _archivePerson();
         break;
+      // التجميد والتثبيت حُذفا من قائمة الخيارات؛ تبقى الحالتان مقروءتين
+      // من السجلات القديمة فقط.
       case ThreeDotMenuAction.freeze:
-        _toggleFreeze();
-        break;
       case ThreeDotMenuAction.pinHome:
-        _togglePin();
         break;
     }
   }
@@ -1993,7 +5187,7 @@ class _PersonDetailsScreenState extends State<PersonDetailsScreen> {
   ];
 
   final List<_ActionGroup> _inputGroups = [
-    _ActionGroup('إضافة مالية', const Color(0xFF0EA5A4), const [
+    _ActionGroup('إضافة مالية', const Color(0xFF34A894), const [
       _ActionTemplate('عهدة مالية', [
         _FieldDef('المبلغ', true),
         _FieldDef('الوصف', false),
@@ -2025,7 +5219,7 @@ class _PersonDetailsScreenState extends State<PersonDetailsScreen> {
         _FieldDef('المبلغ', true),
       ]),
     ]),
-    _ActionGroup('إضافة تنظيمية إدارية', const Color(0xFF0F6AA8), const [
+    _ActionGroup('إضافة تنظيمية إدارية', const Color(0xFF0A5A50), const [
       _ActionTemplate('مهمة', [
         _FieldDef('عنوان المهمة', false),
         _FieldDef('المسؤول', false),
@@ -2064,7 +5258,7 @@ class _PersonDetailsScreenState extends State<PersonDetailsScreen> {
         _FieldDef('ملاحظة', false),
       ]),
     ]),
-    _ActionGroup('إضافة مستند', const Color(0xFF7C3AED), const [
+    _ActionGroup('إضافة مستند', const Color(0xFF0E7161), const [
       _ActionTemplate('مستند', [
         _FieldDef('اسم المستند', false),
         _expiryDateField,
@@ -2116,7 +5310,7 @@ class _PersonDetailsScreenState extends State<PersonDetailsScreen> {
         _FieldDef('سبب الرفض', false),
       ]),
     ]),
-    _ActionGroup('إضافة صلاحية / تفويض', const Color(0xFFE11D48), const [
+    _ActionGroup('إضافة صلاحية / تفويض', const Color(0xFFC4392E), const [
       _ActionTemplate('تفويض', [
         _FieldDef('نوع التفويض', false),
         _FieldDef('الفترة', false),
@@ -2139,7 +5333,7 @@ class _PersonDetailsScreenState extends State<PersonDetailsScreen> {
         _FieldDef('العنصر', false),
       ]),
     ]),
-    _ActionGroup('إضافة كلمات سر', const Color(0xFF10B981), const [
+    _ActionGroup('إضافة كلمات سر', const Color(0xFF34A894), const [
       _ActionTemplate('كلمة سر', [
         _FieldDef('اسم التطبيق أو الموقع', false),
         _FieldDef('اسم المستخدم', false),
@@ -2156,7 +5350,7 @@ class _PersonDetailsScreenState extends State<PersonDetailsScreen> {
         _FieldDef('ملاحظة', false),
       ]),
     ]),
-    _ActionGroup('إضافة مواقع وروابط', const Color(0xFF0EA5A4), const [
+    _ActionGroup('إضافة مواقع وروابط', const Color(0xFF34A894), const [
       _ActionTemplate('موقع', [
         _FieldDef('اسم الموقع', false),
         _FieldDef('العنوان', false),
@@ -2179,6 +5373,9 @@ class _PersonDetailsScreenState extends State<PersonDetailsScreen> {
   void initState() {
     super.initState();
     _person = widget.person;
+    _loadDelegations();
+    _loadLinked();
+    _loadSalaryReceipts();
     _sourcePerson = widget.person;
     _personDocuments = List<String>.from(widget.person.documents);
     _personSharedCommitments = List<String>.from(
@@ -2225,7 +5422,7 @@ class _PersonDetailsScreenState extends State<PersonDetailsScreen> {
                     style: const TextStyle(
                       fontSize: 17,
                       fontWeight: FontWeight.w800,
-                      color: Color(0xFF0F172A),
+                      color: Color(0xFF022E2A),
                     ),
                   ),
                   const SizedBox(height: 10),
@@ -2362,6 +5559,511 @@ class _PersonDetailsScreenState extends State<PersonDetailsScreen> {
   // المتّبع تمامًا في تفاصيل الالتزام الشخصي والمشترك (3 مربعات ثم قسم
   // إضافي قابل للطي)، وبنفس ترتيب الأقسام الوارد في ملف المتطلبات:
   // مالية، متابعة وتخطيط، مستندات، إضافة إجراء، مواقع وأماكن، تفويض.
+  /// نموذج العهدة المالية — نفس حقول عهدة الالتزامات الشخصية: ما هي،
+  /// ومن استلمها، ومتى، وإلى متى. العهدة بلا مستلم ولا أجل ليست عهدة.
+  Future<void> _openCustodySheet() async {
+    const accent = Color(0xFF34A894);
+    final nameCtrl = TextEditingController();
+    final amountCtrl = TextEditingController();
+    final receiverCtrl = TextEditingController();
+    final receiverIdCtrl = TextEditingController();
+    final receivedCtrl = TextEditingController(text: _todayStamp());
+    final dueCtrl = TextEditingController();
+    final deliveredCtrl = TextEditingController();
+    final purposeCtrl = TextEditingController();
+    final referenceCtrl = TextEditingController();
+    final notesCtrl = TextEditingController();
+    var custodyType = _custodyTypes.first;
+    var state = _custodyStates.first;
+    var reminder = _kReminderNone;
+    var showExtra = false;
+    var attachment = '';
+
+    Future<void> pick(TextEditingController controller) async {
+      final now = DateTime.now();
+      final picked = await showDatePicker(
+        context: context,
+        initialDate:
+            AppRemindersStore.parseDisplayDate(controller.text) ?? now,
+        firstDate: DateTime(now.year - 5),
+        lastDate: DateTime(now.year + 30),
+        builder: (pickerContext, child) => Directionality(
+          textDirection: AppTr.uiDir,
+          child: child ?? const SizedBox.shrink(),
+        ),
+      );
+      if (picked == null) return;
+      controller.text = '${picked.day}/${picked.month}/${picked.year}';
+    }
+
+    final saved = await showModalBottomSheet<bool>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.transparent,
+      builder: (sheetContext) => Directionality(
+        textDirection: AppTr.uiDir,
+        child: StatefulBuilder(
+          builder: (context, setSheetState) => Padding(
+            padding: EdgeInsets.only(
+              bottom: MediaQuery.of(context).viewInsets.bottom,
+            ),
+            child: Container(
+              constraints: BoxConstraints(
+                maxHeight: MediaQuery.of(context).size.height * 0.92,
+              ),
+              padding: const EdgeInsets.fromLTRB(16, 12, 16, 20),
+              decoration: const BoxDecoration(
+                color: Colors.white,
+                borderRadius: BorderRadius.vertical(
+                  top: Radius.circular(AppTheme.rCard),
+                ),
+              ),
+              child: SingleChildScrollView(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    Center(
+                      child: Container(
+                        width: 42,
+                        height: 4,
+                        decoration: BoxDecoration(
+                          color: const Color(0xFFD5DEDB),
+                          borderRadius: BorderRadius.circular(999),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 14),
+                    const Text(
+                      'عهدة مالية',
+                      style: TextStyle(
+                        fontSize: 17,
+                        fontWeight: FontWeight.w900,
+                        color: Color(0xFF022E2A),
+                      ),
+                    ),
+                    const SizedBox(height: 14),
+                    _sheetField(nameCtrl, 'اسم العهدة *', Icons.title_rounded),
+                    const SizedBox(height: 9),
+                    // قيمة العهدة كانت غائبة هنا بينما هي حقل إلزامي في
+                    // عهدة الالتزامات الشخصية — فتُسجَّل عهدة بلا مبلغ.
+                    _sheetField(
+                      amountCtrl,
+                      'قيمة العهدة *',
+                      Icons.payments_outlined,
+                      numeric: true,
+                    ),
+                    const SizedBox(height: 9),
+                    _sheetField(
+                      receiverCtrl,
+                      'اسم المستلم *',
+                      Icons.person_outline_rounded,
+                    ),
+                    const SizedBox(height: 9),
+                    // العهدة لا تُفتح بلا مسؤول: الرقم التعريفي إلزامي كما
+                    // في الالتزامات الشخصية.
+                    _sheetField(
+                      receiverIdCtrl,
+                      'الرقم التعريفي للمستلم *',
+                      Icons.badge_outlined,
+                    ),
+                    const FndNameNotice(),
+                    const SizedBox(height: 9),
+                    _sheetDropdown(
+                      'نوع العهدة *',
+                      Icons.category_outlined,
+                      custodyType,
+                      _custodyTypes,
+                      (value) => setSheetState(() => custodyType = value),
+                    ),
+                    const SizedBox(height: 9),
+                    _sheetDateField(
+                      receivedCtrl,
+                      'تاريخ الاستلام *',
+                      () async {
+                        await pick(receivedCtrl);
+                        setSheetState(() {});
+                      },
+                    ),
+                    const SizedBox(height: 9),
+                    Row(
+                      textDirection: AppTr.uiDir,
+                      children: [
+                        Expanded(
+                          child: _sheetDateField(dueCtrl, 'أجل العهدة *', () async {
+                            await pick(dueCtrl);
+                            setSheetState(() {});
+                          }),
+                        ),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: _sheetDropdown(
+                            'تذكير',
+                            Icons.notifications_none_rounded,
+                            reminder,
+                            _kReminderOptions,
+                            (value) => setSheetState(() => reminder = value),
+                          ),
+                        ),
+                      ],
+                    ),
+                    const SizedBox(height: 12),
+                    InkWell(
+                      onTap: () => setSheetState(() => showExtra = !showExtra),
+                      borderRadius: BorderRadius.circular(12),
+                      child: Padding(
+                        padding: const EdgeInsets.symmetric(vertical: 6),
+                        child: Row(
+                          textDirection: AppTr.uiDir,
+                          children: [
+                            const Icon(
+                              Icons.tune_rounded,
+                              size: 18,
+                              color: accent,
+                            ),
+                            const SizedBox(width: 8),
+                            const Expanded(
+                              child: Text(
+                                'الحقول الإضافية',
+                                textAlign: TextAlign.right,
+                                style: TextStyle(
+                                  fontSize: 12.5,
+                                  fontWeight: FontWeight.w900,
+                                  color: Color(0xFF0F1F1C),
+                                ),
+                              ),
+                            ),
+                            Icon(
+                              showExtra
+                                  ? Icons.keyboard_arrow_up_rounded
+                                  : Icons.keyboard_arrow_down_rounded,
+                              color: accent,
+                            ),
+                          ],
+                        ),
+                      ),
+                    ),
+                    if (showExtra) ...[
+                      const SizedBox(height: 6),
+                      _sheetDateField(deliveredCtrl, 'تاريخ التسليم', () async {
+                        await pick(deliveredCtrl);
+                        setSheetState(() {});
+                      }),
+                      const SizedBox(height: 9),
+                      _sheetField(
+                        purposeCtrl,
+                        'الغرض من العهدة',
+                        Icons.flag_outlined,
+                      ),
+                      const SizedBox(height: 9),
+                      _sheetDropdown(
+                        'حالة العهدة',
+                        Icons.fact_check_outlined,
+                        state,
+                        _custodyStates,
+                        (value) => setSheetState(() => state = value),
+                      ),
+                      const SizedBox(height: 9),
+                      _sheetField(
+                        referenceCtrl,
+                        'رقم المرجع أو المستند',
+                        Icons.tag_rounded,
+                      ),
+                    ],
+                    const SizedBox(height: 9),
+                    _sheetField(notesCtrl, 'ملاحظات', Icons.notes_rounded),
+                    const SizedBox(height: 12),
+                    if (attachment.isEmpty)
+                      OutlinedButton.icon(
+                        onPressed: () async {
+                          final path = await DocumentStore.pickAndStore(context: context);
+                          if (path == null) return;
+                          setSheetState(() => attachment = path);
+                        },
+                        icon: const Icon(Icons.attach_file_rounded, size: 18),
+                        label: const Text('إرفاق مستند العهدة'),
+                        style: OutlinedButton.styleFrom(
+                          foregroundColor: accent,
+                          minimumSize: const Size.fromHeight(46),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                        ),
+                      )
+                    else
+                      Container(
+                        padding: const EdgeInsets.fromLTRB(10, 10, 10, 10),
+                        decoration: BoxDecoration(
+                          color: AppTheme.field,
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                        child: Row(
+                          textDirection: AppTr.uiDir,
+                          children: [
+                            const Icon(
+                              Icons.description_outlined,
+                              size: 17,
+                              color: accent,
+                            ),
+                            const SizedBox(width: 6),
+                            Expanded(
+                              child: Text(
+                                DocumentStore.shortName(attachment),
+                                textAlign: AppTr.alignEnd,
+                                maxLines: 3,
+                                style: const TextStyle(
+                                  fontSize: 11.5,
+                                  fontWeight: FontWeight.w700,
+                                  color: Color(0xFF0F1F1C),
+                                ),
+                              ),
+                            ),
+                            InkWell(
+                              onTap: () => setSheetState(() => attachment = ''),
+                              child: const Icon(
+                                Icons.close_rounded,
+                                size: 17,
+                                color: Color(0xFF8C9A97),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
+                    const SizedBox(height: 16),
+                    ElevatedButton(
+                      onPressed: () {
+                        final missing = <String>[
+                          if (nameCtrl.text.trim().isEmpty) 'اسم العهدة',
+                          if (amountCtrl.text.trim().isEmpty) 'قيمة العهدة',
+                          if (receiverCtrl.text.trim().isEmpty) 'اسم المستلم',
+                          if (receiverIdCtrl.text.trim().isEmpty)
+                            'الرقم التعريفي للمستلم',
+                          if (receivedCtrl.text.trim().isEmpty) 'تاريخ الاستلام',
+                          if (dueCtrl.text.trim().isEmpty) 'أجل العهدة',
+                        ];
+                        if (missing.isNotEmpty) {
+                          ScaffoldMessenger.of(sheetContext).showSnackBar(
+                            SnackBar(
+                              content: Text('أكمل: ${missing.join('، ')}'),
+                              behavior: SnackBarBehavior.floating,
+                            ),
+                          );
+                          return;
+                        }
+                        Navigator.pop(sheetContext, true);
+                      },
+                      style: ElevatedButton.styleFrom(
+                        backgroundColor: accent,
+                        foregroundColor: Colors.white,
+                        minimumSize: const Size.fromHeight(48),
+                        shape: RoundedRectangleBorder(
+                          borderRadius: BorderRadius.circular(AppTheme.rField),
+                        ),
+                      ),
+                      child: const Text('إضافة'),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ),
+      ),
+    );
+
+    final name = nameCtrl.text.trim();
+    final amount = amountCtrl.text.trim();
+    final receiver = receiverCtrl.text.trim();
+    final receiverId = receiverIdCtrl.text.trim();
+    final received = receivedCtrl.text.trim();
+    final due = dueCtrl.text.trim();
+    final delivered = deliveredCtrl.text.trim();
+    final purpose = purposeCtrl.text.trim();
+    final reference = referenceCtrl.text.trim();
+    final note = notesCtrl.text.trim();
+    nameCtrl.dispose();
+    amountCtrl.dispose();
+    receiverCtrl.dispose();
+    receiverIdCtrl.dispose();
+    receivedCtrl.dispose();
+    dueCtrl.dispose();
+    deliveredCtrl.dispose();
+    purposeCtrl.dispose();
+    referenceCtrl.dispose();
+    notesCtrl.dispose();
+    if (saved != true || !mounted) return;
+
+    final parts = <String>[
+      'مالية — عهدة مالية',
+      name,
+      if (amount.isNotEmpty) '$amount ${AppSettings.currencySuffix}',
+      custodyType,
+      'المستلم: $receiver',
+      if (receiverId.isNotEmpty) 'تعريف: $receiverId',
+      'استُلمت $received',
+      'ينتهي $due',
+      if (delivered.isNotEmpty) 'سُلّمت $delivered',
+      if (purpose.isNotEmpty) purpose,
+      state,
+      if (reference.isNotEmpty) 'مرجع: $reference',
+      if (note.isNotEmpty) note,
+    ];
+    final logLine = parts.join(' · ');
+
+    var updated = _person.copyWith(
+      activityLog: [..._person.activityLog, logLine],
+      lastUpdate: _todayStamp(),
+    );
+    if (attachment.isNotEmpty) {
+      updated = updated.copyWith(
+        details: _withAttachment(updated.details, logLine, attachment),
+      );
+    }
+
+    await _registerCustodyReminder(name, due, reminder);
+    if (!mounted) return;
+    _applyPersonUpdate(updated, notice: 'تمت إضافة عهدة مالية');
+  }
+
+  Future<void> _registerCustodyReminder(
+    String name,
+    String dueText,
+    String reminder,
+  ) async {
+    final expiry = AppRemindersStore.parseDisplayDate(dueText);
+    if (expiry == null || reminder == _kReminderNone) return;
+    final days = AppRemindersStore.reminderDaysFromLabel(reminder);
+    if (days <= 0) return;
+    await AppRemindersStore.upsert(
+      AppReminder(
+        id: 'person_custody_${DateTime.now().microsecondsSinceEpoch}',
+        title: 'عهدة: $name — ${_person.fullName}',
+        module: 'الأفراد والجهات',
+        expiryDate: expiry,
+        remindBeforeDays: days,
+      ),
+    );
+  }
+
+  /// خيارات التذكير التي تعمل قبل تاريخ الانتهاء: «قبل أسبوعين» لا معنى
+  /// له لمستند ينتهي اليوم.
+  List<String> _reminderOptionsUntil(String dateText) {
+    final left = _daysFromToday(dateText);
+    if (left == null) return _kReminderOptions;
+    return [
+      for (final option in _kReminderOptions)
+        if (option == _kReminderNone ||
+            option == _kReminderCustom ||
+            AppRemindersStore.reminderDaysFromLabel(option) <= left)
+          option,
+    ];
+  }
+
+  /// حقول نوافذ الإضافة — شكل واحد لكل الحقول بدل ثلاثة أشكال مختلطة.
+  Widget _sheetField(
+    TextEditingController controller,
+    String label,
+    IconData icon, {
+    bool numeric = false,
+  }) {
+    return TextField(
+      controller: controller,
+      textDirection: AppTr.uiDir,
+      keyboardType: numeric ? TextInputType.number : null,
+      decoration: InputDecoration(
+        labelText: AppTr.tr(label),
+        prefixIcon: Icon(icon, size: 18, color: const Color(0xFF8C9A97)),
+        border: const OutlineInputBorder(),
+        isDense: true,
+      ),
+    );
+  }
+
+  Widget _sheetDateField(
+    TextEditingController controller,
+    String label,
+    VoidCallback onTap,
+  ) {
+    return TextField(
+      controller: controller,
+      readOnly: true,
+      onTap: onTap,
+      decoration: InputDecoration(
+        labelText: AppTr.tr(label),
+        suffixIcon: const Icon(
+          Icons.calendar_today_rounded,
+          size: 18,
+          color: Color(0xFF0E7161),
+        ),
+        border: const OutlineInputBorder(),
+        isDense: true,
+      ),
+    );
+  }
+
+  Widget _sheetDropdown(
+    String label,
+    IconData icon,
+    String value,
+    List<String> options,
+    ValueChanged<String> onChanged,
+  ) {
+    return DropdownButtonFormField<String>(
+      initialValue: value,
+      isExpanded: true,
+      decoration: InputDecoration(
+        labelText: AppTr.tr(label),
+        prefixIcon: Icon(icon, size: 18, color: const Color(0xFF8C9A97)),
+        border: const OutlineInputBorder(),
+        isDense: true,
+      ),
+      items: [
+        for (final option in options)
+          DropdownMenuItem(value: option, child: FittedBox(fit: BoxFit.scaleDown, alignment: AlignmentDirectional.centerStart, child: Text(option, maxLines: 1))),
+      ],
+      onChanged: (next) => onChanged(next ?? value),
+    );
+  }
+
+  /// زر + داخل القسم: يفتح نموذج إضافة هذا القسم مباشرة بلا نافذة اختيار.
+  void _addForTab(String category) {
+    switch (category) {
+      case 'مالية':
+        _openPersonKindEntrySheet(
+          // الاتجاه من التبويب المختار (له / عليه)، فلا يُسأل مرة ثانية.
+          toPerson: _financeTab == 0,
+          category: 'مالية',
+          color: const Color(0xFF34A894),
+          kinds: const [
+            'المصروفات الشخصية',
+            'إيراد',
+            'دين / قرض / سلفة',
+            'قسط',
+            'غرامة',
+          ],
+          showAmount: true,
+        );
+      case 'متابعة وتخطيط':
+        // نفس نماذج المتابعة والتخطيط في الالتزامات الشخصية.
+        _addFollowUp();
+      case 'مستندات':
+        _openPersonKindEntrySheet(
+          category: 'مستندات',
+          color: const Color(0xFF0E7161),
+          kinds: const ['مستند عام', 'وثائق شخصية'],
+        );
+      case 'عهدة مالية':
+        // نفس إدخال «عهدة مالية» في الالتزامات الشخصية، والمستلم هذا الفرد.
+        _openPersonalForm(
+          'عهدة مالية',
+          prefill: {'اسم المستلم': _person.fullName.trim()},
+        );
+      case 'مواقع وأماكن':
+        // نفس نموذج المواقع والأماكن في الالتزامات الشخصية.
+        _openPersonalForm('مواقع وأماكن');
+    }
+  }
+
   Future<void> _openPersonQuickAddSheet() async {
     var orgExpanded = true;
     final action = await showModalBottomSheet<String>(
@@ -2392,8 +6094,8 @@ class _PersonDetailsScreenState extends State<PersonDetailsScreen> {
                         width: 42,
                         height: 4,
                         decoration: BoxDecoration(
-                          color: const Color(0xFFCBD5E1),
-                          borderRadius: BorderRadius.circular(99),
+                          color: const Color(0xFFD5DEDB),
+                          borderRadius: BorderRadius.circular(999),
                         ),
                       ),
                     ),
@@ -2403,7 +6105,7 @@ class _PersonDetailsScreenState extends State<PersonDetailsScreen> {
                       style: TextStyle(
                         fontSize: 17,
                         fontWeight: FontWeight.w900,
-                        color: Color(0xFF172033),
+                        color: Color(0xFF0F1F1C),
                       ),
                     ),
                     const SizedBox(height: 4),
@@ -2412,7 +6114,7 @@ class _PersonDetailsScreenState extends State<PersonDetailsScreen> {
                       style: TextStyle(
                         fontSize: 11,
                         fontWeight: FontWeight.w600,
-                        color: Color(0xFF64748B),
+                        color: Color(0xFF5C6B68),
                       ),
                     ),
                     const SizedBox(height: 14),
@@ -2430,7 +6132,7 @@ class _PersonDetailsScreenState extends State<PersonDetailsScreen> {
                         Expanded(
                           child: _PersonQuickAddTile(
                             key: const ValueKey('person-add-followup-option'),
-                            label: 'متابعة وتخطيط',
+                            label: 'المتابعة والتخطيط',
                             icon: Icons.event_note_outlined,
                             onTap: () =>
                                 Navigator.pop(sheetContext, 'متابعة وتخطيط'),
@@ -2448,6 +6150,27 @@ class _PersonDetailsScreenState extends State<PersonDetailsScreen> {
                         ),
                       ],
                     ),
+                    const SizedBox(height: 8),
+                    // العهدة المالية قسم قائم بذاته لا نوعًا داخل «مالية»:
+                    // لها حقولها الخاصة (المستلم، الأجل، الأصناف) تمامًا
+                    // كما في الالتزامات الشخصية.
+                    Row(
+                      children: [
+                        Expanded(
+                          child: _PersonQuickAddTile(
+                            key: const ValueKey('person-add-custody-option'),
+                            label: 'عهدة مالية',
+                            icon: Icons.inventory_2_outlined,
+                            onTap: () =>
+                                Navigator.pop(sheetContext, 'عهدة مالية'),
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        const Expanded(child: SizedBox()),
+                        const SizedBox(width: 8),
+                        const Expanded(child: SizedBox()),
+                      ],
+                    ),
                     const SizedBox(height: 14),
                     InkWell(
                       onTap: () =>
@@ -2460,7 +6183,7 @@ class _PersonDetailsScreenState extends State<PersonDetailsScreen> {
                             const Icon(
                               Icons.more_horiz_rounded,
                               size: 18,
-                              color: Color(0xFF0C6A8C),
+                              color: Color(0xFF0E7161),
                             ),
                             const SizedBox(width: 8),
                             const Expanded(
@@ -2469,7 +6192,7 @@ class _PersonDetailsScreenState extends State<PersonDetailsScreen> {
                                 style: TextStyle(
                                   fontSize: 13,
                                   fontWeight: FontWeight.w900,
-                                  color: Color(0xFF172033),
+                                  color: Color(0xFF0F1F1C),
                                 ),
                               ),
                             ),
@@ -2477,7 +6200,7 @@ class _PersonDetailsScreenState extends State<PersonDetailsScreen> {
                               orgExpanded
                                   ? Icons.keyboard_arrow_up_rounded
                                   : Icons.keyboard_arrow_down_rounded,
-                              color: const Color(0xFF0C6A8C),
+                              color: const Color(0xFF0E7161),
                             ),
                           ],
                         ),
@@ -2485,18 +6208,10 @@ class _PersonDetailsScreenState extends State<PersonDetailsScreen> {
                     ),
                     if (orgExpanded) ...[
                       const SizedBox(height: 6),
+                      // «إضافة إجراء» حُذفت: لا تبويب لها ولا معنى لبند
+                      // لا يظهر في أي قسم.
                       Row(
                         children: [
-                          Expanded(
-                            child: _PersonQuickAddTile(
-                              key: const ValueKey('person-add-action-option'),
-                              label: 'إضافة إجراء',
-                              icon: Icons.gavel_outlined,
-                              onTap: () =>
-                                  Navigator.pop(sheetContext, 'إضافة إجراء'),
-                            ),
-                          ),
-                          const SizedBox(width: 8),
                           Expanded(
                             child: _PersonQuickAddTile(
                               key: const ValueKey('person-add-place-option'),
@@ -2506,6 +6221,8 @@ class _PersonDetailsScreenState extends State<PersonDetailsScreen> {
                                   Navigator.pop(sheetContext, 'مواقع وأماكن'),
                             ),
                           ),
+                          const SizedBox(width: 8),
+                          const Expanded(child: SizedBox()),
                           const SizedBox(width: 8),
                           const Expanded(child: SizedBox()),
                         ],
@@ -2547,43 +6264,37 @@ class _PersonDetailsScreenState extends State<PersonDetailsScreen> {
       case 'مالية':
         _openPersonKindEntrySheet(
           category: 'مالية',
-          color: const Color(0xFF0EA5A4),
-          kinds: const ['راتب', 'مكافأة', 'عهدة مالية', 'دفعة / سداد', 'مصروف'],
+          color: const Color(0xFF34A894),
+          kinds: const [
+            'المصروفات الشخصية',
+            'إيراد',
+            'دين / قرض / سلفة',
+            'قسط',
+            'غرامة',
+          ],
           showAmount: true,
         );
       case 'متابعة وتخطيط':
-        _openPersonKindEntrySheet(
-          category: 'متابعة وتخطيط',
-          color: const Color(0xFF0F6AA8),
-          kinds: const ['مهمة', 'تذكير', 'موعد', 'عادة', 'ملاحظات'],
-        );
+        // نفس نماذج المتابعة والتخطيط في الالتزامات الشخصية.
+        _addFollowUp();
       case 'مستندات':
         _openPersonKindEntrySheet(
           category: 'مستندات',
-          color: const Color(0xFF7C3AED),
+          color: const Color(0xFF0E7161),
           kinds: const ['مستند عام', 'وثائق شخصية'],
         );
-      case 'إضافة إجراء':
-        _openPersonKindEntrySheet(
-          category: 'إضافة إجراء',
-          color: const Color(0xFFE11D48),
-          kinds: const ['تسوية مالية', 'تصويت', 'اعتراض', 'استبيان'],
+      case 'عهدة مالية':
+        // نفس إدخال «عهدة مالية» في الالتزامات الشخصية، والمستلم هذا الفرد.
+        _openPersonalForm(
+          'عهدة مالية',
+          prefill: {'اسم المستلم': _person.fullName.trim()},
         );
       case 'مواقع وأماكن':
-        _openPersonKindEntrySheet(
-          category: 'مواقع وأماكن',
-          color: const Color(0xFF0EA5A4),
-          kinds: const ['موقع', 'رابط موقع'],
-        );
+        // نفس نموذج المواقع والأماكن في الالتزامات الشخصية.
+        _openPersonalForm('مواقع وأماكن');
       case 'تفويض':
-        // بيانات التفويض تُخزَّن ضمن "متابعة وتخطيط" مباشرة (وليست قسمًا
-        // مستقلاً) بقرار المستخدم السابق، بنفس منطق الالتزامات المشتركة.
-        _openPersonKindEntrySheet(
-          category: 'متابعة وتخطيط',
-          color: const Color(0xFF0F6AA8),
-          kinds: const ['مهمة', 'تذكير', 'موعد', 'عادة', 'ملاحظات', 'تفويض'],
-          initialKind: 'تفويض',
-        );
+        // نفس نموذج «المزيد ← التفويضات».
+        _addDelegation();
     }
   }
 
@@ -2596,15 +6307,22 @@ class _PersonDetailsScreenState extends State<PersonDetailsScreen> {
     required List<String> kinds,
     String? initialKind,
     bool showAmount = false,
+    bool? toPerson,
   }) async {
     const customOption = '+ إضافة أخرى';
     var kind = initialKind ?? kinds.first;
     // اتجاه المبلغ يُحدَّده المستخدم صراحةً بنفس ألفاظ الشاشة ("له"/"عليه")
-    // بدل استنتاجه من اسم النوع، فلا يُسجَّل مبلغ في الجهة الخاطئة.
-    var amountToPerson = false;
+    // بدل استنتاجه من اسم النوع، فلا يُسجَّل مبلغ في الجهة الخاطئة. وإن جاء
+    // من تبويب «له» أو «عليه» فهو محدَّد مسبقًا ولا يظهر السؤال.
+    var amountToPerson = toPerson ?? false;
+    // كل ما له تاريخ انتهاء يحمل تذكيرًا: التاريخ وحده لا ينبّه أحدًا.
+    var reminder = _kReminderNone;
+    // المرفق: صورة المستند أو الفاتورة. إلزامي في «مستندات».
+    var attachment = '';
     final customKindCtrl = TextEditingController();
     final amountCtrl = TextEditingController();
     final dateCtrl = TextEditingController();
+    final customDaysCtrl = TextEditingController();
     final notesCtrl = TextEditingController();
 
     final saved = await showModalBottomSheet<bool>(
@@ -2634,8 +6352,8 @@ class _PersonDetailsScreenState extends State<PersonDetailsScreen> {
                         width: 42,
                         height: 4,
                         decoration: BoxDecoration(
-                          color: const Color(0xFFCBD5E1),
-                          borderRadius: BorderRadius.circular(99),
+                          color: const Color(0xFFD5DEDB),
+                          borderRadius: BorderRadius.circular(999),
                         ),
                       ),
                     ),
@@ -2643,9 +6361,9 @@ class _PersonDetailsScreenState extends State<PersonDetailsScreen> {
                     Text(
                       category,
                       style: const TextStyle(
-                        fontSize: 18,
+                        fontSize: 17,
                         fontWeight: FontWeight.w900,
-                        color: Color(0xFF0F172A),
+                        color: Color(0xFF022E2A),
                       ),
                     ),
                     const SizedBox(height: 14),
@@ -2692,6 +6410,10 @@ class _PersonDetailsScreenState extends State<PersonDetailsScreen> {
                           isDense: true,
                         ),
                       ),
+                      // اتجاه المبلغ لا معنى له إلا فيما يُنشئ دَينًا:
+                      // الراتب والمصروف لا يُسألان «له أم عليه».
+                      if (toPerson == null &&
+                          _directionKinds.contains(kind)) ...[
                       const SizedBox(height: 8),
                       Row(
                         children: [
@@ -2727,16 +6449,106 @@ class _PersonDetailsScreenState extends State<PersonDetailsScreen> {
                           ),
                         ],
                       ),
+                      ],
                     ],
                     const SizedBox(height: 10),
-                    TextField(
-                      controller: dateCtrl,
-                      decoration: InputDecoration(
-                        labelText: AppTr.tr('التاريخ'),
-                        border: OutlineInputBorder(),
-                        isDense: true,
-                      ),
+                    // التاريخ والتذكير في سطر واحد، بخط عنوان أصغر ليظهر
+                    // كاملًا بلا قصّ.
+                    Row(
+                      textDirection: AppTr.uiDir,
+                      children: [
+                        Expanded(
+                          child: TextField(
+                            controller: dateCtrl,
+                            readOnly: true,
+                            onTap: () async {
+                              final now = DateTime.now();
+                              final picked = await showDatePicker(
+                                context: context,
+                                initialDate:
+                                    AppRemindersStore.parseDisplayDate(
+                                      dateCtrl.text,
+                                    ) ??
+                                    now,
+                                firstDate: DateTime(now.year - 5),
+                                lastDate: DateTime(now.year + 30),
+                                builder: (pickerContext, child) =>
+                                    Directionality(
+                                      textDirection: AppTr.uiDir,
+                                      child: child ?? const SizedBox.shrink(),
+                                    ),
+                              );
+                              if (picked == null) return;
+                              setSheetState(() {
+                                dateCtrl.text =
+                                    '${picked.day}/${picked.month}/${picked.year}';
+                                // تذكير أبعد من المدة الباقية لا يعمل: يُلغى.
+                                if (!_reminderOptionsUntil(dateCtrl.text)
+                                    .contains(reminder)) {
+                                  reminder = _kReminderNone;
+                                }
+                              });
+                            },
+                            decoration: InputDecoration(
+                              labelText: AppTr.tr(
+                                category == 'مالية'
+                                    ? 'تاريخ الاستحقاق'
+                                    : 'تاريخ الانتهاء',
+                              ),
+                              labelStyle: const TextStyle(fontSize: 12),
+                              suffixIcon: const Icon(
+                                Icons.calendar_today_rounded,
+                                size: 18,
+                                color: Color(0xFF0E7161),
+                              ),
+                              suffixIconConstraints: const BoxConstraints(
+                                minWidth: 34,
+                                minHeight: 34,
+                              ),
+                              border: const OutlineInputBorder(),
+                              isDense: true,
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: DropdownButtonFormField<String>(
+                            initialValue: reminder,
+                            isExpanded: true,
+                            decoration: InputDecoration(
+                              labelText: AppTr.tr('تذكير'),
+                              labelStyle: const TextStyle(fontSize: 12),
+                              border: const OutlineInputBorder(),
+                              isDense: true,
+                            ),
+                            items: [
+                              for (final option in _reminderOptionsUntil(
+                                dateCtrl.text,
+                              ))
+                                DropdownMenuItem(
+                                  value: option,
+                                  child: FittedBox(fit: BoxFit.scaleDown, alignment: AlignmentDirectional.centerStart, child: Text(option, maxLines: 1)),
+                                ),
+                            ],
+                            onChanged: (value) => setSheetState(
+                              () => reminder = value ?? reminder,
+                            ),
+                          ),
+                        ),
+                      ],
                     ),
+                    if (reminder == _kReminderCustom) ...[
+                      const SizedBox(height: 10),
+                      TextField(
+                        controller: customDaysCtrl,
+                        keyboardType: TextInputType.number,
+                        decoration: InputDecoration(
+                          labelText: AppTr.tr('التذكير قبل كم يوم'),
+                          border: const OutlineInputBorder(),
+                          isDense: true,
+                        ),
+                      ),
+                    ],
                     const SizedBox(height: 10),
                     TextField(
                       controller: notesCtrl,
@@ -2747,11 +6559,84 @@ class _PersonDetailsScreenState extends State<PersonDetailsScreen> {
                         isDense: true,
                       ),
                     ),
+                    const SizedBox(height: 12),
+                    // إرفاق المستند: صورة الفاتورة أو الوثيقة نفسها.
+                    if (attachment.isEmpty)
+                      OutlinedButton.icon(
+                        onPressed: () async {
+                          final path = await DocumentStore.pickAndStore(context: context);
+                          if (path == null) return;
+                          setSheetState(() => attachment = path);
+                        },
+                        icon: const Icon(Icons.attach_file_rounded, size: 18),
+                        label: Text(
+                          category == 'مستندات'
+                              ? 'إرفاق صورة المستند *'
+                              : 'إرفاق مستند أو فاتورة',
+                        ),
+                        style: OutlinedButton.styleFrom(
+                          foregroundColor: color,
+                          minimumSize: const Size.fromHeight(46),
+                          shape: RoundedRectangleBorder(
+                            borderRadius: BorderRadius.circular(12),
+                          ),
+                        ),
+                      )
+                    else
+                      Container(
+                        padding: const EdgeInsets.fromLTRB(10, 10, 10, 10),
+                        decoration: BoxDecoration(
+                          color: AppTheme.field,
+                          borderRadius: BorderRadius.circular(12),
+                        ),
+                        child: Row(
+                          textDirection: AppTr.uiDir,
+                          children: [
+                            Icon(
+                              Icons.description_outlined,
+                              size: 17,
+                              color: color,
+                            ),
+                            const SizedBox(width: 6),
+                            Expanded(
+                              child: Text(
+                                DocumentStore.shortName(attachment),
+                                textAlign: AppTr.alignEnd,
+                                maxLines: 3,
+                                style: const TextStyle(
+                                  fontSize: 11.5,
+                                  fontWeight: FontWeight.w700,
+                                  color: Color(0xFF0F1F1C),
+                                ),
+                              ),
+                            ),
+                            InkWell(
+                              onTap: () =>
+                                  setSheetState(() => attachment = ''),
+                              child: const Icon(
+                                Icons.close_rounded,
+                                size: 17,
+                                color: Color(0xFF8C9A97),
+                              ),
+                            ),
+                          ],
+                        ),
+                      ),
                     const SizedBox(height: 16),
-                    ElevatedButton.icon(
-                      onPressed: () => Navigator.pop(sheetContext, true),
-                      icon: const Icon(Icons.check_circle_outline_rounded),
-                      label: const Text('+ إضافة'),
+                    ElevatedButton(
+                      onPressed: () {
+                        // المستند بلا مرفق لا قيمة له: الصورة هي المستند.
+                        if (category == 'مستندات' && attachment.isEmpty) {
+                          ScaffoldMessenger.of(sheetContext).showSnackBar(
+                            const SnackBar(
+                              content: Text('أرفق صورة المستند أولاً'),
+                              behavior: SnackBarBehavior.floating,
+                            ),
+                          );
+                          return;
+                        }
+                        Navigator.pop(sheetContext, true);
+                      },
                       style: ElevatedButton.styleFrom(
                         backgroundColor: color,
                         foregroundColor: Colors.white,
@@ -2760,6 +6645,7 @@ class _PersonDetailsScreenState extends State<PersonDetailsScreen> {
           borderRadius: BorderRadius.circular(AppTheme.rField),
         ),
                       ),
+                      child: const Text('إضافة'),
                     ),
                   ],
                 ),
@@ -2774,6 +6660,7 @@ class _PersonDetailsScreenState extends State<PersonDetailsScreen> {
       customKindCtrl.dispose();
       amountCtrl.dispose();
       dateCtrl.dispose();
+      customDaysCtrl.dispose();
       notesCtrl.dispose();
       return;
     }
@@ -2783,11 +6670,65 @@ class _PersonDetailsScreenState extends State<PersonDetailsScreen> {
               ? category
               : customKindCtrl.text.trim())
         : kind;
+    if (_person.typeKey == 'person_self' && category == 'مستندات') {
+      final reminderLabel = reminder == _kReminderCustom
+          ? (int.tryParse(customDaysCtrl.text.trim()) ?? 0) > 0
+                ? 'قبل ${int.parse(customDaysCtrl.text.trim())} يوم'
+                : ''
+          : (reminder == _kReminderNone ? '' : reminder);
+      try {
+        await SupabasePersonalEntriesRepository().create(
+          PersonalEntryRecord(
+            category: 'document',
+            entryType: 'مستند',
+            title: resolvedKind,
+            amount: 0,
+            dueDate: dateCtrl.text.trim(),
+            status: 'نشطة',
+            details: {
+              'نوع المستند': resolvedKind,
+              if (dateCtrl.text.trim().isNotEmpty)
+                'تاريخ الانتهاء': dateCtrl.text.trim(),
+              if (reminderLabel.isNotEmpty)
+                'التذكير قبل الانتهاء': reminderLabel,
+              if (notesCtrl.text.trim().isNotEmpty)
+                'ملاحظات': notesCtrl.text.trim(),
+              kLinkedPersonKey: _person.fullName.trim(),
+            },
+          ),
+          attachment: attachment.isEmpty
+              ? null
+              : XFile(
+                  DocumentStore.localPathFor(attachment),
+                  name: DocumentStore.fileName(attachment),
+                ),
+        );
+        await _loadLinked();
+        _notify('حُفظ المستند في الالتزامات الشخصية ← المستندات');
+      } catch (error) {
+        _notify('تعذّر حفظ المستند: $error');
+      }
+      customKindCtrl.dispose();
+      amountCtrl.dispose();
+      dateCtrl.dispose();
+      customDaysCtrl.dispose();
+      notesCtrl.dispose();
+      return;
+    }
     final logParts = <String>['$category — $resolvedKind'];
+    // اتجاه المبلغ يُكتب صراحةً حتى تُصنَّف البنود تحت «له» و«عليه».
+    if (showAmount &&
+        _directionKinds.contains(resolvedKind) &&
+        amountCtrl.text.trim().isNotEmpty) {
+      logParts.add(amountToPerson ? 'له' : 'عليه');
+    }
     if (amountCtrl.text.trim().isNotEmpty) {
       logParts.add('${amountCtrl.text.trim()} ${AppSettings.currencySuffix}');
     }
-    if (dateCtrl.text.trim().isNotEmpty) logParts.add(dateCtrl.text.trim());
+    if (dateCtrl.text.trim().isNotEmpty) {
+      logParts.add('ينتهي ${dateCtrl.text.trim()}');
+      if (reminder != _kReminderNone) logParts.add(reminder);
+    }
     if (notesCtrl.text.trim().isNotEmpty) logParts.add(notesCtrl.text.trim());
     final logLine = logParts.join(' · ');
 
@@ -2799,7 +6740,7 @@ class _PersonDetailsScreenState extends State<PersonDetailsScreen> {
     // السجل الزمني فقط، فتبقى بطاقة الشخص تعرض "له : 0 درهم" مهما سُجِّل من
     // مبالغ — وكان ترتيب "الأعلى مستحقات" بلا أي معنى نتيجة ذلك.
     final amount = double.tryParse(amountCtrl.text.trim()) ?? 0;
-    if (showAmount && amount > 0) {
+    if (showAmount && _directionKinds.contains(resolvedKind) && amount > 0) {
       updated = amountToPerson
           ? updated.copyWith(
               dueToYou: updated.dueToYou + amount.round(),
@@ -2808,22 +6749,55 @@ class _PersonDetailsScreenState extends State<PersonDetailsScreen> {
               dueOnYou: updated.dueOnYou + amount.round(),
             );
     }
+    // البند يُحفظ بمعلوماته كاملة (النوع والمبلغ والتاريخ والملاحظة) لا
+    // بالنوع وحده، فيظهر في قائمة القسم كما أُدخل.
+    final entryLabel = logParts.skip(1).isEmpty
+        ? resolvedKind
+        : '$resolvedKind · ${logParts.skip(1).join(' · ')}';
+    if (attachment.isNotEmpty) {
+      // يُفهرس المرفق بنصّ البند وبسطر السجل معًا: قائمة المستندات تعرض
+      // الأول وقوائم المالية والمتابعة تعرض الثاني.
+      var withFile = _withAttachment(updated.details, entryLabel, attachment);
+      withFile = _withAttachment(withFile, logLine, attachment);
+      updated = updated.copyWith(details: withFile);
+    }
     if (category == 'مستندات') {
       // المستند يُضاف إلى قائمة الشخص نفسها (التي تُحفَظ)، لا إلى قائمة
       // محلية في الشاشة. سابقًا كان العدّاد يزيد بينما اسم المستند يُكتب في
       // متغير مؤقت لا يُحفظ، فيختفي المستند بعد إعادة التشغيل ويبقى العدّاد
       // مرتفعًا — أي رقم لا يطابق محتواه أبدًا.
       updated = updated.copyWith(
-        documents: [resolvedKind, ...updated.documents],
+        documents: [entryLabel, ...updated.documents],
         documentsCount: updated.documentsCount + 1,
       );
-    } else if (category == 'متابعة وتخطيط' || category == 'إضافة إجراء') {
+    } else if (category == 'متابعة وتخطيط') {
       updated = updated.copyWith(openTasks: updated.openTasks + 1);
+    }
+
+    // التذكير يُسجَّل فعليًا في مخزن التنبيهات، فيظهر في الكلندر ومركز
+    // التنبيهات — لا يبقى نصًا في السجل فقط.
+    final expiry = AppRemindersStore.parseDisplayDate(dateCtrl.text);
+    if (expiry != null && reminder != _kReminderNone) {
+      final days = reminder == _kReminderCustom
+          ? (int.tryParse(customDaysCtrl.text.trim()) ?? 0)
+          : AppRemindersStore.reminderDaysFromLabel(reminder);
+      if (days > 0) {
+        await AppRemindersStore.upsert(
+          AppReminder(
+            id: 'person_${_person.fullName}_${DateTime.now().microsecondsSinceEpoch}',
+            title: '$resolvedKind — ${_person.fullName}',
+            module: 'الأفراد والجهات',
+            expiryDate: expiry,
+            remindBeforeDays: days,
+          ),
+        );
+      }
     }
 
     customKindCtrl.dispose();
     amountCtrl.dispose();
     dateCtrl.dispose();
+    customDaysCtrl.dispose();
     notesCtrl.dispose();
 
     _applyPersonUpdate(updated, notice: 'تمت إضافة $resolvedKind');
@@ -2840,7 +6814,7 @@ class _PersonDetailsScreenState extends State<PersonDetailsScreen> {
             maxHeight: MediaQuery.of(context).size.height * 0.86,
           ),
           decoration: const BoxDecoration(
-            color: Color(0xFFF8FAFC),
+            color: Color(0xFFF7FAF9),
             borderRadius: BorderRadius.vertical(top: Radius.circular(AppTheme.rCard)),
             boxShadow: [
               BoxShadow(
@@ -2859,8 +6833,8 @@ class _PersonDetailsScreenState extends State<PersonDetailsScreen> {
                   width: 48,
                   height: 5,
                   decoration: BoxDecoration(
-                    color: const Color(0xFFCBD5E1),
-                    borderRadius: BorderRadius.circular(99),
+                    color: const Color(0xFFD5DEDB),
+                    borderRadius: BorderRadius.circular(999),
                   ),
                 ),
                 const Padding(
@@ -2869,7 +6843,7 @@ class _PersonDetailsScreenState extends State<PersonDetailsScreen> {
                     children: [
                       Icon(
                         Icons.add_box_rounded,
-                        color: Color(0xFF0B4A73),
+                        color: Color(0xFF04413B),
                         size: 21,
                       ),
                       SizedBox(width: 8),
@@ -2878,7 +6852,7 @@ class _PersonDetailsScreenState extends State<PersonDetailsScreen> {
                         style: TextStyle(
                           fontSize: 20,
                           fontWeight: FontWeight.w900,
-                          color: Color(0xFF0F172A),
+                          color: Color(0xFF022E2A),
                         ),
                       ),
                     ],
@@ -2893,7 +6867,7 @@ class _PersonDetailsScreenState extends State<PersonDetailsScreen> {
                       style: TextStyle(
                         fontSize: 12,
                         fontWeight: FontWeight.w600,
-                        color: Color(0xFF64748B),
+                        color: Color(0xFF5C6B68),
                       ),
                     ),
                   ),
@@ -2912,7 +6886,7 @@ class _PersonDetailsScreenState extends State<PersonDetailsScreen> {
                     itemBuilder: (context, index) {
                       final group = _inputGroups[index];
                       return InkWell(
-                        borderRadius: BorderRadius.circular(10),
+                        borderRadius: BorderRadius.circular(12),
                         onTap: () {
                           Navigator.of(context).pop();
                           _openMainEntryItemsSheet(group);
@@ -2946,7 +6920,7 @@ class _PersonDetailsScreenState extends State<PersonDetailsScreen> {
                                 style: const TextStyle(
                                   fontSize: 13,
                                   fontWeight: FontWeight.w800,
-                                  color: Color(0xFF0F172A),
+                                  color: Color(0xFF022E2A),
                                 ),
                               ),
                               const Spacer(),
@@ -2976,7 +6950,7 @@ class _PersonDetailsScreenState extends State<PersonDetailsScreen> {
   void _openRelationsActionsSheet() {
     const relationsGroup = _ActionGroup(
       'إجراءات العلاقات والارتباطات',
-      Color(0xFF0EA5A4),
+      Color(0xFF34A894),
       [
         _ActionTemplate('ربط شخص بشخص', [
           _FieldDef('الشخص الأول', false),
@@ -3054,7 +7028,7 @@ class _PersonDetailsScreenState extends State<PersonDetailsScreen> {
         _ActionShortcutCard(
           title: 'إجراءات العلاقات والارتباطات',
           subtitle: 'ربط الأشخاص بالالتزامات والمستندات والأصول',
-          color: const Color(0xFF0EA5A4),
+          color: const Color(0xFF34A894),
           icon: Icons.hub_rounded,
           onTap: _openRelationsActionsSheet,
         ),
@@ -3124,8 +7098,8 @@ class _PersonDetailsScreenState extends State<PersonDetailsScreen> {
                   width: 44,
                   height: 4,
                   decoration: BoxDecoration(
-                    color: const Color(0xFFCBD5E1),
-                    borderRadius: BorderRadius.circular(99),
+                    color: const Color(0xFFD5DEDB),
+                    borderRadius: BorderRadius.circular(999),
                   ),
                 ),
                 Padding(
@@ -3135,9 +7109,9 @@ class _PersonDetailsScreenState extends State<PersonDetailsScreen> {
                     child: Text(
                       group.title,
                       style: const TextStyle(
-                        fontSize: 19,
+                        fontSize: 17,
                         fontWeight: FontWeight.w800,
-                        color: Color(0xFF0F172A),
+                        color: Color(0xFF022E2A),
                       ),
                     ),
                   ),
@@ -3215,9 +7189,9 @@ class _PersonDetailsScreenState extends State<PersonDetailsScreen> {
                 const Text(
                   'اختيار القسم',
                   style: TextStyle(
-                    fontSize: 16,
+                    fontSize: 15,
                     fontWeight: FontWeight.w800,
-                    color: Color(0xFF0F172A),
+                    color: Color(0xFF022E2A),
                   ),
                 ),
                 const SizedBox(height: 10),
@@ -3275,47 +7249,99 @@ class _PersonDetailsScreenState extends State<PersonDetailsScreen> {
   @override
   Widget build(BuildContext context) {
     final person = _person;
-    final phoneValue = _detailValue(person, const [
-      'رقم الهاتف',
-    ], fallback: 'غير متوفر');
-    final filteredDocuments = _filterItems(_personDocuments);
+    final filteredDocuments = _filterItems([
+      ..._linkedRows('مستندات'),
+      ..._personDocuments,
+    ]);
     final filteredCommitments = _filterItems(_personSharedCommitments);
     final selectedTab = _detailTabs[_selectedMainTab];
-    const color = Color(0xFF0C6A8C);
+    // خيارات «الحالة» لكل تبويب، وأولها «الأحدث أولاً».
+    // العهدة: نشطة، مكتملة (تمت تسويتها)، ملغية.
+    final financeStatuses = _financeTab == 2
+        ? const ['الأحدث أولاً', 'نشطة', 'مكتملة', 'ملغية']
+        : const ['الأحدث أولاً', 'نشطة', 'مكتملة'];
+    const planStatuses = [
+      'الأحدث أولاً',
+      'نشطة',
+      'قريبًا',
+      'حان وقتها',
+      'متأخرة',
+    ];
+    const docStatuses = ['الأحدث أولاً', 'نشطة', 'تنتهي قريبًا', 'منتهية'];
+    const placeStatuses = ['الأحدث أولاً', 'نشطة'];
+    const medicineStatuses = [
+      'الأحدث أولاً',
+      'أدوية اليوم',
+      'أدوية قادمة',
+      'أدوية منتهية',
+    ];
+    final planRows = [
+      ..._linkedRows('متابعة وتخطيط'),
+      ..._followUpEntries(person),
+    ].where(
+      (row) =>
+          _planKind == 'الكل' ||
+          row.startsWith('$_planKind — ') ||
+          row.contains('— $_planKind'),
+    ).toList();
+    // نقطة حمراء على «المتابعة والتخطيط» و«مستندات» إن كان فيها ما انتهى
+    // أو حان وقته أو تأخر أو يحتاج متابعة.
+    final tabAlerts = <String>{
+      if ([
+        ..._linkedRows('متابعة وتخطيط'),
+        ..._followUpEntries(person),
+      ].any((row) => _rowNeedsAttention(row, document: false)))
+        'المتابعة والتخطيط',
+      if ([
+        ..._linkedRows('مستندات'),
+        ..._personDocuments,
+      ].any((row) => _rowNeedsAttention(row, document: true)))
+        'مستندات',
+    };
+    final medicineRows = _linkedRows('أدوية');
+    final placeRows = [
+      ..._linkedRows('مواقع وأماكن'),
+      ..._logEntries(person, 'مواقع وأماكن'),
+    ];
+    const color = Color(0xFF0E7161);
 
     return Scaffold(
       backgroundColor: AppTheme.page,
       floatingActionButtonLocation: FloatingActionButtonLocation.endFloat,
-      floatingActionButton: AddFab(
-        key: const ValueKey('add-person-detail-entry'),
-        screenId: 'person_details_${person.fullName}',
-        onPressed: () {
-          if (person.isFrozen) {
-            _notify('لا يمكن الإضافة لأن الحساب مجمّد');
-            return;
-          }
-          _openPersonQuickAddSheet();
-        },
-        label: 'إضافة',
-        icon: Icons.add_rounded,
-        backgroundColor: const Color(0xFFE5B22E),
-        foregroundColor: const Color(0xFF3D2E08),
-        initialOffset: const Offset(0, 0),
-      ),
+      // الزر العائم في الملخص وحده: بقية التبويبات فيها زر + داخل سطر
+      // القسم، فلا يتكرّر زران لنفس الفعل.
+      floatingActionButton: selectedTab != 'الملخص'
+          ? null
+          : AddFab(
+              key: const ValueKey('add-person-detail-entry'),
+              screenId: 'person_details_${person.fullName}',
+              onPressed: () {
+                if (person.isFrozen) {
+                  _notify('لا يمكن الإضافة لأن الحساب مجمّد');
+                  return;
+                }
+                _openPersonQuickAddSheet();
+              },
+              label: 'إضافة',
+              icon: Icons.add_rounded,
+              backgroundColor: const Color(0xFFF2A93F),
+              foregroundColor: const Color(0xFF4A2F09),
+              initialOffset: const Offset(0, 0),
+            ),
       appBar: AppBar(
         toolbarHeight: 60,
         backgroundColor: Colors.white,
         surfaceTintColor: Colors.transparent,
-        foregroundColor: const Color(0xFF172033),
+        foregroundColor: const Color(0xFF0F1F1C),
         elevation: 0,
         scrolledUnderElevation: 1,
         centerTitle: true,
-        title: const Text(
-          'تفاصيل الشخص والجهة',
-          style: TextStyle(
-            fontSize: 18,
+        title: Text(
+          _isEntityKind(person.typeKey) ? 'تفاصيل جهة' : 'تفاصيل فرد',
+          style: const TextStyle(
+            fontSize: 17,
             fontWeight: FontWeight.w900,
-            color: Color(0xFF172033),
+            color: Color(0xFF0F1F1C),
           ),
         ),
         leading: IconButton(
@@ -3355,8 +7381,16 @@ class _PersonDetailsScreenState extends State<PersonDetailsScreen> {
                     person: person,
                     color: color,
                     onAction: _onTopMenuAction,
+                    // وسم «مفوَّض» يظهر لمن له تفويض ساري، والضغط عليه
+                    // ينقل إلى تبويب التفويضات ليرى تفاصيله.
+                    delegationCount: _delegations
+                        .where((item) => item.isActive)
+                        .length,
+                    onOpenDelegations: () => setState(
+                      () => _selectedMainTab = _detailTabs.indexOf('التفويضات'),
+                    ),
                   ),
-                  Container(height: 1, color: const Color(0xFFEEF2F7)),
+                  Container(height: 1, color: const Color(0xFFF2F6F5)),
                   _PersonHighlightBar(person: person, color: color),
                 ],
               ),
@@ -3373,6 +7407,8 @@ class _PersonDetailsScreenState extends State<PersonDetailsScreen> {
               child: Padding(
                 padding: const EdgeInsets.fromLTRB(14, 12, 14, 12),
                 child: DetailPageTabs(
+                  twoLineLabels: true,
+                  alertLabels: tabAlerts,
                   sections: _detailSections,
                   selectedIndex: _selectedMainTab,
                   color: color,
@@ -3392,14 +7428,17 @@ class _PersonDetailsScreenState extends State<PersonDetailsScreen> {
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
                   if (selectedTab == 'الملخص') ...[
+                    // الموظف: سندات القبض وسجل رواتبه سنةً سنة.
+                    if (_isEmployeePerson(person))
+                      _salaryReceiptsButton(person, color),
                     _SummaryPanel(
                       person: person,
                       textDirection: AppTr.uiDir,
                     ),
-                    const SizedBox(height: 8),
-                    // سجل كل ما أُضيف من زر "+ إضافة" بالإضافة إلى تاريخ
-                    // الإنشاء — هنا داخل الملخص مباشرة، حسب نص ملف
-                    // المتطلبات ("في الملخص اسجل كل شي ضفته عند + إضافة").
+                    _buildDelegationSummaryLines(),
+                  ],
+                  // السجل الزمني صار تبويبًا مستقلًا.
+                  if (selectedTab == 'السجل')
                     _ActivityLogCard(
                       logs: [
                         ...person.activityLog.reversed,
@@ -3407,120 +7446,179 @@ class _PersonDetailsScreenState extends State<PersonDetailsScreen> {
                         'آخر تحديث: ${person.lastUpdate}',
                       ],
                     ),
-                  ],
-                  if (selectedTab == 'مالية')
-                    _SummaryStatsPanel(
-                      title: 'الملخص المالي',
-                      textDirection: AppTr.uiDir,
-                      blocks: [
-                        (
-                          'المستحق له',
-                          '${person.dueToYou} ${AppSettings.currencySuffix}',
-                          const Color(0xFF0F766E),
+                  // مالية: له / عليه / عهدة مالية، ومع كل واحد فلتر المصدر
+                  // وفلتر الحالة، وتحتهما البنود المرتبطة.
+                  if (selectedTab == 'مالية') ...[
+                    _PersonSegments(
+                      labels: const ['له', 'عليه', 'عهدة مالية'],
+                      selected: _financeTab,
+                      color: color,
+                      onSelected: (index) =>
+                          setState(() => _financeTab = index),
+                    ),
+                    const SizedBox(height: 10),
+                    // للعرض فقط: سطر واحد في المنتصف بلا مستطيل.
+                    const Padding(
+                      padding: EdgeInsets.only(bottom: 10),
+                      child: Text(
+                        'هذه الصفحة لعرض ما سُجّل سابقًا',
+                        textAlign: TextAlign.center,
+                        maxLines: 3,
+                        style: TextStyle(
+                          fontSize: 11.5,
+                          fontWeight: FontWeight.w700,
+                          color: AppTheme.muted,
                         ),
-                        (
-                          'المستحق عليه',
-                          '${person.dueOnYou} ${AppSettings.currencySuffix}',
-                          const Color(0xFFB45309),
-                        ),
-                        (
-                          'الالتزامات المشتركة',
-                          '${filteredCommitments.length}',
-                          const Color(0xFF0F6AA8),
+                      ),
+                    ),
+                    _sectionFilters(
+                      financeStatuses,
+                      sourceOptions: _financeTab == 2
+                          ? const ['الالتزامات الشخصية']
+                          : null,
+                    ),
+                    AppSectionAddRow(
+                      title: _financeTab == 0
+                          ? 'له: ${person.dueToYou} ${AppSettings.currencySuffix}'
+                          : _financeTab == 1
+                          ? 'عليه: ${person.dueOnYou} ${AppSettings.currencySuffix}'
+                          : 'عهدة مالية',
+                      icon: Icons.account_balance_wallet_outlined,
+                      accent: color,
+                      onAdd: person.isFrozen
+                          ? null
+                          : () => _addFinance(_financeTab),
+                    ),
+                    _filteredList(
+                      [
+                        if (_financeTab == 0) ..._salaryRows(),
+                        if (_financeTab == 0) ..._linkedRows('له'),
+                        if (_financeTab == 1) ..._linkedRows('عليه'),
+                        if (_financeTab == 2) ..._linkedRows('عهدة مالية'),
+                        ..._moneyEntries(person, _financeTab),
+                        ...filteredCommitments.where(
+                          (e) => _financeTab == 2
+                              ? e.contains('عهدة')
+                              : e.contains(_financeTab == 0 ? 'له' : 'عليه'),
                         ),
                       ],
+                      financeStatuses,
+                      _financeTab == 2
+                          // عهد موجودة لكن الحالة المختارة تخفيها.
+                          ? (_linkedRows('عهدة مالية').isNotEmpty
+                                ? 'لا توجد عهدة مالية بهذه الحالة — اختر حالة أخرى أو «الأحدث أولاً» لعرض الكل'
+                                : 'لا يوجد عهدة مالية — اذهب إلى الالتزامات الشخصية لتسجيل عهدة مالية')
+                          : _financeTab == 0
+                          ? 'لا يوجد أموال لك — سجّل في الالتزامات الشخصية أو الالتزامات المشتركة أو العقارات والأنشطة التجارية والمركبات ووسائل النقل لكي تظهر هنا'
+                          : 'لا يوجد أموال عليك — سجّل في الالتزامات الشخصية أو الالتزامات المشتركة أو العقارات والأنشطة التجارية والمركبات ووسائل النقل لكي تظهر هنا',
+                      Icons.account_balance_wallet_outlined,
+                      anySource: _financeTab == 2,
                     ),
+                    if (_financeTab == 2)
+                      const Padding(
+                        padding: EdgeInsets.only(top: 2, bottom: 8),
+                        child: Text(
+                          'لمزيد من التفاصيل اضغط على العهدة، أو افتح '
+                          '«الالتزامات الشخصية» ← «عهدة مالية».',
+                          textAlign: TextAlign.center,
+                          style: TextStyle(
+                            fontSize: 11,
+                            height: 1.5,
+                            fontWeight: FontWeight.w700,
+                            color: Color(0xFF8C9A97),
+                          ),
+                        ),
+                      ),
+                  ],
+                  // المتابعة والتخطيط: نفس نماذج وبنود الالتزامات الشخصية
+                  // (مهمة، موعد، عادة، تذكير، ملاحظات) مربوطة بهذا الفرد.
                   if (selectedTab == 'متابعة وتخطيط') ...[
-                    _SummaryStatsPanel(
-                      title: 'متابعة وتخطيط',
-                      textDirection: AppTr.uiDir,
-                      blocks: [
-                        (
-                          'المهام المفتوحة',
-                          '${person.openTasks}',
-                          const Color(0xFF0369A1),
-                        ),
-                        (
-                          'الحالة الحالية',
-                          person.badge,
-                          const Color(0xFF7C2D12),
-                        ),
-                        (
-                          'آخر تحديث',
-                          person.lastUpdate,
-                          const Color(0xFF475569),
-                        ),
-                      ],
+                    // العنوان و«+» فقط، وتحته فلترا النوع والحالة.
+                    AppSectionAddRow(
+                      title: 'المتابعة والتخطيط',
+                      icon: Icons.event_note_outlined,
+                      accent: color,
+                      count: planRows.length,
+                      onAdd: person.isFrozen ? null : _addFollowUp,
                     ),
-                    const SizedBox(height: 8),
-                    _SummaryStatsPanel(
-                      title: 'البيانات الأساسية',
-                      textDirection: AppTr.uiDir,
-                      blocks: [
-                        ('رقم الهاتف', phoneValue, const Color(0xFF0F172A)),
-                        (
-                          'الجنسية',
-                          _detailValue(person, const ['الجنسية']),
-                          const Color(0xFF0F172A),
-                        ),
-                        (
-                          'تاريخ الميلاد',
-                          _detailValue(person, const ['تاريخ الميلاد']),
-                          const Color(0xFF0F172A),
-                        ),
-                      ],
+                    FollowFiltersRow(
+                      kind: _planKind,
+                      status: planStatuses.contains(_statusFilter)
+                          ? _statusFilter
+                          : planStatuses.first,
+                      statusOptions: planStatuses,
+                      onKind: (value) => setState(() => _planKind = value),
+                      onStatus: (value) =>
+                          setState(() => _statusFilter = value),
                     ),
-                    const SizedBox(height: 8),
-                    // الملاحظات والتفويضات تدخل هنا ضمن متابعة وتخطيط
-                    // (وليست تبويباً مستقلاً) بنفس منطق الالتزامات المشتركة.
-                    _SummaryStatsPanel(
-                      title: 'الملاحظات والتفويضات',
-                      textDirection: AppTr.uiDir,
-                      blocks: [
-                        (
-                          'ملاحظة',
-                          person.extraNote.isEmpty
-                              ? 'لا توجد ملاحظات'
-                              : person.extraNote,
-                          const Color(0xFF334155),
-                        ),
-                        (
-                          'التفويضات',
-                          'تُضاف من زر + إضافة وتظهر هنا',
-                          const Color(0xFF334155),
-                        ),
-                      ],
+                    _filteredList(
+                      planRows,
+                      planStatuses,
+                      'لا توجد متابعة أو تخطيط مطابق للفلتر',
+                      Icons.event_note_outlined,
+                      anySource: true,
                     ),
                   ],
-                  if (selectedTab == 'مستندات')
-                    _DynamicLinkedDataCard(
-                      title: 'المستندات المرتبطة بالشخص',
-                      icon: Icons.description_rounded,
-                      color: const Color(0xFF7C3AED),
-                      emptyText: 'لا توجد مستندات مرتبطة حتى الآن',
-                      textDirection: AppTr.uiDir,
-                      items: filteredDocuments,
+                  if (selectedTab == 'التفويضات') _buildDelegationsSection(),
+                  if (selectedTab == 'مستندات') ...[
+                    // الموظف: سندات القبض والإيصالات وبطاقة الراتب.
+                    if (_isEmployeePerson(person))
+                      _salaryReceiptsButton(person, color),
+                    _sectionFilters(docStatuses),
+                    AppSectionAddRow(
+                      title: 'المستندات',
+                      icon: Icons.folder_outlined,
+                      accent: color,
+                      // الرقم ملاصق لكلمة «المستندات».
+                      count: person.documentsCount +
+                          _linkedRows('مستندات').length,
+                      onAdd: person.isFrozen
+                          ? null
+                          : () => _addForTab('مستندات'),
                     ),
-                  if (selectedTab == 'إضافة إجراء')
-                    const _SummaryStatsPanel(
-                      title: 'إضافة إجراء',
-                      blocks: [
-                        (
-                          'لا توجد إجراءات مسجلة',
-                          'تُضاف من زر + إضافة (تسوية مالية، تصويت، اعتراض، استبيان)',
-                          Color(0xFF334155),
-                        ),
-                      ],
+                    _filteredList(
+                      filteredDocuments,
+                      docStatuses,
+                      'لا توجد مستندات مطابقة للفلتر',
+                      Icons.description_rounded,
                     ),
-                  if (selectedTab == 'مواقع وأماكن')
-                    _DynamicLinkedDataCard(
-                      title: 'المواقع والأماكن المرتبطة',
+                  ],
+                  // أدوية: نفس نموذج الدواء في الالتزامات الشخصية، ويُحفظ
+                  // هناك في قسم الأدوية تلقائيًا.
+                  if (selectedTab == 'أدوية') ...[
+                    _sectionFilters(medicineStatuses),
+                    AppSectionAddRow(
+                      title: 'الأدوية',
+                      icon: Icons.medication_outlined,
+                      accent: color,
+                      count: medicineRows.length,
+                      onAdd: person.isFrozen ? null : _addMedicine,
+                    ),
+                    _filteredList(
+                      medicineRows,
+                      medicineStatuses,
+                      'لا توجد أدوية مطابقة للفلتر',
+                      Icons.medication_outlined,
+                    ),
+                  ],
+                  if (selectedTab == 'مواقع وأماكن') ...[
+                    _sectionFilters(placeStatuses),
+                    AppSectionAddRow(
+                      title: 'المواقع والأماكن',
                       icon: Icons.place_outlined,
-                      color: const Color(0xFF0EA5A4),
-                      emptyText: 'لا توجد مواقع مضافة حتى الآن',
-                      textDirection: AppTr.uiDir,
-                      items: const [],
+                      accent: color,
+                      count: placeRows.length,
+                      onAdd: person.isFrozen
+                          ? null
+                          : () => _openPersonalForm('مواقع وأماكن'),
                     ),
+                    _filteredList(
+                      placeRows,
+                      placeStatuses,
+                      'لا توجد مواقع مضافة حتى الآن',
+                      Icons.place_outlined,
+                    ),
+                  ],
                   ],
                 ),
               ),
@@ -3537,26 +7635,158 @@ class _PersonDetailsScreenState extends State<PersonDetailsScreen> {
 // هيدر مدمج لصفحة تفاصيل الفرد/الجهة — مطابق تمامًا لبنية
 // _CompactCommitmentHeader في قالب الالتزامات الشخصية: أيقونة 44x44 على
 // اليمين، الاسم ثم النوع تحته، شارة الحالة، وقائمة الثلاث نقاط.
+/// حقل تاريخ يفتح تقويمًا، ومعه زر مسح يجعل التفويض مفتوح المدة.
+class _DelegationDateField extends StatelessWidget {
+  const _DelegationDateField({
+    required this.label,
+    required this.value,
+    required this.onTap,
+    this.onClear,
+  });
+
+  final String label;
+  final String value;
+  final VoidCallback onTap;
+  final VoidCallback? onClear;
+
+  @override
+  Widget build(BuildContext context) {
+    return InkWell(
+      borderRadius: BorderRadius.circular(AppTheme.rField),
+      onTap: onTap,
+      child: Container(
+        padding: const EdgeInsets.fromLTRB(10, 8, 10, 8),
+        decoration: BoxDecoration(
+          color: AppTheme.field,
+          borderRadius: BorderRadius.circular(AppTheme.rField),
+        ),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Text(
+              label,
+              textAlign: AppTr.alignEnd,
+              maxLines: 3,
+              style: const TextStyle(
+                fontSize: 10.5,
+                fontWeight: FontWeight.w700,
+                color: Color(0xFF5C6B68),
+              ),
+            ),
+            const SizedBox(height: 4),
+            Row(
+              textDirection: AppTr.uiDir,
+              children: [
+                const Icon(
+                  Icons.calendar_today_rounded,
+                  size: 15,
+                  color: Color(0xFF0A5A50),
+                ),
+                const SizedBox(width: 6),
+                Expanded(
+                  child: Text(
+                    value,
+                    textAlign: AppTr.alignEnd,
+                    maxLines: 3,
+                    style: const TextStyle(
+                      fontSize: 12,
+                      fontWeight: FontWeight.w900,
+                      color: Color(0xFF0F1F1C),
+                    ),
+                  ),
+                ),
+                if (onClear != null)
+                  InkWell(
+                    onTap: onClear,
+                    child: const Icon(
+                      Icons.close_rounded,
+                      size: 16,
+                      color: Color(0xFF8C9A97),
+                    ),
+                  ),
+              ],
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+}
+
+/// تبويبات فرعية داخل تبويب: مستطيلات متساوية في سطر واحد.
+class _PersonSegments extends StatelessWidget {
+  const _PersonSegments({
+    required this.labels,
+    required this.selected,
+    required this.color,
+    required this.onSelected,
+  });
+
+  final List<String> labels;
+  final int selected;
+  final Color color;
+  final ValueChanged<int> onSelected;
+
+  @override
+  Widget build(BuildContext context) {
+    return Row(
+      textDirection: AppTr.uiDir,
+      children: [
+        for (var i = 0; i < labels.length; i++) ...[
+          if (i > 0) const SizedBox(width: 8),
+          Expanded(
+            child: InkWell(
+              borderRadius: BorderRadius.circular(AppTheme.rField),
+              onTap: () => onSelected(i),
+              child: Container(
+                height: 44,
+                alignment: Alignment.center,
+                decoration: BoxDecoration(
+                  color: selected == i
+                      ? color.withValues(alpha: 0.12)
+                      : AppTheme.field,
+                  borderRadius: BorderRadius.circular(AppTheme.rField),
+                ),
+                child: Text(
+                  labels[i],
+                  maxLines: 2,
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                    fontSize: 12.5,
+                    height: 1.2,
+                    fontWeight: FontWeight.w900,
+                    color: selected == i ? color : AppTheme.muted,
+                  ),
+                ),
+              ),
+            ),
+          ),
+        ],
+      ],
+    );
+  }
+}
+
 class _CompactPersonHeader extends StatelessWidget {
   const _CompactPersonHeader({
     required this.person,
     required this.color,
     required this.onAction,
+    this.delegationCount = 0,
+    this.onOpenDelegations,
   });
 
   final _PersonItem person;
   final Color color;
   final ValueChanged<ThreeDotMenuAction> onAction;
 
+  /// عدد التفويضات السارية — صفر يعني لا وسم.
+  final int delegationCount;
+  final VoidCallback? onOpenDelegations;
+
   @override
   Widget build(BuildContext context) {
-    final typeLine = person.additionalCategoryNames.isEmpty
-        ? '${person.categoryName} · ${person.roleTitle}'
-        : '${person.categoryName} + ${person.additionalCategoryNames.join(' + ')} · ${person.roleTitle}';
-    final statusLabel = person.isFrozen ? 'مجمّد' : person.badge;
-    final statusColor = person.isFrozen
-        ? const Color(0xFF64748B)
-        : person.badgeColor;
+    final typeLine = _personTypeLine(person);
     return Container(
       key: const ValueKey('compact-person-header-row'),
       padding: const EdgeInsets.fromLTRB(16, 16, 16, 14),
@@ -3582,43 +7812,74 @@ class _CompactPersonHeader extends StatelessWidget {
               children: [
                 Text(
                   person.fullName,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
+                  maxLines: 3,
                   style: const TextStyle(
-                    fontSize: 16,
+                    fontSize: 15,
                     fontWeight: FontWeight.w900,
-                    color: Color(0xFF172033),
+                    color: Color(0xFF0F1F1C),
                   ),
                 ),
                 const SizedBox(height: 3),
-                Text(
-                  typeLine,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
-                    fontSize: 11,
-                    fontWeight: FontWeight.w700,
-                    color: Color(0xFF64748B),
-                  ),
+                Row(
+                  textDirection: AppTr.uiDir,
+                  children: [
+                    Flexible(
+                      child: Text(
+                        typeLine,
+                        maxLines: 3,
+                        style: const TextStyle(
+                          fontSize: 11,
+                          fontWeight: FontWeight.w700,
+                          color: Color(0xFF5C6B68),
+                        ),
+                      ),
+                    ),
+                    if (delegationCount > 0) ...[
+                      const SizedBox(width: 6),
+                      InkWell(
+                        onTap: onOpenDelegations,
+                        borderRadius: BorderRadius.circular(AppTheme.rPill),
+                        child: Container(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 8,
+                            vertical: 3,
+                          ),
+                          decoration: BoxDecoration(
+                            color: const Color(0xFF0A5A50).withValues(
+                              alpha: 0.1,
+                            ),
+                            borderRadius: BorderRadius.circular(AppTheme.rPill),
+                          ),
+                          child: Row(
+                            mainAxisSize: MainAxisSize.min,
+                            textDirection: AppTr.uiDir,
+                            children: [
+                              const Icon(
+                                Icons.assignment_ind_outlined,
+                                size: 12,
+                                color: Color(0xFF0A5A50),
+                              ),
+                              const SizedBox(width: 3),
+                              Text(
+                                'مفوَّض',
+                                maxLines: 3,
+                                style: const TextStyle(
+                                  fontSize: 10,
+                                  fontWeight: FontWeight.w900,
+                                  color: Color(0xFF0A5A50),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ],
+                  ],
                 ),
               ],
             ),
           ),
-          Container(
-            padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
-            decoration: BoxDecoration(
-              color: statusColor.withValues(alpha: 0.1),
-              borderRadius: BorderRadius.circular(6),
-            ),
-            child: Text(
-              statusLabel,
-              style: TextStyle(
-                fontSize: 9.5,
-                fontWeight: FontWeight.w900,
-                color: statusColor,
-              ),
-            ),
-          ),
+          // شارة الحالة حُذفت: الحالة تُقرأ من المتابعة والتخطيط.
           const SizedBox(width: 4),
           ThreeDotMenu(tooltip: AppTr.tr('خيارات'), onAction: onAction),
         ],
@@ -3637,10 +7898,18 @@ class _PersonHighlightBar extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
+    // ما يحتاج متابعة فعلًا، بنفس عدّاد بطاقة القائمة.
     final highlights = <(String, String, IconData)>[
-      ('له', '${person.dueToYou.toStringAsFixed(0)} ${AppSettings.currencySuffix}', Icons.south_west_rounded),
-      ('عليه', '${person.dueOnYou.toStringAsFixed(0)} ${AppSettings.currencySuffix}', Icons.north_east_rounded),
-      ('المستندات', '${person.documentsCount}', Icons.folder_outlined),
+      (
+        'مستحقات',
+        '${_dueFollowUpCount(person)}',
+        Icons.account_balance_wallet_outlined,
+      ),
+      (
+        'متابعة وتخطيط',
+        '${person.openTasks}',
+        Icons.event_note_outlined,
+      ),
     ];
     return Container(
       padding: const EdgeInsets.fromLTRB(14, 12, 14, 14),
@@ -3672,22 +7941,25 @@ class _PersonHighlightBar extends StatelessWidget {
           fit: BoxFit.scaleDown,
           child: Text(
             value,
-            maxLines: 1,
+            maxLines: 3,
             style: const TextStyle(
-              fontSize: 12.5,
+              fontSize: 12,
               fontWeight: FontWeight.w900,
-              color: Color(0xFF172033),
+              color: Color(0xFF0F1F1C),
             ),
           ),
         ),
         const SizedBox(height: 2),
+        // الكلمتان جنب بعض في سطر واحد.
         Text(
           label,
-          maxLines: 1,
+          maxLines: 3,
+          textAlign: TextAlign.center,
           style: const TextStyle(
-            fontSize: 9.5,
+            fontSize: 10,
+            height: 1.2,
             fontWeight: FontWeight.w700,
-            color: Color(0xFF64748B),
+            color: Color(0xFF5C6B68),
           ),
         ),
       ],
@@ -3734,7 +8006,7 @@ class _ActionShortcutCard extends StatelessWidget {
             height: 36,
             decoration: BoxDecoration(
               color: color.withValues(alpha: 0.12),
-              borderRadius: BorderRadius.circular(10),
+              borderRadius: BorderRadius.circular(12),
             ),
             child: Icon(icon, color: color, size: 18),
           ),
@@ -3749,7 +8021,7 @@ class _ActionShortcutCard extends StatelessWidget {
                   style: const TextStyle(
                     fontSize: 12,
                     fontWeight: FontWeight.w800,
-                    color: Color(0xFF0F172A),
+                    color: Color(0xFF022E2A),
                   ),
                 ),
                 const SizedBox(height: 4),
@@ -3758,7 +8030,7 @@ class _ActionShortcutCard extends StatelessWidget {
                   textAlign: TextAlign.right,
                   style: const TextStyle(
                     fontSize: 11,
-                    color: Color(0xFF475569),
+                    color: Color(0xFF46534F),
                     fontWeight: FontWeight.w600,
                   ),
                 ),
@@ -3828,7 +8100,7 @@ class _EmptyActionState extends StatelessWidget {
         textAlign: TextAlign.right,
         style: const TextStyle(
           fontSize: 11,
-          color: Color(0xFF64748B),
+          color: Color(0xFF5C6B68),
           fontWeight: FontWeight.w600,
         ),
       ),
@@ -3870,11 +8142,11 @@ class _SearchInput extends StatelessWidget {
           border: InputBorder.none,
           suffixIcon: const Icon(
             Icons.search_rounded,
-            color: Color(0xFF64748B),
+            color: Color(0xFF5C6B68),
           ),
           prefixIcon: IconButton(
             onPressed: onFilterTap,
-            icon: const Icon(Icons.tune_rounded, color: Color(0xFF475569)),
+            icon: const Icon(Icons.tune_rounded, color: Color(0xFF46534F)),
             tooltip: AppTr.tr('فلتر'),
           ),
           contentPadding: const EdgeInsets.symmetric(
@@ -3897,22 +8169,22 @@ class _FollowupPeopleCard extends StatelessWidget {
         FollowupCenterItem(
           label: 'وثائق منتهية',
           count: '1',
-          color: Color(0xFFDC2626),
+          color: Color(0xFFC4392E),
         ),
         FollowupCenterItem(
           label: 'وثائق تنتهي قريباً',
           count: '2',
-          color: Color(0xFFD97706),
+          color: Color(0xFFCE8422),
         ),
         FollowupCenterItem(
           label: 'تفويضات منتهية',
           count: '1',
-          color: Color(0xFF7C3AED),
+          color: Color(0xFF0E7161),
         ),
         FollowupCenterItem(
           label: 'بيانات ناقصة',
           count: '3',
-          color: Color(0xFF2563EB),
+          color: Color(0xFF0A5A50),
         ),
       ],
     );
@@ -3938,7 +8210,7 @@ class _CreateTypeChoiceCard extends StatelessWidget {
   Widget build(BuildContext context) {
     return InkWell(
       onTap: onTap,
-      borderRadius: BorderRadius.circular(10),
+      borderRadius: BorderRadius.circular(12),
       child: Container(
         constraints: const BoxConstraints(minHeight: 142),
         padding: const EdgeInsets.all(12),
@@ -3965,19 +8237,18 @@ class _CreateTypeChoiceCard extends StatelessWidget {
               style: const TextStyle(
                 fontSize: 15,
                 fontWeight: FontWeight.w900,
-                color: Color(0xFF0F172A),
+                color: Color(0xFF022E2A),
               ),
             ),
             const SizedBox(height: 4),
             Text(
               subtitle,
-              maxLines: 2,
-              overflow: TextOverflow.ellipsis,
+              maxLines: 4,
               textAlign: TextAlign.center,
               style: const TextStyle(
-                fontSize: 10.5,
+                fontSize: 10,
                 height: 1.25,
-                color: Color(0xFF64748B),
+                color: Color(0xFF5C6B68),
                 fontWeight: FontWeight.w600,
               ),
             ),
@@ -3988,143 +8259,6 @@ class _CreateTypeChoiceCard extends StatelessWidget {
   }
 }
 
-class _CreateActionItem {
-  const _CreateActionItem({
-    required this.label,
-    required this.icon,
-    required this.color,
-    required this.onTap,
-  });
-
-  final String label;
-  final IconData icon;
-  final Color color;
-  final VoidCallback onTap;
-}
-
-class _CreateActionSection extends StatelessWidget {
-  const _CreateActionSection({
-    required this.title,
-    required this.icon,
-    required this.color,
-    required this.actions,
-  });
-
-  final String title;
-  final IconData icon;
-  final Color color;
-  final List<_CreateActionItem> actions;
-
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      padding: const EdgeInsets.all(10),
-      decoration: BoxDecoration(
-            color: AppTheme.surface,
-            borderRadius: BorderRadius.circular(AppTheme.rField),
-          ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.stretch,
-        children: [
-          Row(
-            children: [
-              Container(
-                width: 36,
-                height: 36,
-                decoration: BoxDecoration(
-                  color: color.withValues(alpha: 0.12),
-                  borderRadius: BorderRadius.circular(10),
-                ),
-                child: Icon(icon, color: color, size: 20),
-              ),
-              const SizedBox(width: 9),
-              Expanded(
-                child: Text(
-                  title,
-                  style: const TextStyle(
-                    fontSize: 15,
-                    fontWeight: FontWeight.w900,
-                    color: Color(0xFF0F172A),
-                  ),
-                ),
-              ),
-              Text(
-                '${actions.length}',
-                style: TextStyle(
-                  color: color,
-                  fontSize: 12,
-                  fontWeight: FontWeight.w900,
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 10),
-          ListView.separated(
-            shrinkWrap: true,
-            physics: const NeverScrollableScrollPhysics(),
-            itemCount: actions.length,
-            separatorBuilder: (_, __) => const SizedBox(height: 8),
-            itemBuilder: (context, index) {
-              final action = actions[index];
-              return InkWell(
-                onTap: action.onTap,
-                borderRadius: BorderRadius.circular(9),
-                child: Container(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 10,
-                    vertical: 10,
-                  ),
-                  decoration: BoxDecoration(
-            color: AppTheme.surfaceInner,
-            borderRadius: BorderRadius.circular(AppTheme.rInner),
-          ),
-                  child: Row(
-                    textDirection: AppTr.uiDir,
-                    children: [
-                      Container(
-                        width: 34,
-                        height: 34,
-                        decoration: BoxDecoration(
-                          color: action.color.withValues(alpha: 0.11),
-                          borderRadius: BorderRadius.circular(9),
-                        ),
-                        child: Icon(action.icon, color: action.color, size: 18),
-                      ),
-                      const SizedBox(width: 10),
-                      Expanded(
-                        child: Text(
-                          action.label,
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
-                          textAlign: TextAlign.right,
-                          style: const TextStyle(
-                            fontSize: 12,
-                            fontWeight: FontWeight.w800,
-                            color: Color(0xFF0F172A),
-                          ),
-                        ),
-                      ),
-                      const Icon(
-                        // يُعكس تلقائيًا مع rtl فيشير لليسار، مطابقًا لسهم
-                        // بطاقة الشخص وبقية قوائم التطبيق.
-                        Icons.chevron_right_rounded,
-                        color: Color(0xFF94A3B8),
-                        size: 20,
-                      ),
-                    ],
-                  ),
-                ),
-              );
-            },
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-// مربّع خيار في نافذة "+ إضافة" — نفس شكل _QuickAddTile/_SharedQuickAddTile
-// تمامًا (76px، لون محايد واحد بلا تمييز لوني بين الأنواع).
 class _PersonQuickAddTile extends StatelessWidget {
   const _PersonQuickAddTile({
     super.key,
@@ -4137,13 +8271,13 @@ class _PersonQuickAddTile extends StatelessWidget {
   final IconData icon;
   final VoidCallback onTap;
 
-  static const Color _neutral = Color(0xFF334155);
+  static const Color _neutral = Color(0xFF2C3B38);
 
   @override
   Widget build(BuildContext context) {
     return InkWell(
       onTap: onTap,
-      borderRadius: BorderRadius.circular(14),
+      borderRadius: BorderRadius.circular(12),
       child: Container(
         height: 76,
         padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 8),
@@ -4156,17 +8290,16 @@ class _PersonQuickAddTile extends StatelessWidget {
           children: [
             Icon(icon, color: _neutral, size: 22),
             const SizedBox(height: 6),
-            Text(
+            FittedBox(fit: BoxFit.scaleDown, alignment: Alignment.center, child: Text(
               label,
               maxLines: 1,
-              overflow: TextOverflow.ellipsis,
               textAlign: TextAlign.center,
               style: const TextStyle(
                 fontSize: 11,
                 fontWeight: FontWeight.w800,
                 color: _neutral,
               ),
-            ),
+            )),
           ],
         ),
       ),
@@ -4203,20 +8336,13 @@ class _PersonCard extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    final typeLine = person.additionalCategoryNames.isEmpty
-        ? person.categoryName
-        : '${person.categoryName} + ${person.additionalCategoryNames.join(' + ')}';
-    final currency = AppSettings.currencySuffix;
+    final typeLine = _personTypeLine(person, withRole: false);
 
-    // كانت البطاقة تعرض "مستندات : 0" مرتين حين لا توجد مستحقات، لأن
-    // السطرين يسقطان على نفس البديل. الآن تُبنى قائمة القيم ذات المعنى
-    // فقط، وتعرض البطاقة الموحَّدة أول قيمتين منها.
+    // البطاقة تعرض دائمًا ما يحتاج متابعة، فلا يبقى الفراغ الذي كان يظهر
+    // حين لا توجد مستحقات ولا مستندات.
     final stats = <String>[
-      if (person.dueToYou > 0)
-        'له : ${person.dueToYou.toStringAsFixed(0)} $currency',
-      if (person.dueOnYou > 0)
-        'عليه : ${person.dueOnYou.toStringAsFixed(0)} $currency',
-      if (person.documentsCount > 0) 'مستندات : ${person.documentsCount}',
+      'مستحقات تحتاج متابعة : ${_dueFollowUpCount(person)}',
+      'مستندات تحتاج متابعة : ${_docsFollowUpCount(person)}',
     ];
 
     // بطاقة القائمة الموحَّدة نفسها المستعملة في الالتزامات الشخصية
@@ -4225,9 +8351,17 @@ class _PersonCard extends StatelessWidget {
       icon: _personCardTypeIcon(person.typeKey),
       iconColor: person.badgeColor,
       title: person.fullName,
+      // الاسم الكامل (الاسم واسم الأب والقبيلة) على سطرين عند الحاجة بدل
+      // قصّه بثلاث نقاط.
+      titleMaxLines: 2,
+      // «أنا (الاسم)» في سطر واحد.
+      titleSingleLine: person.typeKey == 'person_self',
       subtitle: typeLine,
       statusColor: person.badgeColor,
       stats: stats,
+      // كل جملة في سطر واحد (يصغر الخط قليلًا إن طالت).
+      statsMaxLines: 2,
+      statsSingleLine: true,
       leadingBadges: [
         if (person.isPinned)
           const Padding(
@@ -4235,7 +8369,7 @@ class _PersonCard extends StatelessWidget {
             child: Icon(
               Icons.push_pin_rounded,
               size: 13,
-              color: Color(0xFFF59E0B),
+              color: Color(0xFFF2A93F),
             ),
           ),
         if (person.isFrozen)
@@ -4258,16 +8392,16 @@ class _DetailHeaderCard extends StatelessWidget {
       width: double.infinity,
       padding: const EdgeInsets.all(10),
       decoration: BoxDecoration(
-        color: const Color(0xFFE9F6FB),
+        color: const Color(0xFFE9F4F1),
         borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: const Color(0xFFCBE6F1)),
+        border: Border.all(color: const Color(0xFFD9EDE8)),
       ),
       child: const Text(
         'الاسم الكامل، الاسم المختصر، الصورة، الجنس، تاريخ الميلاد، الجنسية، رقم الهوية، جواز السفر، العنوان، أرقام التواصل، البريد الإلكتروني، وسائل التواصل، جهات اتصال بديلة، التصنيف (رئيسي/فرعي)',
         textAlign: TextAlign.right,
         style: TextStyle(
           fontSize: 11,
-          color: Color(0xFF0F4AA2),
+          color: Color(0xFF04413B),
           fontWeight: FontWeight.w700,
         ),
       ),
@@ -4287,7 +8421,8 @@ class _SummaryPanel extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    String detailValue(List<String> keys, {String fallback = '(اختياري)'}) {
+    // الحقل غير المسجَّل يُعرض بشرطة، لا بكلمة «(اختياري)» التي تبدو قيمة.
+    String detailValue(List<String> keys, {String fallback = '-'}) {
       for (final key in keys) {
         final value = person.details[key]?.trim() ?? '';
         if (value.isNotEmpty) return value;
@@ -4295,35 +8430,73 @@ class _SummaryPanel extends StatelessWidget {
       return fallback;
     }
 
-    final followUpCount = person.openTasks;
+    final isEntity = _isEntityKind(person.typeKey);
+    final notes = person.extraNote.trim();
+    // نفس حقول نموذج «إضافة فرد/جهة» وبترتيبها، فيظهر هنا ما أُدخل هناك.
     final rows = [
-      ('الاسم', person.fullName, Icons.person_outline_rounded),
-      (
-        'التصنيف',
-        person.additionalCategoryNames.isEmpty
-            ? person.categoryName
-            : '${person.categoryName} + ${person.additionalCategoryNames.join(' + ')}',
-        Icons.category_outlined,
-      ),
-      ('الحالة', person.badge, Icons.verified_user_outlined),
+      (isEntity ? 'نوع الجهة' : 'النوع', person.categoryName, Icons.category_outlined),
+      (isEntity ? 'اسم الجهة' : 'الاسم', person.fullName, Icons.person_outline_rounded),
       (
         'رقم الهاتف',
         detailValue(const ['رقم الهاتف'], fallback: 'غير متوفر'),
         Icons.phone_outlined,
       ),
-      ('الجنسية', detailValue(const ['الجنسية']), Icons.flag_outlined),
       (
-        'تاريخ الميلاد',
-        detailValue(const ['تاريخ الميلاد']),
+        'البريد الإلكتروني',
+        detailValue(const ['البريد الإلكتروني']),
+        Icons.alternate_email_rounded,
+      ),
+      if (!isEntity)
+        ('الجنسية', detailValue(const ['الجنسية']), Icons.flag_outlined),
+      (
+        isEntity ? 'تاريخ التأسيس' : 'تاريخ الميلاد',
+        detailValue([isEntity ? 'تاريخ التأسيس' : 'تاريخ الميلاد']),
         Icons.cake_outlined,
       ),
-      ('تاريخ الإنشاء', person.createdAt, Icons.event_outlined),
-      ('آخر تحديث', person.lastUpdate, Icons.edit_note_rounded),
+      ('العنوان', detailValue(const ['العنوان']), Icons.signpost_outlined),
+      (
+        'موقعك ومكانك',
+        detailValue(const ['الموقع على الخريطة']),
+        Icons.place_outlined,
+      ),
+      (
+        'تصنيفات إضافية',
+        person.additionalCategoryNames.isEmpty
+            ? '-'
+            : person.additionalCategoryNames.join('، '),
+        Icons.label_outline_rounded,
+      ),
       (
         'ملاحظات',
-        person.extraNote.isEmpty ? '-' : person.extraNote,
+        notes.isEmpty || notes == 'بانتظار استكمال البيانات' ? '-' : notes,
         Icons.notes_rounded,
       ),
+      (
+        'معلومات إضافية',
+        detailValue(const ['معلومات إضافية']),
+        Icons.info_outline_rounded,
+      ),
+      // الوثائق الرسمية: الرقم وتاريخ الانتهاء في سطر واحد.
+      if (!isEntity)
+        for (final doc in _IdentityDoc.all)
+          (
+            doc.title,
+            () {
+              final number = person.details[doc.numberKey]?.trim() ?? '';
+              final expiry = person.details[doc.expiryKey]?.trim() ?? '';
+              if (number.isEmpty && expiry.isEmpty) return '-';
+              if (expiry.isEmpty) return number;
+              if (number.isEmpty) return 'ينتهي $expiry';
+              return '$number · ينتهي $expiry';
+            }(),
+            doc.icon,
+          ),
+      if (isEntity)
+        (
+          'وثائق الجهة',
+          person.documents.isEmpty ? '-' : person.documents.join('، '),
+          Icons.folder_outlined,
+        ),
     ];
 
     // نفس بطاقة تفاصيل الالتزام الشخصي بالضبط: بطاقة رمادية واحدة، وصفوف
@@ -4332,148 +8505,13 @@ class _SummaryPanel extends StatelessWidget {
     return AppDetailsCard(
       title: 'بطاقة الملخص',
       icon: Icons.badge_outlined,
-      color: const Color(0xFF7C3AED),
+      color: const Color(0xFF0E7161),
       children: [
+        // شريط الأرقام (المستحق له/عليه، المهام، المستندات) حُذف من ذيل
+        // الملخص: نفس الأرقام تظهر في شريط أبرز البيانات وفي تبويب مالية.
         for (final row in rows)
           AppDetailRow(label: row.$1, value: row.$2, icon: row.$3),
-        const SizedBox(height: AppTheme.sMd),
-        Wrap(
-          spacing: 8,
-          runSpacing: 8,
-          textDirection: textDirection ?? AppTr.uiDir,
-          children: [
-            _metricPill(
-              'المستحق له',
-              '${person.dueToYou} ${AppSettings.currencySuffix}',
-              const Color(0xFFDCFCE7),
-              const Color(0xFF166534),
-            ),
-            _metricPill(
-              'المستحق عليه',
-              '${person.dueOnYou} ${AppSettings.currencySuffix}',
-              const Color(0xFFFFEDD5),
-              const Color(0xFF9A3412),
-            ),
-            _metricPill(
-              'المهام المفتوحة',
-              '${person.openTasks}',
-              const Color(0xFFE0F2FE),
-              const Color(0xFF0C4A6E),
-            ),
-            _metricPill(
-              'تحتاج متابعة',
-              '$followUpCount',
-              const Color(0xFFEDE9FE),
-              const Color(0xFF5B21B6),
-            ),
-            _metricPill(
-              'المستندات',
-              '${person.documentsCount}',
-              const Color(0xFFFCE7F3),
-              const Color(0xFF9D174D),
-            ),
-          ],
-        ),
       ],
-    );
-  }
-
-  Widget _metricPill(String label, String value, Color bg, Color fg) {
-    return Container(
-      padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 8),
-      decoration: BoxDecoration(
-        color: bg,
-        borderRadius: BorderRadius.circular(999),
-      ),
-      child: Text(
-        '$label: $value',
-        style: TextStyle(fontSize: 11, fontWeight: FontWeight.w800, color: fg),
-      ),
-    );
-  }
-}
-
-class _SummaryStatsPanel extends StatelessWidget {
-  const _SummaryStatsPanel({
-    required this.title,
-    required this.blocks,
-    this.textDirection,
-  });
-
-  final String title;
-  final List<(String, String, Color)> blocks;
-  /// null = اتجاه الواجهة الحالي (عربي rtl / إنجليزي ltr).
-  final TextDirection? textDirection;
-
-  @override
-  Widget build(BuildContext context) {
-    final isRtl = (textDirection ?? AppTr.uiDir) == TextDirection.rtl;
-    final textAlign = isRtl ? TextAlign.right : TextAlign.left;
-    // ملاحظة: CrossAxisAlignment.start يُحلّ أصلًا إلى اليمين داخل اتجاه
-    // rtl. الشرط السابق (isRtl ? end : start) كان يعكسه مرتين فيُحاذي كل
-    // عناوين البطاقات وقيمها إلى اليسار داخل بطاقة عربية.
-    const crossAxis = CrossAxisAlignment.start;
-    return Directionality(
-      textDirection: textDirection ?? AppTr.uiDir,
-      child: Container(
-        width: double.infinity,
-        padding: const EdgeInsets.all(12),
-        decoration: BoxDecoration(
-            color: AppTheme.surface,
-            borderRadius: BorderRadius.circular(AppTheme.rField),
-          ),
-        child: Column(
-          crossAxisAlignment: crossAxis,
-          children: [
-            Text(
-              title,
-              textAlign: textAlign,
-              style: const TextStyle(
-                fontSize: 13,
-                fontWeight: FontWeight.w900,
-                color: Color(0xFF0F172A),
-              ),
-            ),
-            const SizedBox(height: 10),
-            ...blocks.map((block) {
-              return Container(
-                width: double.infinity,
-                margin: const EdgeInsets.only(bottom: 8),
-                padding: const EdgeInsets.all(10),
-                decoration: BoxDecoration(
-                  color: block.$3.withValues(alpha: 0.08),
-                  borderRadius: BorderRadius.circular(10),
-                  border: Border.all(color: block.$3.withValues(alpha: 0.25)),
-                ),
-                child: Column(
-                  crossAxisAlignment: crossAxis,
-                  children: [
-                    Text(
-                      block.$1,
-                      textAlign: textAlign,
-                      style: TextStyle(
-                        fontSize: 11,
-                        color: block.$3,
-                        fontWeight: FontWeight.w800,
-                      ),
-                    ),
-                    const SizedBox(height: 4),
-                    Text(
-                      block.$2,
-                      textAlign: textAlign,
-                      style: const TextStyle(
-                        fontSize: 13,
-                        color: Color(0xFF0F172A),
-                        fontWeight: FontWeight.w700,
-                      ),
-                    ),
-                  ],
-                ),
-              );
-            }),
-          ],
-        ),
-      ),
     );
   }
 }
@@ -4522,7 +8560,7 @@ class _SubSectionsPanel extends StatelessWidget {
                       style: const TextStyle(
                         fontSize: 12,
                         fontWeight: FontWeight.w800,
-                        color: Color(0xFF0F172A),
+                        color: Color(0xFF022E2A),
                       ),
                     ),
                     const SizedBox(height: 4),
@@ -4530,8 +8568,8 @@ class _SubSectionsPanel extends StatelessWidget {
                       block.$2,
                       textAlign: TextAlign.right,
                       style: const TextStyle(
-                        fontSize: 10.8,
-                        color: Color(0xFF475569),
+                        fontSize: 11,
+                        color: Color(0xFF46534F),
                         fontWeight: FontWeight.w600,
                       ),
                     ),
@@ -4593,7 +8631,7 @@ class _DynamicLinkedDataCard extends StatelessWidget {
                   style: const TextStyle(
                     fontSize: 12,
                     fontWeight: FontWeight.w800,
-                    color: Color(0xFF0F172A),
+                    color: Color(0xFF022E2A),
                   ),
                 ),
               ),
@@ -4604,7 +8642,7 @@ class _DynamicLinkedDataCard extends StatelessWidget {
             Text(
               emptyText,
               textAlign: textAlign,
-              style: const TextStyle(color: Color(0xFF64748B), fontSize: 11),
+              style: const TextStyle(color: Color(0xFF5C6B68), fontSize: 11),
             )
           else
             ...items
@@ -4623,7 +8661,7 @@ class _DynamicLinkedDataCard extends StatelessWidget {
                             textAlign: textAlign,
                             style: const TextStyle(
                               fontSize: 11,
-                              color: Color(0xFF334155),
+                              color: Color(0xFF2C3B38),
                               fontWeight: FontWeight.w600,
                             ),
                           ),
@@ -4656,26 +8694,26 @@ class _AlertSectionsCard extends StatelessWidget {
             style: TextStyle(
               fontSize: 13,
               fontWeight: FontWeight.w800,
-              color: Color(0xFF0F172A),
+              color: Color(0xFF022E2A),
             ),
           ),
           SizedBox(height: 6),
           Text(
             'تنبيهات مالية: دفعة متأخرة، قسط مستحق',
             textAlign: TextAlign.right,
-            style: TextStyle(fontSize: 11, color: Color(0xFF334155)),
+            style: TextStyle(fontSize: 11, color: Color(0xFF2C3B38)),
           ),
           SizedBox(height: 4),
           Text(
             'تنبيهات زمنية: مهمة متأخرة، موعد قريب',
             textAlign: TextAlign.right,
-            style: TextStyle(fontSize: 11, color: Color(0xFF334155)),
+            style: TextStyle(fontSize: 11, color: Color(0xFF2C3B38)),
           ),
           SizedBox(height: 4),
           Text(
             'تنبيهات مستندات وأشخاص: مستند منتهي، بيانات ناقصة',
             textAlign: TextAlign.right,
-            style: TextStyle(fontSize: 11, color: Color(0xFF334155)),
+            style: TextStyle(fontSize: 11, color: Color(0xFF2C3B38)),
           ),
         ],
       ),
@@ -4705,7 +8743,7 @@ class _ActivityLogCard extends StatelessWidget {
             style: TextStyle(
               fontSize: 13,
               fontWeight: FontWeight.w800,
-              color: Color(0xFF0F172A),
+              color: Color(0xFF022E2A),
             ),
           ),
           const SizedBox(height: 8),
@@ -4714,7 +8752,7 @@ class _ActivityLogCard extends StatelessWidget {
                   const Text(
                     'لا توجد أحداث بعد',
                     textAlign: TextAlign.right,
-                    style: TextStyle(color: Color(0xFF64748B), fontSize: 11),
+                    style: TextStyle(color: Color(0xFF5C6B68), fontSize: 11),
                   ),
                 ]
               : logs
@@ -4728,7 +8766,7 @@ class _ActivityLogCard extends StatelessWidget {
                             const Icon(
                               Icons.circle,
                               size: 6,
-                              color: Color(0xFF0B4A73),
+                              color: Color(0xFF04413B),
                             ),
                             const SizedBox(width: 8),
                             Expanded(
@@ -4737,7 +8775,7 @@ class _ActivityLogCard extends StatelessWidget {
                                 textAlign: TextAlign.right,
                                 style: const TextStyle(
                                   fontSize: 11,
-                                  color: Color(0xFF334155),
+                                  color: Color(0xFF2C3B38),
                                   fontWeight: FontWeight.w600,
                                 ),
                               ),
@@ -4775,9 +8813,9 @@ class _HorizontalTabs extends StatelessWidget {
       child: Container(
         height: 46,
         decoration: BoxDecoration(
-          color: const Color(0xFFFDFEFF),
+          color: const Color(0xFFE9F4F1),
           borderRadius: BorderRadius.circular(12),
-          border: Border.all(color: const Color(0xFF2E5FA7), width: 1.2),
+          border: Border.all(color: const Color(0xFF0A5A50), width: 1.2),
         ),
         child: ListView.builder(
           scrollDirection: Axis.horizontal,
@@ -4796,7 +8834,7 @@ class _HorizontalTabs extends StatelessWidget {
                   border: Border(
                     bottom: BorderSide(
                       color: isSelected
-                          ? const Color(0xFF111827)
+                          ? const Color(0xFF0F1F1C)
                           : Colors.transparent,
                       width: 2,
                     ),
@@ -4806,7 +8844,7 @@ class _HorizontalTabs extends StatelessWidget {
                   tabs[index],
                   textAlign: TextAlign.right,
                   style: TextStyle(
-                    color: const Color(0xFF111827),
+                    color: const Color(0xFF0F1F1C),
                     fontSize: 12,
                     fontWeight: isSelected ? FontWeight.w900 : FontWeight.w700,
                   ),
@@ -4851,16 +8889,16 @@ class _ScopeChip extends StatelessWidget {
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 7),
         decoration: BoxDecoration(
-          color: selected ? color : const Color(0xFFF8FAFC),
+          color: selected ? color : const Color(0xFFF7FAF9),
           borderRadius: BorderRadius.circular(12),
-          border: Border.all(color: selected ? color : const Color(0xFFDCE5EF)),
+          border: Border.all(color: selected ? color : const Color(0xFFE4EAE8)),
         ),
         child: Text(
           '$label ($count)',
           style: TextStyle(
             fontSize: 11,
             fontWeight: FontWeight.w800,
-            color: selected ? Colors.white : const Color(0xFF334155),
+            color: selected ? Colors.white : const Color(0xFF2C3B38),
           ),
         ),
       ),
@@ -5005,7 +9043,7 @@ class _PersonItem {
       nickName: map['nickName']?.toString() ?? '',
       roleTitle: map['roleTitle']?.toString() ?? '',
       badge: map['badge']?.toString() ?? '',
-      badgeColor: Color((map['badgeColor'] as num?)?.toInt() ?? 0xFF64748B),
+      badgeColor: Color((map['badgeColor'] as num?)?.toInt() ?? 0xFF5C6B68),
       statusNote: map['statusNote']?.toString() ?? '',
       extraNote: map['extraNote']?.toString() ?? '',
       typeKey: map['typeKey']?.toString() ?? 'person_other',

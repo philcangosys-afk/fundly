@@ -33,9 +33,9 @@ class FollowupCenterCard extends StatefulWidget {
 class _FollowupCenterCardState extends State<FollowupCenterCard> {
   int _selectedIndex = 0;
 
-  static const _followUpColor = Color(0xFF8A6D1F);
-  static const _followUpBackground = Color(0xFFFAF7EC);
-  static const _followUpBorder = Color(0xFFE8DCB5);
+  static const _followUpColor = Color(0xFFA6691A);
+  static const _followUpBackground = Color(0xFFFEF7EE);
+  static const _followUpBorder = Color(0xFFFBDEB6);
 
   @override
   Widget build(BuildContext context) {
@@ -49,7 +49,7 @@ class _FollowupCenterCardState extends State<FollowupCenterCard> {
         border: Border.all(color: _followUpBorder),
         boxShadow: const [
           BoxShadow(
-            color: Color(0x128A6D1F),
+            color: Color(0x12A6691A),
             blurRadius: 18,
             offset: Offset(0, 7),
           ),
@@ -65,7 +65,7 @@ class _FollowupCenterCardState extends State<FollowupCenterCard> {
                 height: 36,
                 decoration: BoxDecoration(
                   color: _followUpBorder,
-                  borderRadius: BorderRadius.circular(11),
+                  borderRadius: BorderRadius.circular(12),
                 ),
                 child: const Icon(
                   Icons.dashboard_customize_outlined,
@@ -80,10 +80,9 @@ class _FollowupCenterCardState extends State<FollowupCenterCard> {
                   children: [
                     const Text(
                       'مركز المتابعة',
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
+                      maxLines: 3,
                       style: TextStyle(
-                        fontSize: 14.5,
+                        fontSize: 15,
                         fontWeight: FontWeight.w900,
                         color: _followUpColor,
                       ),
@@ -152,7 +151,7 @@ class _FollowupItemText extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    const followUpColor = Color(0xFF8A6D1F);
+    const followUpColor = Color(0xFFA6691A);
     return InkWell(
       onTap: onTap,
       child: AnimatedContainer(
@@ -167,7 +166,7 @@ class _FollowupItemText extends StatelessWidget {
             Text(
               item.count,
               style: const TextStyle(
-                fontSize: 16,
+                fontSize: 15,
                 color: followUpColor,
                 fontWeight: FontWeight.w900,
               ),
@@ -175,10 +174,9 @@ class _FollowupItemText extends StatelessWidget {
             const SizedBox(height: 2),
             Text(
               item.label,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
+              maxLines: 3,
               style: TextStyle(
-                fontSize: 9,
+                fontSize: 10,
                 color: followUpColor,
                 fontWeight: isSelected ? FontWeight.w900 : FontWeight.w700,
               ),

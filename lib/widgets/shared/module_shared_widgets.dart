@@ -6,6 +6,7 @@ import 'package:shared_preferences/shared_preferences.dart';
 import '../detail_page_chrome.dart';
 import '../management_dashboard_chrome.dart';
 import 'app_design.dart';
+import '../../data/fundly_auth.dart';
 
 // أدوات مطابقة البحث نُقلت إلى ملف مستقل لتجنّب الاستيراد الدائري مع
 // management_dashboard_chrome.dart، ويُعاد تصديرها هنا حتى تبقى كل
@@ -13,6 +14,22 @@ import 'app_design.dart';
 export 'search_matching.dart';
 
 enum ThreeDotMenuAction { edit, share, delete, archive, freeze, pinHome }
+
+/// أمر إضافي يُعرض أعلى قائمة الثلاث نقاط.
+///
+/// للأوامر غير المُتلِفة — «إضافة وحدة»، «بيانات العقار الرسمية» — فتُنفَّذ
+/// بلا نافذة تأكيد، ويختفي معها زر «+» المكرَّر من رأس كل قسم.
+class ThreeDotExtraAction {
+  const ThreeDotExtraAction({
+    required this.label,
+    required this.icon,
+    required this.onSelected,
+  });
+
+  final String label;
+  final IconData icon;
+  final VoidCallback onSelected;
+}
 
 class SearchAndFilterBar extends StatelessWidget {
   const SearchAndFilterBar({
@@ -72,13 +89,13 @@ class UnifiedSearchFilterBar extends StatelessWidget {
         gradient: const LinearGradient(
           begin: Alignment.topRight,
           end: Alignment.bottomLeft,
-          colors: [Color(0xFFFFFFFF), Color(0xFFF8FBFF)],
+          colors: [Color(0xFFFFFFFF), Color(0xFFE9F4F1)],
         ),
         borderRadius: BorderRadius.circular(16),
         border: Border.all(color: accentColor.withValues(alpha: 0.24)),
         boxShadow: const [
           BoxShadow(
-            color: Color(0x120F172A),
+            color: Color(0x12022E2A),
             blurRadius: 14,
             offset: Offset(0, 5),
           ),
@@ -97,13 +114,13 @@ class UnifiedSearchFilterBar extends StatelessWidget {
                   decoration: InputDecoration(
                     hintText: hintText,
                     hintStyle: const TextStyle(
-                      color: Color(0xFF94A3B8),
+                      color: Color(0xFF8C9A97),
                       fontSize: 13,
                       fontWeight: FontWeight.w600,
                     ),
                     suffixIcon: const Icon(
                       Icons.search_rounded,
-                      color: Color(0xFF475569),
+                      color: Color(0xFF46534F),
                     ),
                     filled: true,
                     fillColor: AppTheme.field,
@@ -176,7 +193,7 @@ class UnifiedSearchFilterBar extends StatelessWidget {
                 Text(
                   resultText!,
                   style: const TextStyle(
-                    color: Color(0xFF64748B),
+                    color: Color(0xFF5C6B68),
                     fontSize: 11,
                     fontWeight: FontWeight.w700,
                   ),
@@ -188,7 +205,7 @@ class UnifiedSearchFilterBar extends StatelessWidget {
                   icon: const Icon(Icons.close_rounded, size: 16),
                   label: const Text('مسح'),
                   style: TextButton.styleFrom(
-                    foregroundColor: const Color(0xFF475569),
+                    foregroundColor: const Color(0xFF46534F),
                     padding: const EdgeInsets.symmetric(horizontal: 8),
                     minimumSize: const Size(0, 32),
                     tapTargetSize: MaterialTapTargetSize.shrinkWrap,
@@ -357,9 +374,9 @@ class AddFab extends StatefulWidget {
     super.key,
     required this.screenId,
     required this.onPressed,
-    this.label = '+ إضافة',
+    this.label = 'إضافة',
     this.icon = Icons.add,
-    this.backgroundColor = const Color(0xFF0F6AA8),
+    this.backgroundColor = const Color(0xFF0A5A50),
     this.foregroundColor = Colors.white,
     this.initialOffset = const Offset(0, 0),
   });
@@ -464,10 +481,17 @@ class _AddFabState extends State<AddFab> {
   }
 
   Widget _buildFab({double opacity = 1}) {
+    // اتجاه الواجهة داخل الزر نفسه: «+» قبل الكلمة (يمينها بالعربية) في
+    // كل الشاشات، مهما كان اتجاه الصفحة التي وُضع فيها الزر.
     return Opacity(
       opacity: opacity,
-      child: FloatingActionButton.extended(
-        onPressed: widget.onPressed,
+      child: Directionality(
+        textDirection: AppTr.uiDir,
+        child: FloatingActionButton.extended(
+        // الضيف يُطلب منه تسجيل الدخول قبل أي إضافة.
+        onPressed: () async {
+          if (await FundlyAuth.requireLogin(context)) widget.onPressed();
+        },
         backgroundColor: widget.backgroundColor,
         foregroundColor: widget.foregroundColor,
         elevation: 7,
@@ -482,6 +506,7 @@ class _AddFabState extends State<AddFab> {
             fontWeight: FontWeight.w700,
           ),
         ),
+      ),
       ),
     );
   }
@@ -509,9 +534,9 @@ class AddTypeSheet extends StatelessWidget {
                     Text(
                       entry.key,
                       style: const TextStyle(
-                        fontSize: 14,
+                        fontSize: 13,
                         fontWeight: FontWeight.w900,
-                        color: Color(0xFF0F172A),
+                        color: Color(0xFF022E2A),
                       ),
                     ),
                     const SizedBox(height: 8),
@@ -586,67 +611,158 @@ class ThreeDotMenu extends StatelessWidget {
     this.tooltip = 'خيارات',
     this.freezeLabel = 'تجميد / إلغاء التجميد',
     this.pinLabel = 'تثبيت في الرئيسية',
+    this.extraActions = const [],
+    this.deleteLabel = 'حذف',
+    this.deleteIcon = Icons.delete_outline_rounded,
+    this.deleteMessage =
+        'سيُحذف العنصر نهائيًا ولا يمكن التراجع. هل تريد الحذف؟',
+    this.deleteConfirmLabel = 'حذف',
+    this.showEdit = true,
+    this.showDelete = true,
+    this.trailingActions = const [],
+    this.showArchive = true,
   });
+
+  /// false: بلا «أرشيف» (العنصر المفوَّض: الأرشفة لصاحبه وحده).
+  final bool showArchive;
+
+  /// أوامر تحت «أرشيف» في آخر القائمة («تفويض آخرين» مثلًا) — بلا تأكيد.
+  final List<ThreeDotExtraAction> trailingActions;
+
+  /// false: بلا أمر الحذف/الإلغاء (العقار أو النشاط أو المركبة الملغى لا
+  /// يُحذف — يبقى في «السجل التاريخي»).
+  final bool showDelete;
+
+  /// false: بلا «تعديل بيانات» (حين يوجد أمر تعديل خاص في [extraActions]).
+  final bool showEdit;
+
+  /// أمر «الحذف» قابل للتسمية: في العقارات والأنشطة والمركبات يظهر
+  /// «إلغاء» أولًا، و«حذف» (إلى سلة المهملات) للعنصر الملغى فقط.
+  final String deleteLabel;
+  final IconData deleteIcon;
+  final String deleteMessage;
+  final String deleteConfirmLabel;
 
   final ValueChanged<ThreeDotMenuAction> onAction;
   final String tooltip;
   final String freezeLabel;
   final String pinLabel;
 
+  /// أوامر تُعرض أعلى القائمة وتُنفَّذ بلا تأكيد — انظر
+  /// [ThreeDotExtraAction].
+  final List<ThreeDotExtraAction> extraActions;
+
   @override
   Widget build(BuildContext context) {
-    return PopupMenuButton<ThreeDotMenuAction>(
+    return PopupMenuButton<Object>(
       tooltip: tooltip,
       icon: const Icon(
         Icons.more_vert_rounded,
         size: 23,
-        color: Color(0xFF475569),
+        color: Color(0xFF46534F),
       ),
-      onSelected: onAction,
-      itemBuilder: (context) => [
-        const PopupMenuItem(
-          value: ThreeDotMenuAction.edit,
-          child: _ThreeDotMenuItemRow(
-            label: 'تعديل البيانات',
-            icon: Icons.edit_outlined,
+      // لا يُنفَّذ أي إجراء مُتلِف من هذه القائمة قبل نافذة تأكيد صريحة.
+      // والأوامر الإضافية تُستثنى: الإضافة لا تُتلف شيئًا ليُؤكَّد.
+      onSelected: (value) async {
+        if (value is int) {
+          if (value >= 0 && value < extraActions.length) {
+            extraActions[value].onSelected();
+          } else if (value >= 1000 &&
+              value - 1000 < trailingActions.length) {
+            trailingActions[value - 1000].onSelected();
+          }
+          return;
+        }
+        final action = value as ThreeDotMenuAction;
+        final (label, message, danger) = switch (action) {
+          ThreeDotMenuAction.edit => (
+            'تعديل بيانات',
+            'سيُفتح نموذج التعديل. هل تريد المتابعة؟',
+            false,
           ),
-        ),
-        const PopupMenuItem(
+          ThreeDotMenuAction.share => (
+            'مشاركة',
+            'ستُشارك البيانات عبر تطبيق تختاره. هل تريد المتابعة؟',
+            false,
+          ),
+          ThreeDotMenuAction.delete => (deleteLabel, deleteMessage, true),
+          ThreeDotMenuAction.archive => (
+            'أرشفة',
+            'سيُنقل العنصر إلى الأرشيف ويمكن إخراجه لاحقًا. هل تريد الأرشفة؟',
+            false,
+          ),
+          ThreeDotMenuAction.freeze => (
+            freezeLabel,
+            'سيتغيّر وضع التجميد لهذا العنصر. هل تريد المتابعة؟',
+            false,
+          ),
+          ThreeDotMenuAction.pinHome => (
+            pinLabel,
+            'سيتغيّر تثبيت العنصر في الصفحة الرئيسية. هل تريد المتابعة؟',
+            false,
+          ),
+        };
+        final ok = await confirmAction(
+          context,
+          title: label,
+          message: message,
+          confirmLabel: danger ? deleteConfirmLabel : 'تأكيد',
+          danger: danger,
+        );
+        if (!ok || !context.mounted) return;
+        onAction(action);
+      },
+      itemBuilder: (context) => [
+        for (var i = 0; i < extraActions.length; i++)
+          PopupMenuItem<Object>(
+            value: i,
+            child: _ThreeDotMenuItemRow(
+              label: extraActions[i].label,
+              icon: extraActions[i].icon,
+              color: const Color(0xFF0E7161),
+            ),
+          ),
+        if (extraActions.isNotEmpty) const PopupMenuDivider(),
+        if (showEdit)
+          const PopupMenuItem<Object>(
+            value: ThreeDotMenuAction.edit,
+            child: _ThreeDotMenuItemRow(
+              label: 'تعديل بيانات',
+              icon: Icons.edit_outlined,
+            ),
+          ),
+        const PopupMenuItem<Object>(
           value: ThreeDotMenuAction.share,
           child: _ThreeDotMenuItemRow(
             label: 'مشاركة',
             icon: Icons.share_outlined,
           ),
         ),
-        const PopupMenuItem(
-          value: ThreeDotMenuAction.delete,
-          child: _ThreeDotMenuItemRow(
-            label: 'حذف',
-            icon: Icons.delete_outline_rounded,
-            color: Color(0xFFB42318),
+        if (showDelete)
+          PopupMenuItem<Object>(
+            value: ThreeDotMenuAction.delete,
+            child: _ThreeDotMenuItemRow(
+              label: deleteLabel,
+              icon: deleteIcon,
+              color: const Color(0xFFA82F26),
+            ),
           ),
-        ),
-        const PopupMenuItem(
+        if (showArchive)
+        const PopupMenuItem<Object>(
           value: ThreeDotMenuAction.archive,
           child: _ThreeDotMenuItemRow(
             label: 'أرشيف',
             icon: Icons.archive_outlined,
           ),
         ),
-        PopupMenuItem(
-          value: ThreeDotMenuAction.freeze,
-          child: _ThreeDotMenuItemRow(
-            label: freezeLabel,
-            icon: Icons.block_rounded,
+        for (var i = 0; i < trailingActions.length; i++)
+          PopupMenuItem<Object>(
+            value: 1000 + i,
+            child: _ThreeDotMenuItemRow(
+              label: trailingActions[i].label,
+              icon: trailingActions[i].icon,
+            ),
           ),
-        ),
-        PopupMenuItem(
-          value: ThreeDotMenuAction.pinHome,
-          child: _ThreeDotMenuItemRow(
-            label: pinLabel,
-            icon: Icons.push_pin_outlined,
-          ),
-        ),
       ],
     );
   }
@@ -656,7 +772,7 @@ class _ThreeDotMenuItemRow extends StatelessWidget {
   const _ThreeDotMenuItemRow({
     required this.label,
     required this.icon,
-    this.color = const Color(0xFF334155),
+    this.color = const Color(0xFF2C3B38),
   });
 
   final String label;

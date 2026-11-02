@@ -1,11 +1,13 @@
 import 'dart:convert';
 import 'dart:math';
 
-import 'package:flutter/material.dart';
+import 'package:flutter/material.dart' hide Text, Align;
+import '../l10n/tr_widgets.dart';
 import 'package:share_plus/share_plus.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../l10n/home_strings.dart';
+import '../l10n/app_language.dart';
 
 class RaffleScreen extends StatefulWidget {
   const RaffleScreen({super.key});
@@ -34,10 +36,10 @@ class _RaffleScreenState extends State<RaffleScreen>
   List<String> _result = const [];
 
   static const List<Color> _wheelPalette = [
-    Color(0xFF2DD4BF),
-    Color(0xFF111827),
+    Color(0xFF7FC7B9),
+    Color(0xFF0F1F1C),
     Color(0xFFFFFFFF),
-    Color(0xFFE2E8F0),
+    Color(0xFFE4EAE8),
   ];
 
   @override
@@ -168,7 +170,7 @@ class _RaffleScreenState extends State<RaffleScreen>
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: const Color(0xFFF5F8FC),
+      backgroundColor: const Color(0xFFE9F4F1),
       appBar: AppBar(title: const Text(HomeStrings.raffle), centerTitle: true),
       body: Directionality(
         textDirection: TextDirection.rtl,
@@ -198,7 +200,7 @@ class _RaffleScreenState extends State<RaffleScreen>
                     child: Icon(
                       Icons.arrow_drop_down_rounded,
                       size: 54,
-                      color: const Color(0xFF0F172A).withValues(alpha: 0.92),
+                      color: const Color(0xFF022E2A).withValues(alpha: 0.92),
                     ),
                   ),
                   SizedBox(
@@ -207,7 +209,7 @@ class _RaffleScreenState extends State<RaffleScreen>
                     child: ElevatedButton(
                       onPressed: _spinWheel,
                       style: ElevatedButton.styleFrom(
-                        backgroundColor: const Color(0xFF0F172A),
+                        backgroundColor: const Color(0xFF022E2A),
                         foregroundColor: Colors.white,
                         shape: const CircleBorder(),
                         elevation: 6,
@@ -224,7 +226,7 @@ class _RaffleScreenState extends State<RaffleScreen>
                           : const Text(
                               'Spin',
                               style: TextStyle(
-                                fontSize: 18,
+                                fontSize: 17,
                                 fontWeight: FontWeight.w900,
                               ),
                             ),
@@ -241,21 +243,21 @@ class _RaffleScreenState extends State<RaffleScreen>
                   vertical: 10,
                 ),
                 decoration: BoxDecoration(
-                  color: const Color(0xFF0F172A),
-                  borderRadius: BorderRadius.circular(14),
+                  color: const Color(0xFF022E2A),
+                  borderRadius: BorderRadius.circular(12),
                 ),
                 child: Row(
                   children: [
                     const Icon(
                       Icons.emoji_events_rounded,
-                      color: Color(0xFFFDE68A),
+                      color: Color(0xFFFBDEB6),
                     ),
                     const SizedBox(width: 8),
                     Expanded(
                       child: Text(
                         'الفائز: $_winner',
                         style: const TextStyle(
-                          fontSize: 16,
+                          fontSize: 15,
                           fontWeight: FontWeight.w900,
                           color: Colors.white,
                         ),
@@ -271,7 +273,7 @@ class _RaffleScreenState extends State<RaffleScreen>
               style: const TextStyle(
                 fontSize: 13,
                 fontWeight: FontWeight.w700,
-                color: Color(0xFF334155),
+                color: Color(0xFF2C3B38),
               ),
             ),
             const SizedBox(height: 10),
@@ -286,19 +288,19 @@ class _RaffleScreenState extends State<RaffleScreen>
                       child: TextField(
                         controller: controller,
                         decoration: InputDecoration(
-                          hintText: 'الاسم ${index + 1}',
+                          hintText: AppTr.tr('الاسم ${index + 1}'),
                           filled: true,
                           fillColor: Colors.white,
                           border: OutlineInputBorder(
                             borderRadius: BorderRadius.circular(12),
                             borderSide: const BorderSide(
-                              color: Color(0xFFE2E8F0),
+                              color: Color(0xFFE4EAE8),
                             ),
                           ),
                           enabledBorder: OutlineInputBorder(
                             borderRadius: BorderRadius.circular(12),
                             borderSide: const BorderSide(
-                              color: Color(0xFFE2E8F0),
+                              color: Color(0xFFE4EAE8),
                             ),
                           ),
                         ),
@@ -306,7 +308,7 @@ class _RaffleScreenState extends State<RaffleScreen>
                     ),
                     const SizedBox(width: 8),
                     IconButton(
-                      tooltip: 'حذف',
+                      tooltip: AppTr.tr('حذف'),
                       onPressed: () => _removeNameRow(index),
                       icon: const Icon(Icons.delete_outline_rounded),
                     ),
@@ -333,7 +335,7 @@ class _RaffleScreenState extends State<RaffleScreen>
                 decoration: BoxDecoration(
                   color: Colors.white,
                   borderRadius: BorderRadius.circular(12),
-                  border: Border.all(color: const Color(0xFFE2E8F0)),
+                  border: Border.all(color: const Color(0xFFE4EAE8)),
                 ),
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.stretch,
@@ -341,9 +343,9 @@ class _RaffleScreenState extends State<RaffleScreen>
                     const Text(
                       HomeStrings.raffleResult,
                       style: TextStyle(
-                        fontSize: 14,
+                        fontSize: 13,
                         fontWeight: FontWeight.w900,
-                        color: Color(0xFF0F172A),
+                        color: Color(0xFF022E2A),
                       ),
                     ),
                     const SizedBox(height: 8),
@@ -355,7 +357,7 @@ class _RaffleScreenState extends State<RaffleScreen>
                           style: const TextStyle(
                             fontSize: 13,
                             fontWeight: FontWeight.w700,
-                            color: Color(0xFF334155),
+                            color: Color(0xFF2C3B38),
                           ),
                         ),
                       ),
@@ -437,13 +439,13 @@ class _WheelPainter extends CustomPainter {
       );
     }
 
-    final innerRing = Paint()..color = const Color(0xFFF8FAFC);
+    final innerRing = Paint()..color = const Color(0xFFF7FAF9);
     canvas.drawCircle(center, radius * 0.13, innerRing);
     canvas.drawCircle(
       center,
       radius * 0.13,
       Paint()
-        ..color = const Color(0xFF0F172A)
+        ..color = const Color(0xFF022E2A)
         ..style = PaintingStyle.stroke
         ..strokeWidth = 2,
     );
@@ -474,9 +476,9 @@ class _WheelPainter extends CustomPainter {
       text: TextSpan(
         text: text,
         style: TextStyle(
-          fontSize: 18,
+          fontSize: 17,
           fontWeight: FontWeight.w900,
-          color: isDark ? Colors.white : const Color(0xFF0B1324),
+          color: isDark ? Colors.white : const Color(0xFF022E2A),
         ),
       ),
     )..layout(maxWidth: radius * 0.52);

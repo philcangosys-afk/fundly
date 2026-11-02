@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "419678831216",
+    "project_id": "fundly-5c5db",
+    "storage_bucket": "fundly-5c5db.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:419678831216:android:1820e7e954c7cdaa08eab5",
+        "android_client_info": {
+          "package_name": "com.fundly.app"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyAOgK_qGJgo99sP7832Tl_Pk-uvHIuUCPM"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}

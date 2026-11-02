@@ -44,7 +44,7 @@ class _CommitmentAdditionsMenuState extends State<CommitmentAdditionsMenu> {
           maxHeight: MediaQuery.of(context).size.height * 0.82,
         ),
         decoration: const BoxDecoration(
-          color: Color(0xFFF8FAFC),
+          color: Color(0xFFF7FAF9),
           borderRadius: BorderRadius.vertical(
             top: Radius.circular(AppTheme.rCard),
           ),
@@ -66,8 +66,8 @@ class _CommitmentAdditionsMenuState extends State<CommitmentAdditionsMenu> {
                       height: 5,
                       margin: const EdgeInsets.only(bottom: 12),
                       decoration: BoxDecoration(
-                        color: const Color(0xFFCBD5E1),
-                        borderRadius: BorderRadius.circular(99),
+                        color: const Color(0xFFD5DEDB),
+                        borderRadius: BorderRadius.circular(999),
                       ),
                     ),
                   ),
@@ -83,7 +83,7 @@ class _CommitmentAdditionsMenuState extends State<CommitmentAdditionsMenu> {
                               style: TextStyle(
                                 fontSize: 20,
                                 fontWeight: FontWeight.w900,
-                                color: Color(0xFF0F172A),
+                                color: Color(0xFF022E2A),
                               ),
                             ),
                             const SizedBox(height: 4),
@@ -92,7 +92,7 @@ class _CommitmentAdditionsMenuState extends State<CommitmentAdditionsMenu> {
                               style: const TextStyle(
                                 fontSize: 12,
                                 fontWeight: FontWeight.w600,
-                                color: Color(0xFF475569),
+                                color: Color(0xFF46534F),
                               ),
                             ),
                           ],
@@ -102,7 +102,7 @@ class _CommitmentAdditionsMenuState extends State<CommitmentAdditionsMenu> {
                         children: [
                           Container(
                             decoration: BoxDecoration(
-                              color: const Color(0xFFE0F2FE),
+                              color: const Color(0xFFD9EDE8),
                               borderRadius: BorderRadius.circular(12),
                               boxShadow: [
                                 BoxShadow(
@@ -121,7 +121,7 @@ class _CommitmentAdditionsMenuState extends State<CommitmentAdditionsMenu> {
                               },
                               icon: const Icon(
                                 Icons.add_rounded,
-                                color: Color(0xFF0F172A),
+                                color: Color(0xFF022E2A),
                               ),
                             ),
                           ),
@@ -143,7 +143,7 @@ class _CommitmentAdditionsMenuState extends State<CommitmentAdditionsMenu> {
                               onPressed: () => Navigator.pop(context),
                               icon: const Icon(
                                 Icons.close_rounded,
-                                color: Color(0xFF0F172A),
+                                color: Color(0xFF022E2A),
                               ),
                             ),
                           ),
@@ -159,24 +159,24 @@ class _CommitmentAdditionsMenuState extends State<CommitmentAdditionsMenu> {
                     ),
                     decoration: BoxDecoration(
                       gradient: const LinearGradient(
-                        colors: [Color(0xFFEBF4FF), Color(0xFFE0F2FE)],
+                        colors: [Color(0xFFD9EDE8), Color(0xFFD9EDE8)],
                       ),
-                      borderRadius: BorderRadius.circular(14),
+                      borderRadius: BorderRadius.circular(12),
                     ),
                     child: Row(
                       children: [
                         const Icon(
                           Icons.auto_awesome_rounded,
-                          color: Color(0xFF2563EB),
+                          color: Color(0xFF0A5A50),
                         ),
                         const SizedBox(width: 8),
                         Expanded(
                           child: Text(
                             'الإضافات المقترحة تناسب هذا النوع من الالتزام',
                             style: TextStyle(
-                              fontSize: 11.5,
+                              fontSize: 11,
                               color: const Color(
-                                0xFF1E3A8A,
+                                0xFF022E2A,
                               ).withValues(alpha: 0.8),
                               fontWeight: FontWeight.w700,
                             ),
@@ -198,9 +198,9 @@ class _CommitmentAdditionsMenuState extends State<CommitmentAdditionsMenu> {
                     child: const Text(
                       'الشرح: استخدم الإضافات الأساسية في أغلب الحالات، أما الخيارات الإضافية فاضغط على “مزيد من الإضافات” عندما تحتاج إلى تصنيفات أكثر دقة.',
                       style: TextStyle(
-                        fontSize: 11.5,
+                        fontSize: 11,
                         fontWeight: FontWeight.w600,
-                        color: Color(0xFF475569),
+                        color: Color(0xFF46534F),
                         height: 1.5,
                       ),
                     ),
@@ -211,7 +211,7 @@ class _CommitmentAdditionsMenuState extends State<CommitmentAdditionsMenu> {
                     style: TextStyle(
                       fontSize: 15,
                       fontWeight: FontWeight.w800,
-                      color: Color(0xFF0F172A),
+                      color: Color(0xFF022E2A),
                     ),
                   ),
                   const SizedBox(height: 10),
@@ -228,7 +228,7 @@ class _CommitmentAdditionsMenuState extends State<CommitmentAdditionsMenu> {
                       style: TextStyle(
                         fontSize: 15,
                         fontWeight: FontWeight.w800,
-                        color: Color(0xFF334155),
+                        color: Color(0xFF2C3B38),
                       ),
                     ),
                     const SizedBox(height: 10),
@@ -273,9 +273,9 @@ class _CommitmentAdditionsMenuState extends State<CommitmentAdditionsMenu> {
 
   Widget _buildAdditionCard(AdditionType addition, {required bool isPrimary}) {
     final accentColor = isPrimary
-        ? const Color(0xFF2563EB)
-        : const Color(0xFF64748B);
-    final cardColor = isPrimary ? const Color(0xFFF5FAFF) : Colors.white;
+        ? const Color(0xFF0A5A50)
+        : const Color(0xFF5C6B68);
+    final cardColor = isPrimary ? const Color(0xFFE9F4F1) : Colors.white;
 
     return Material(
       color: Colors.transparent,
@@ -293,8 +293,8 @@ class _CommitmentAdditionsMenuState extends State<CommitmentAdditionsMenu> {
             borderRadius: BorderRadius.circular(16),
             border: Border.all(
               color: isPrimary
-                  ? const Color(0xFFBFDBFE)
-                  : const Color(0xFFE2E8F0),
+                  ? const Color(0xFF7FC7B9)
+                  : const Color(0xFFE4EAE8),
               width: 1.1,
             ),
             boxShadow: [
@@ -319,7 +319,7 @@ class _CommitmentAdditionsMenuState extends State<CommitmentAdditionsMenu> {
                 child: Center(
                   child: Text(
                     addition.icon,
-                    style: const TextStyle(fontSize: 18),
+                    style: const TextStyle(fontSize: 17),
                   ),
                 ),
               ),
@@ -327,19 +327,18 @@ class _CommitmentAdditionsMenuState extends State<CommitmentAdditionsMenu> {
               Flexible(
                 child: Padding(
                   padding: const EdgeInsets.symmetric(horizontal: 4),
-                  child: Text(
+                  child: AppFitText(
                     addition.displayName,
                     textAlign: TextAlign.center,
+                    alignment: Alignment.center,
                     style: TextStyle(
-                      fontSize: 10.8,
+                      fontSize: 11,
                       fontWeight: FontWeight.w800,
                       color: isPrimary
-                          ? const Color(0xFF1D4ED8)
-                          : const Color(0xFF334155),
+                          ? const Color(0xFF0A5A50)
+                          : const Color(0xFF2C3B38),
                       height: 1.1,
                     ),
-                    maxLines: 2,
-                    overflow: TextOverflow.ellipsis,
                   ),
                 ),
               ),
@@ -357,12 +356,12 @@ class _CommitmentAdditionsMenuState extends State<CommitmentAdditionsMenu> {
           _showAdditionalAdditions = !_showAdditionalAdditions;
         });
       },
-      borderRadius: BorderRadius.circular(14),
+      borderRadius: BorderRadius.circular(12),
       child: Container(
         padding: const EdgeInsets.symmetric(horizontal: 16, vertical: 12),
         decoration: BoxDecoration(
-          color: const Color(0xFFE2E8F0),
-          borderRadius: BorderRadius.circular(14),
+          color: const Color(0xFFE4EAE8),
+          borderRadius: BorderRadius.circular(12),
         ),
         child: Row(
           mainAxisAlignment: MainAxisAlignment.spaceBetween,
@@ -373,7 +372,7 @@ class _CommitmentAdditionsMenuState extends State<CommitmentAdditionsMenu> {
                   _showAdditionalAdditions
                       ? Icons.keyboard_arrow_up_rounded
                       : Icons.keyboard_arrow_down_rounded,
-                  color: const Color(0xFF0F172A),
+                  color: const Color(0xFF022E2A),
                 ),
                 const SizedBox(width: 8),
                 Text(
@@ -381,9 +380,9 @@ class _CommitmentAdditionsMenuState extends State<CommitmentAdditionsMenu> {
                       ? 'إخفاء الإضافات الأخرى'
                       : 'مزيد من الإضافات ($count)',
                   style: const TextStyle(
-                    fontSize: 14,
+                    fontSize: 13,
                     fontWeight: FontWeight.w700,
-                    color: Color(0xFF0F172A),
+                    color: Color(0xFF022E2A),
                   ),
                 ),
               ],
@@ -392,14 +391,14 @@ class _CommitmentAdditionsMenuState extends State<CommitmentAdditionsMenu> {
               padding: const EdgeInsets.all(6),
               decoration: BoxDecoration(
                 color: Colors.white,
-                borderRadius: BorderRadius.circular(10),
+                borderRadius: BorderRadius.circular(12),
               ),
               child: Text(
                 '$count',
                 style: const TextStyle(
                   fontSize: 12,
                   fontWeight: FontWeight.w800,
-                  color: Color(0xFF2563EB),
+                  color: Color(0xFF0A5A50),
                 ),
               ),
             ),

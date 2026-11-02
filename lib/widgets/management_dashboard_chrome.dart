@@ -5,6 +5,29 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'shared/app_design.dart';
 import 'shared/search_matching.dart';
 
+/// خلفية الوحدة الخفيفة: لونها بنسبة قليلة فوق الأبيض.
+Color moduleTintFill(Color tint) =>
+    Color.alphaBlend(tint.withValues(alpha: 0.07), Colors.white);
+
+/// مستطيل الوحدة الملوّن من الترويسة حتى «الملخص الشامل»: يلوّن خلفية
+/// [slivers] كلها بلون الوحدة الخفيف بحواف سفلية دائرية.
+Widget moduleTintedGroup({required Color tint, required List<Widget> slivers}) {
+  return DecoratedSliver(
+    decoration: BoxDecoration(
+      color: moduleTintFill(tint),
+      borderRadius: const BorderRadius.vertical(bottom: Radius.circular(24)),
+    ),
+    sliver: ModuleTintScope(
+      child: SliverMainAxisGroup(
+        slivers: [
+          ...slivers,
+          const SliverToBoxAdapter(child: SizedBox(height: 14)),
+        ],
+      ),
+    ),
+  );
+}
+
 class ManagementPinnedControls extends StatelessWidget {
   const ManagementPinnedControls({
     super.key,
@@ -65,7 +88,7 @@ class _ManagementPinnedControlsDelegate extends SliverPersistentHeaderDelegate {
     return Material(
       color: Colors.transparent,
       elevation: overlapsContent ? 2 : 0,
-      shadowColor: const Color(0x1A0F172A),
+      shadowColor: const Color(0x1A022E2A),
       child: child,
     );
   }
@@ -92,7 +115,28 @@ class ManagementDashboardHeader extends StatelessWidget {
     required this.colors,
     required this.onSmartCalendarTap,
     this.onClose,
+    this.titleMaxLines = 2,
+    this.toolbarHeight = 84,
+    this.subtitleMaxLines = 2,
+    this.titleFontSize,
+    this.tint,
   });
+
+  /// لون الوحدة: لمسة خفيفة في خلفية الترويسة وخط سفلي، تميّز الشخصية
+  /// عن المشتركة والأفراد والعقارات.
+  final Color? tint;
+
+  /// أسطر الجملة تحت العنوان: 1 يصغّر الخط قليلًا لتظهر كاملة في سطر.
+  final int subtitleMaxLines;
+
+  /// حجم خط العنوان إن احتاج عنوان طويل أن يظهر كاملًا في سطرين.
+  final double? titleFontSize;
+
+  /// أسطر العنوان: 3 لعنوان طويل يظهر كاملًا بلا قصّ.
+  final int titleMaxLines;
+
+  /// ارتفاع الترويسة، يزيد مع عنوان من ثلاثة أسطر.
+  final double toolbarHeight;
 
   final String title;
   final String subtitle;
@@ -108,17 +152,21 @@ class ManagementDashboardHeader extends StatelessWidget {
     // ترويسة بيضاء موحّدة مع بقية التطبيق: أيقونة الوحدة في مربّع بلونها،
     // العنوان بلون النص الأساسي، والأزرار بمقاس وشكل أزرار التطبيق. كانت
     // ترويسة متدرّجة ملوّنة بحدود شبه شفافة تختلف عن كل شاشة أخرى.
-    final accent = colors.first;
+    final accent = tint ?? colors.first;
+    final tinted = tint == null ? AppTheme.page : moduleTintFill(tint!);
     return SliverAppBar(
       pinned: true,
       floating: false,
       automaticallyImplyLeading: false,
-      toolbarHeight: 84,
+      toolbarHeight: toolbarHeight,
       elevation: 0,
       scrolledUnderElevation: 0,
       surfaceTintColor: Colors.transparent,
-      backgroundColor: AppTheme.page,
-      shape: const Border(bottom: BorderSide(color: AppTheme.line)),
+      backgroundColor: tinted,
+      // مع لون الوحدة: بلا خط فاصل، فالترويسة وما تحتها مستطيل واحد.
+      shape: tint == null
+          ? const Border(bottom: BorderSide(color: AppTheme.line))
+          : null,
       titleSpacing: AppTheme.pageInset,
       title: Directionality(
         textDirection: AppTr.uiDir,
@@ -131,19 +179,46 @@ class ManagementDashboardHeader extends StatelessWidget {
                 mainAxisSize: MainAxisSize.min,
                 crossAxisAlignment: CrossAxisAlignment.start,
                 children: [
+                  // العنوان كاملًا أيضًا: اسم الوحدة الطويل كان يُقصّ فلا
+                  // يُعرف ما الذي تغطّيه الصفحة.
                   Text(
                     title,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: AppTheme.cardTitle,
+                    maxLines: (titleMaxLines) + 2,
+                    softWrap: true,
+                    style: titleFontSize == null
+                        ? AppTheme.cardTitle
+                        : AppTheme.cardTitle.copyWith(fontSize: titleFontSize),
                   ),
                   const SizedBox(height: 3),
-                  Text(
-                    subtitle,
-                    maxLines: 1,
-                    overflow: TextOverflow.ellipsis,
-                    style: AppTheme.rowSubtitle,
-                  ),
+                  // الجملة كاملة: كانت تُقصّ بثلاث نقاط فلا تُقرأ. وفي سطر
+                  // واحد يصغُر خطها بقدر ما يلزم لتظهر كلها.
+                  if (subtitleMaxLines == 1)
+                    FittedBox(
+                      fit: BoxFit.scaleDown,
+                      alignment: AlignmentDirectional.centerStart,
+                      child: Text(
+                        subtitle,
+                        maxLines: 3,
+                        style: const TextStyle(
+                          fontSize: 10.5,
+                          height: 1.35,
+                          fontWeight: FontWeight.w500,
+                          color: AppTheme.muted,
+                        ),
+                      ),
+                    )
+                  else
+                    Text(
+                      subtitle,
+                      maxLines: subtitleMaxLines,
+                      softWrap: true,
+                      style: const TextStyle(
+                        fontSize: 10.5,
+                        height: 1.35,
+                        fontWeight: FontWeight.w500,
+                        color: AppTheme.muted,
+                      ),
+                    ),
                 ],
               ),
             ),
@@ -207,7 +282,7 @@ class ManagementListHeading extends StatelessWidget {
             child: Text(
               '$count',
               style: TextStyle(
-                fontSize: 14,
+                fontSize: 13,
                 fontWeight: FontWeight.w900,
                 color: accentColor,
               ),
@@ -217,9 +292,14 @@ class ManagementListHeading extends StatelessWidget {
           Expanded(
             child: Text(
               title,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: AppTheme.cardTitle,
+              maxLines: 2,
+              softWrap: true,
+              style: const TextStyle(
+                fontSize: 13.5,
+                height: 1.25,
+                fontWeight: FontWeight.w900,
+                color: AppTheme.title,
+              ),
             ),
           ),
         ],
@@ -356,16 +436,26 @@ class _ManagementSearchBarState extends State<ManagementSearchBar> {
                       fontSize: 13,
                       fontWeight: FontWeight.w600,
                     ),
-                    suffixIcon: const Icon(
+                    // علامة البحث في بداية المستطيل.
+                    prefixIcon: Icon(
                       Icons.search_rounded,
                       size: 21,
-                      color: AppTheme.chevron,
+                      color: widget.accentColor,
                     ),
                     filled: true,
-                    fillColor: AppTheme.field,
+                    // داخل مستطيل الوحدة الملوّن: أبيض بحد واضح.
+                    fillColor: ModuleTintScope.of(context)
+                        ? Colors.white
+                        : AppTheme.field,
                     border: OutlineInputBorder(
                       borderRadius: BorderRadius.circular(AppTheme.rField),
                       borderSide: BorderSide.none,
+                    ),
+                    enabledBorder: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(AppTheme.rField),
+                      borderSide: ModuleTintScope.of(context)
+                          ? const BorderSide(color: AppTheme.hairline)
+                          : BorderSide.none,
                     ),
                     contentPadding: const EdgeInsets.symmetric(vertical: 15),
                   ),
@@ -414,8 +504,7 @@ class _ManagementSearchBarState extends State<ManagementSearchBar> {
                       ),
                       title: Text(
                         item,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
+                        maxLines: 3,
                         style: AppTheme.rowTitle,
                       ),
                       onTap: () => _selectSearch(item),
@@ -435,7 +524,7 @@ class ManagementFollowUpCenter extends StatefulWidget {
     super.key,
     required this.subtitle,
     required this.metrics,
-    this.accentColor = const Color(0xFF047857),
+    this.accentColor = const Color(0xFF0E7161),
     this.onMore,
     this.selectedMetricIndex,
     this.onMetricSelected,
@@ -573,10 +662,29 @@ class ManagementSortHeader extends StatelessWidget {
       textDirection: AppTr.uiDir,
       child: Row(
         children: [
+          // العنوان ثم العدد ملاصقًا له من اليسار، وزر الترتيب في أقصى
+          // الطرف دائمًا.
+          Expanded(
+            child: Row(
+              children: [
+          Flexible(
+            child: Text(
+              title,
+              maxLines: 2,
+              softWrap: true,
+              style: const TextStyle(
+                fontSize: 13.5,
+                height: 1.25,
+                fontWeight: FontWeight.w900,
+                color: AppTheme.title,
+              ),
+            ),
+          ),
+          const SizedBox(width: AppTheme.sSm),
           Container(
-            constraints: const BoxConstraints(minWidth: 36),
-            height: 36,
-            padding: const EdgeInsets.symmetric(horizontal: 10),
+            constraints: const BoxConstraints(minWidth: 32),
+            height: 30,
+            padding: const EdgeInsets.symmetric(horizontal: 9),
             alignment: Alignment.center,
             decoration: BoxDecoration(
               color: accentColor.withValues(alpha: 0.12),
@@ -585,21 +693,16 @@ class ManagementSortHeader extends StatelessWidget {
             child: Text(
               '$count',
               style: TextStyle(
-                fontSize: 14,
+                fontSize: 13,
                 fontWeight: FontWeight.w900,
                 color: accentColor,
               ),
             ),
           ),
-          const SizedBox(width: AppTheme.sMd),
-          Expanded(
-            child: Text(
-              title,
-              maxLines: 1,
-              overflow: TextOverflow.ellipsis,
-              style: AppTheme.cardTitle,
+              ],
             ),
           ),
+          const SizedBox(width: 8),
           PopupMenuButton<String>(
             key: const ValueKey('management-sort-button'),
             tooltip: AppTr.tr('ترتيب النتائج'),
@@ -616,7 +719,7 @@ class ManagementSortHeader extends StatelessWidget {
                 Text(
                   value,
                   style: TextStyle(
-                    fontSize: 10.5,
+                    fontSize: 10,
                     fontWeight: FontWeight.w800,
                     color: accentColor,
                   ),
@@ -649,9 +752,45 @@ class ManagementCompactCard extends StatelessWidget {
     required this.statusColor,
     required this.onTap,
     this.categoryTitle,
+    this.titleNote,
     this.trailingNote,
     this.showChevron = false,
+    this.stacked = false,
+    this.categoryStatus,
+    this.badge,
+    this.badgeColor = const Color(0xFF6A4C93),
   });
+
+  /// وسم صغير بجانب الاسم («مفوَّض أنا بإدارته» مثلًا).
+  final String? badge;
+  final Color badgeColor;
+
+  // بلا خلفية: الكلمة وحدها بلونها، كما في صفحة العنصر من الداخل.
+  Widget _badgePill() => Padding(
+    padding: const EdgeInsets.symmetric(vertical: 2),
+    child: Text(
+      badge!,
+      maxLines: 1,
+      style: TextStyle(
+        fontSize: 9.5,
+        fontWeight: FontWeight.w900,
+        color: badgeColor,
+      ),
+    ),
+  );
+
+  /// حالة تُكتب في آخر سطر [categoryTitle] (يسارًا) بلون [statusColor] —
+  /// العقار: شاغر / مؤجر.
+  final String? categoryStatus;
+
+  /// تخطيط مرتّب: الاسم وحده سطرًا، ثم الموقع بأيقونته، ثم النوع والحالة،
+  /// ثم العقد وتاريخه. كان الاسم والموقع يُحشران في سطر واحد فيلتصق
+  /// «فيلا زين» بـ«مدينة الرياض ـ حوض…» ولا يُقرأ أيهما.
+  final bool stacked;
+
+  /// نص خافت يلي العنوان في السطر نفسه — موقع العقار مثلًا. كان الموقع
+  /// يُدفع إلى عمود اليسار فيُقرأ بعيدًا عن الاسم الذي يخصّه.
+  final String? titleNote;
 
   /// سهم صغير في نهاية البطاقة (يسارًا في RTL) يوضح إمكانية الدخول.
   final bool showChevron;
@@ -682,7 +821,7 @@ class ManagementCompactCard extends StatelessWidget {
         onTap: onTap,
         borderRadius: BorderRadius.circular(AppTheme.rField),
         child: Container(
-          height: 94,
+          height: 104,
           padding: const EdgeInsetsDirectional.fromSTEB(14, 12, 12, 12),
           // بطاقة قائمة رمادية موحّدة بلا حدود ولا ظل، بنفس نصف قطر صفوف
           // القوائم في كل التطبيق.
@@ -700,34 +839,103 @@ class ManagementCompactCard extends StatelessWidget {
                   mainAxisAlignment: MainAxisAlignment.center,
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    Text(
-                      title,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: AppTheme.rowTitle,
-                    ),
-                    if (categoryTitle != null) ...[
-                      const SizedBox(height: 3),
-                      Text(
-                        categoryTitle!,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: TextStyle(
-                          fontSize: 10.5,
-                          fontWeight: FontWeight.w900,
-                          color: accentColor,
-                        ),
+                    if (stacked)
+                      // الاسم وحده في سطره: هو ما تبحث عنه العين أولًا،
+                      // وازدحامه بالموقع كان يُفقده وضوحه.
+                      Row(
+                        children: [
+                          Flexible(
+                            child: FittedBox(fit: BoxFit.scaleDown, alignment: AlignmentDirectional.centerStart, child: Text(
+                              title,
+                              maxLines: 1,
+                              style: AppTheme.rowTitle,
+                            )),
+                          ),
+                          if (badge != null && badge!.trim().isNotEmpty) ...[
+                            const SizedBox(width: 6),
+                            _badgePill(),
+                          ],
+                        ],
+                      )
+                    else
+                      Row(
+                        children: [
+                          Flexible(
+                            child: FittedBox(fit: BoxFit.scaleDown, alignment: AlignmentDirectional.centerStart, child: Text(
+                              title,
+                              maxLines: 1,
+                              style: AppTheme.rowTitle,
+                            )),
+                          ),
+                          if (titleNote != null &&
+                              titleNote!.trim().isNotEmpty) ...[
+                            const SizedBox(width: 6),
+                            Flexible(
+                              child: FittedBox(fit: BoxFit.scaleDown, alignment: AlignmentDirectional.centerStart, child: Text(
+                                titleNote!,
+                                maxLines: 1,
+                                style: const TextStyle(
+                                  fontSize: 10.5,
+                                  fontWeight: FontWeight.w700,
+                                  color: AppTheme.muted,
+                                ),
+                              )),
+                            ),
+                          ],
+                          if (badge != null && badge!.trim().isNotEmpty) ...[
+                            const SizedBox(width: 6),
+                            _badgePill(),
+                          ],
+                        ],
                       ),
-                      const SizedBox(height: 2),
+                    if (categoryTitle != null) ...[
+                      const SizedBox(height: 6),
+                      Row(
+                        children: [
+                          Expanded(
+                            child: FittedBox(fit: BoxFit.scaleDown, alignment: AlignmentDirectional.centerStart, child: Text(
+                              categoryTitle!,
+                              maxLines: 1,
+                              style: TextStyle(
+                                fontSize: 10,
+                                fontWeight: FontWeight.w900,
+                                color: accentColor,
+                              ),
+                            )),
+                          ),
+                          if (categoryStatus != null &&
+                              categoryStatus!.trim().isNotEmpty) ...[
+                            const SizedBox(width: 6),
+                            Text(
+                              categoryStatus!,
+                              maxLines: 1,
+                              style: TextStyle(
+                                fontSize: 10.5,
+                                fontWeight: FontWeight.w900,
+                                color: statusColor,
+                              ),
+                            ),
+                          ],
+                        ],
+                      ),
+                      const SizedBox(height: 6),
                     ] else
-                      const SizedBox(height: 5),
+                      const SizedBox(height: 7),
+                    if (category.trim().isNotEmpty || date.trim().isNotEmpty)
                     Row(
                       children: [
+                        if (stacked && category.trim().isNotEmpty) ...[
+                          const Icon(
+                            Icons.description_outlined,
+                            size: 11,
+                            color: AppTheme.muted,
+                          ),
+                          const SizedBox(width: 3),
+                        ],
                         Flexible(
-                          child: Text(
+                          child: FittedBox(fit: BoxFit.scaleDown, alignment: AlignmentDirectional.centerStart, child: Text(
                             category,
                             maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
                             style: TextStyle(
                               fontSize: 10,
                               fontWeight: FontWeight.w700,
@@ -735,49 +943,58 @@ class ManagementCompactCard extends StatelessWidget {
                                   ? AppTheme.muted
                                   : accentColor,
                             ),
+                          )),
+                        ),
+                        // بلا تاريخ لا تظهر الأيقونة ولا نصّها: أيقونة
+                        // تقويم بجانب «غير محدد» تشغل مكان معلومة ولا
+                        // تحمل واحدة.
+                        if (date.trim().isNotEmpty) ...[
+                          const SizedBox(width: 7),
+                          const Icon(
+                            Icons.calendar_today_outlined,
+                            size: 11,
+                            color: AppTheme.muted,
                           ),
-                        ),
-                        const SizedBox(width: 7),
-                        const Icon(
-                          Icons.calendar_today_outlined,
-                          size: 11,
-                          color: AppTheme.muted,
-                        ),
-                        const SizedBox(width: 3),
-                        Flexible(
-                          child: Text(
-                            date,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: const TextStyle(
-                              fontSize: 10,
-                              fontWeight: FontWeight.w600,
-                              color: AppTheme.muted,
-                            ),
+                          const SizedBox(width: 3),
+                          Flexible(
+                            child: FittedBox(fit: BoxFit.scaleDown, alignment: AlignmentDirectional.centerStart, child: Text(
+                              date,
+                              maxLines: 1,
+                              style: const TextStyle(
+                                fontSize: 10,
+                                fontWeight: FontWeight.w600,
+                                color: AppTheme.muted,
+                              ),
+                            )),
                           ),
-                        ),
+                        ],
                       ],
                     ),
                   ],
                 ),
               ),
+              if (value.trim().isNotEmpty ||
+                  status.trim().isNotEmpty ||
+                  (trailingNote?.trim().isNotEmpty ?? false)) ...[
               const SizedBox(width: 6),
               SizedBox(
                 width: 86,
                 child: Column(
                   mainAxisAlignment: MainAxisAlignment.center,
                   children: [
-                    Text(
-                      value,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
-                        fontSize: 12,
-                        fontWeight: FontWeight.w900,
-                        color: AppTheme.title,
-                      ),
-                    ),
-                    const SizedBox(height: 7),
+                    if (value.trim().isNotEmpty) ...[
+                      FittedBox(fit: BoxFit.scaleDown, alignment: AlignmentDirectional.centerStart, child: Text(
+                        value,
+                        maxLines: 1,
+                        style: const TextStyle(
+                          fontSize: 12,
+                          fontWeight: FontWeight.w900,
+                          color: AppTheme.title,
+                        ),
+                      )),
+                      const SizedBox(height: 7),
+                    ],
+                    if (status.trim().isNotEmpty)
                     Container(
                       padding: const EdgeInsets.symmetric(
                         horizontal: 8,
@@ -787,40 +1004,36 @@ class ManagementCompactCard extends StatelessWidget {
                         color: statusColor.withValues(alpha: 0.13),
                         borderRadius: BorderRadius.circular(AppTheme.rPill),
                       ),
-                      child: Text(
+                      child: FittedBox(fit: BoxFit.scaleDown, alignment: AlignmentDirectional.centerStart, child: Text(
                         status,
                         maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
                         style: TextStyle(
-                          fontSize: 9,
+                          fontSize: 10,
                           fontWeight: FontWeight.w900,
                           color: statusColor,
                         ),
-                      ),
+                      )),
                     ),
                     if (trailingNote != null &&
                         trailingNote!.trim().isNotEmpty) ...[
                       const SizedBox(height: 5),
-                      Text(
+                      FittedBox(fit: BoxFit.scaleDown, alignment: AlignmentDirectional.centerStart, child: Text(
                         trailingNote!,
                         maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
                         style: const TextStyle(
-                          fontSize: 9,
+                          fontSize: 10,
                           fontWeight: FontWeight.w700,
                           color: AppTheme.muted,
                         ),
-                      ),
+                      )),
                     ],
                   ],
                 ),
               ),
-              if (showChevron)
-                const Icon(
-                  Icons.chevron_left_rounded,
-                  size: 20,
-                  color: AppTheme.muted,
-                ),
+              ],
+              // نفس سهم بطاقات الالتزامات والأفراد: متجه للخارج (يسارًا)
+              // ثابتًا مهما كان اتجاه الواجهة.
+              if (showChevron) const AppChevron(size: 22),
             ],
           ),
         ),

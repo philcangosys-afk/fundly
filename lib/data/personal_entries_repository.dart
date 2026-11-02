@@ -4,6 +4,8 @@ import 'package:image_picker/image_picker.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import 'app_session.dart';
+import 'record_merge.dart';
+import 'fundly_notifications.dart';
 
 class PersonalEntryRecord {
   final String? id;
@@ -44,7 +46,9 @@ class PersonalEntryRecord {
         (key, value) => MapEntry(key, value?.toString() ?? ''),
       ),
       attachmentUrl: json['attachment_url'] as String?,
-      createdAt: DateTime.tryParse(json['created_at'] as String? ?? ''),
+      createdAt: DateTime.tryParse(
+        json['created_at'] as String? ?? '',
+      )?.toLocal(),
     );
   }
 
@@ -118,6 +122,89 @@ abstract class PersonalEntriesRepository {
 }
 
 class SupabasePersonalEntriesRepository implements PersonalEntriesRepository {
+  /// آخر نسخة استلمها هذا الجهاز لكل سجل — «الأصل» في دمج التعديلات قبل
+  /// الحفظ ([RecordMerge])، حتى لا يمحو حفظٌ تعديلَ طرف آخر على السجل نفسه.
+  static final Map<String, PersonalEntryRecord> _seen = {};
+
+  static void _remember(PersonalEntryRecord record) {
+    final id = record.id;
+    if (id != null) _seen[id] = record;
+  }
+
+  /// رفع ملف وحده (فاتورة صرف مثلًا) وإعادة مساره — دون أن يصير مرفق
+  /// السجل نفسه.
+  Future<String> uploadAttachment(XFile file) async {
+    final user = await _authenticatedUser();
+    final bytes = await file.readAsBytes();
+    final path =
+        '${user.id}/${DateTime.now().microsecondsSinceEpoch}'
+        '${_fileExtension(file.name)}';
+    await _client.storage
+        .from(_bucket)
+        .uploadBinary(
+          path,
+          Uint8List.fromList(bytes),
+          fileOptions: const FileOptions(upsert: false),
+        )
+        .timeout(_requestTimeout);
+    return path;
+  }
+
+  /// أحدث نسخة من سجل واحد في الخادم.
+  Future<PersonalEntryRecord?> fetchOne(String id) async {
+    await _authenticatedUser();
+    final row = await _client
+        .from(_table)
+        .select()
+        .eq('id', id)
+        .maybeSingle()
+        .timeout(_requestTimeout);
+    if (row == null) return null;
+    final record = PersonalEntryRecord.fromJson(row);
+    _remember(record);
+    return record;
+  }
+
+  /// ما غيّرتُه عن آخر نسخة استلمتها، مطبَّقًا على أحدث نسخة في الخادم.
+  Future<PersonalEntryRecord> _mergeWithLatest(PersonalEntryRecord entry) async {
+    final id = entry.id;
+    final base = id == null ? null : _seen[id];
+    if (id == null || base == null) return entry;
+    try {
+      final row = await _client
+          .from(_table)
+          .select()
+          .eq('id', id)
+          .maybeSingle()
+          .timeout(_requestTimeout);
+      if (row == null) return entry;
+      final latest = PersonalEntryRecord.fromJson(row);
+      return PersonalEntryRecord(
+        id: id,
+        category: RecordMerge.pick(base.category, entry.category, latest.category),
+        entryType: RecordMerge.pick(
+          base.entryType,
+          entry.entryType,
+          latest.entryType,
+        ),
+        title: RecordMerge.pick(base.title, entry.title, latest.title),
+        amount: RecordMerge.pick(base.amount, entry.amount, latest.amount),
+        dueDate: RecordMerge.pick(base.dueDate, entry.dueDate, latest.dueDate),
+        status: RecordMerge.pick(base.status, entry.status, latest.status),
+        details: RecordMerge.details(base.details, entry.details, latest.details),
+        attachmentUrl: RecordMerge.pick(
+          base.attachmentUrl,
+          entry.attachmentUrl,
+          latest.attachmentUrl,
+        ),
+        createdAt: latest.createdAt,
+      );
+    } catch (_) {
+      // بلا اتصال بالقراءة: يُحفظ كما هو.
+      return entry;
+    }
+  }
+
   static const _table = 'personal_entries';
   static const _bucket = 'personal-entry-attachments';
   static const _requestTimeout = Duration(seconds: 15);
@@ -140,7 +227,9 @@ class SupabasePersonalEntriesRepository implements PersonalEntriesRepository {
         .select()
         .order('created_at', ascending: false)
         .timeout(_requestTimeout);
-    return rows.map(PersonalEntryRecord.fromJson).toList(growable: false);
+    final records = rows.map(PersonalEntryRecord.fromJson).toList(growable: false);
+    records.forEach(_remember);
+    return records;
   }
 
   @override
@@ -173,7 +262,10 @@ class SupabasePersonalEntriesRepository implements PersonalEntriesRepository {
         .select()
         .single()
         .timeout(_requestTimeout);
-    return PersonalEntryRecord.fromJson(row);
+    final saved = PersonalEntryRecord.fromJson(row);
+    _remember(saved);
+    FundlyNotifications.scheduleSoon();
+    return saved;
   }
 
   @override
@@ -185,7 +277,8 @@ class SupabasePersonalEntriesRepository implements PersonalEntriesRepository {
     if (entry.id == null) {
       throw const PostgrestException(message: 'Missing personal entry id');
     }
-    var record = entry;
+    // ما غيّرتُه فقط فوق أحدث نسخة في الخادم.
+    var record = await _mergeWithLatest(entry);
     if (attachment != null) {
       final bytes = await attachment.readAsBytes();
       final extension = _fileExtension(attachment.name);
@@ -208,7 +301,10 @@ class SupabasePersonalEntriesRepository implements PersonalEntriesRepository {
         .select()
         .single()
         .timeout(_requestTimeout);
-    return PersonalEntryRecord.fromJson(row);
+    final saved = PersonalEntryRecord.fromJson(row);
+    _remember(saved);
+    FundlyNotifications.scheduleSoon();
+    return saved;
   }
 
   @override
@@ -219,6 +315,8 @@ class SupabasePersonalEntriesRepository implements PersonalEntriesRepository {
         .delete()
         .eq('id', entryId)
         .timeout(_requestTimeout);
+
+    FundlyNotifications.scheduleSoon();
   }
 
   String _fileExtension(String name) {

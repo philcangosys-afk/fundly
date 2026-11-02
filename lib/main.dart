@@ -10,51 +10,149 @@ import 'package:shared_preferences/shared_preferences.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 import 'config/supabase_config.dart';
 import 'data/app_settings.dart';
+import 'data/custody_sharing.dart';
+import 'screens/birthday_screen.dart';
+import 'data/archive_center.dart';
 import 'data/home_dashboard_service.dart';
 import 'data/home_summary_service.dart';
+import 'data/people_directory_store.dart';
+import 'data/report_document.dart';
 import 'data/read_notifications_store.dart';
 import 'data/home_pin_items_service.dart';
 import 'data/home_pinned_shortcuts_store.dart';
+import 'data/home_layout_store.dart';
 import 'data/delegations_repository.dart';
-import 'data/wallets_repository.dart';
+import 'data/delegation_targets.dart';
 import 'l10n/home_strings.dart';
 import 'screens/app_lock_screen.dart';
-import 'screens/data_status_screen.dart';
+import 'screens/login_screen.dart';
+import 'data/document_store.dart';
+import 'data/fundly_account.dart';
+import 'data/fundly_push.dart';
+import 'data/fundly_files.dart';
+import 'data/fundly_auth.dart';
+import 'data/install_guard.dart';
+import 'data/page_customization_store.dart';
+import 'widgets/shared/account_notices.dart';
+import 'screens/received_delegations.dart';
+import 'screens/salary_receipts_screen.dart';
 import 'screens/notifications_center_screen.dart';
 import 'screens/document_templates_screen.dart';
+import 'screens/global_summary_screen.dart';
 import 'screens/people_management_screen.dart';
 import 'screens/personal_commitments_screen.dart';
 import 'screens/profile_settings_screen.dart';
 import 'screens/settings_detail_screens.dart';
 import 'screens/projects_activities_screen.dart';
 import 'screens/raffle_screen.dart';
+import 'screens/report_preview_screen.dart';
+import 'screens/documents_hub_screen.dart';
 import 'screens/shared_commitments_screen.dart';
+import 'screens/requests_screen.dart';
 import 'screens/smart_calendar_screen.dart';
+import 'data/fundly_notifications.dart';
 import 'widgets/shared/app_design.dart';
+import 'widgets/shared/fnd_lookup.dart';
+import 'data/subscription_plans.dart';
+import 'widgets/shared/plan_gate.dart';
 import 'widgets/shared/app_filter_sheet.dart';
 import 'widgets/shared/scope_builder_sheet.dart';
 import 'widgets/shared/search_matching.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
+  // Firebase: إشعارات الطلبات والتطبيق مغلق (لا يوقف الإقلاع إن فشل).
+  await FundlyPush.init();
   await Supabase.initialize(
     url: SupabaseConfig.url,
     publishableKey: SupabaseConfig.publishableKey,
   );
+  // حذف التطبيق ثم تثبيته: شاشة الدخول حتى لو أبقى الجوال البيانات القديمة.
+  await InstallGuard.check();
   // تُحمَّل الإعدادات قبل بناء الواجهة، فيبدأ التطبيق بحجم النص والعملة
   // وحالة القفل الصحيحة من أول إطار بلا ومضة قيم افتراضية.
   await AppSettings.instance.load();
+  // الرقم التعريفي للمستخدم: يُولَّد مرة واحدة ويُستعمل في المعاملات
+  // المشتركة بين شخصين (إسناد العهدة المالية مثلًا).
+  await AppIdentity.load();
+  // الدخول بحساب حقيقي: بلا جلسة تظهر شاشة الدخول.
+  await FundlyAuth.load();
+  // مجلد ملفات التطبيق: لفتح ملف حُفظ على جوال آخر ونُزّل من السحابة.
+  await DocumentStore.init();
+  if (FundlyAuth.isSignedIn) {
+    // الرقم التعريفي والاسم من الخادم، ورفع بيانات الجهاز للسحابة،
+    // وتنزيل الملفات الجديدة (ومنها ما رفعه الطرف الآخر).
+    FundlyAccount.refreshProfile();
+    FundlyAccount.startAutoSync();
+    FundlyFiles.syncDown(force: true).then((_) => FundlyFiles.syncUp());
+  }
+  // ما أُخفي من الفئات والعناصر في «تخصيص الصفحات».
+  await PageCustomizationStore.load();
+  FundlyAuth.loginPrompt = promptGuestLogin;
+  // «+» في تبويب التفويضات داخل تفاصيل فرد يفتح نموذج التفويض نفسه الموجود
+  // في «المزيد ← التفويضات»، والمفوَّض معبّأ باسم الفرد.
+  openDelegationFormForPerson = (context, name) => Navigator.of(context).push(
+    MaterialPageRoute<void>(
+      builder: (_) => _DelegationsHubPage(presetDelegate: name),
+    ),
+  );
+  // «تفويض آخرين» من صفحة عقار أو وحدة أو مركبة أو نشاط: النموذج نفسه
+  // والقسم والعنصر مختاران مسبقًا (ويمكن تغييرهما).
+  openDelegationForTarget = (context, {required sub, required target}) =>
+      Navigator.of(context).push(
+        MaterialPageRoute<void>(
+          builder: (_) => _DelegationsHubPage(
+            presetDelegate: '',
+            presetSub: sub,
+            presetTarget: target,
+          ),
+        ),
+      );
   runApp(const MyApp());
 }
 
-class MyApp extends StatelessWidget {
+class MyApp extends StatefulWidget {
   const MyApp({super.key});
+
+  @override
+  State<MyApp> createState() => _MyAppState();
+}
+
+class _MyAppState extends State<MyApp> {
+  String _language = AppSettings.instance.language;
+
+  @override
+  void initState() {
+    super.initState();
+    AppSettings.instance.addListener(_onSettingsChanged);
+  }
+
+  @override
+  void dispose() {
+    AppSettings.instance.removeListener(_onSettingsChanged);
+    super.dispose();
+  }
+
+  /// تغيير اللغة يعيد بناء كل الشاشات المفتوحة فورًا — بلا انتظار إغلاق
+  /// التطبيق، في الاتجاهين (عربي ← لغة أخرى ← عربي).
+  void _onSettingsChanged() {
+    final language = AppSettings.instance.language;
+    if (language == _language) return;
+    _language = language;
+    AppTr.rebuildAll();
+    WidgetsBinding.instance.addPostFrameCallback((_) => AppTr.rebuildAll());
+  }
 
   @override
   Widget build(BuildContext context) {
     return ListenableBuilder(
-      listenable: AppSettings.instance,
+      listenable: Listenable.merge([
+        AppSettings.instance,
+        FundlyAuth.sessionEpoch,
+      ]),
       builder: (context, _) => MaterialApp(
+        // الخروج يبني التطبيق من جديد فيظهر الدخول بلا بقايا الحساب السابق.
+        key: ValueKey('app-session-${FundlyAuth.sessionEpoch.value}'),
         title: HomeStrings.appTitle,
         // سِمة واحدة تُوحّد الحقول والأزرار والنوافذ والشيتات في كل
         // التطبيق، بما فيها الشاشات التي لم نمرّ عليها يدويًا.
@@ -71,7 +169,7 @@ class MyApp extends StatelessWidget {
           maxScaleFactor: AppSettings.instance.textScale,
           child: child ?? const SizedBox.shrink(),
         ),
-        home: const AppLockGate(child: HomePage()),
+        home: const AppLockGate(child: LoginGate(child: HomePage())),
         routes: {'/home': (context) => const HomePage()},
         debugShowCheckedModeBanner: false,
       ),
@@ -131,15 +229,14 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
     final settings = AppSettings.instance;
     if (!settings.notificationsEnabled) return 0;
     final now = DateUtils.dateOnly(DateTime.now());
-    final due = _metrics.calendarItems.where((item) {
-      if (!settings.expiryNotifications && item.isExpiry) return false;
-      final dueDate = DateUtils.dateOnly(item.date);
-      final lead = item.remindBeforeDays >= 0
-          ? item.remindBeforeDays
-          : settings.leadTimeDays;
-      final from = dueDate.subtract(Duration(days: lead));
-      return !now.isBefore(from) && !now.isAfter(dueDate);
-    });
+    final due = _metrics.calendarItems.where(
+      (item) => HomeDashboardService.isAlertDue(
+        item,
+        today: now,
+        defaultLead: settings.leadTimeDays,
+        expiryEnabled: settings.expiryNotifications,
+      ),
+    );
     return ReadNotificationsStore.instance.unreadCount(due);
   }
 
@@ -153,9 +250,31 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
     // الاسم والصورة وحالة إخفاء المبالغ تظهر في ترويسة الرئيسية وملخصها،
     // فأي تعديل في الإعدادات يجب أن ينعكس هنا فورًا.
     AppSettings.instance.addListener(_onSettingsChanged);
+    // يوم الميلاد: تفتح نافذة التهنئة تلقائيًا مرة واحدة في ذلك اليوم.
+    WidgetsBinding.instance.addPostFrameCallback((_) async {
+      if (!mounted) return;
+      await maybeCelebrateBirthday(context);
+      // رقمك التعريفي (أول مرة) وما وصلك من حسابات أخرى.
+      if (mounted) _checkAccountNotices();
+      // إشعارات الجوال للتذكيرات: الإذن مرة، ثم الجدولة.
+      FundlyNotifications.start();
+    });
+    // طلب أو رد وصل والتطبيق مفتوح: نافذة الطلبات فورًا (والإشعار بصوت
+    // يظهر في الستارة من FundlyAccount.pollInbox).
+    FundlyAccount.inboxArrivals.addListener(_checkAccountNotices);
+    // عند الرجوع للتطبيق: الطلبات الجديدة تظهر فورًا.
+    _lifecycleListener = AppLifecycleListener(
+      onResume: () {
+        _checkAccountNotices();
+        FundlyNotifications.scheduleSoon();
+      },
+    );
     // قراءة تنبيه في مركز التنبيهات تُطفئ النقطة الحمراء فورًا.
     ReadNotificationsStore.instance.addListener(_onSettingsChanged);
     ReadNotificationsStore.instance.load();
+    // ترتيب أقسام الرئيسية وإخفاؤها من «المزيد ← تخصيص الصفحة الرئيسية».
+    HomeLayoutStore.notifier.addListener(_onSettingsChanged);
+    HomeLayoutStore.load();
     _categoryFlashController = AnimationController(
       duration: const Duration(milliseconds: 700),
       vsync: this,
@@ -177,6 +296,49 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
     _entranceController.forward();
   }
 
+  AppLifecycleListener? _lifecycleListener;
+
+  void _checkAccountNotices() {
+    if (!mounted) return;
+    AccountNotices.show(
+      context,
+      onOpen: (source, entryType) {
+        if (source == 'delegations') {
+          // تفويض وصلني ← «تفويضات وصلتني»، ورد المفوَّض ← «تفويضاتي».
+          Navigator.of(context).push(
+            MaterialPageRoute<void>(
+              builder: (_) => _DelegationsHubPage(
+                initialDirection: entryType == 'تفويض'
+                    ? 'received'
+                    : 'granted',
+              ),
+            ),
+          );
+          return;
+        }
+        // سند قبض (راتب أو عام): سندات القبض والرواتب.
+        if (source == 'salary_receipts') {
+          Navigator.of(context).push(
+            MaterialPageRoute<void>(
+              builder: (_) => const SalaryReceiptsScreen(),
+            ),
+          );
+          return;
+        }
+        // ما فعله المفوَّض في عقار/مركبة/نشاط: يفتح العقارات والأنشطة.
+        if (source == 'project_assets') {
+          _openPriorityScreen('العقارات/الأنشطة التجارية/المعدات وأخرى');
+          return;
+        }
+        _openPriorityScreen(
+          source == 'shared_entries'
+              ? 'الالتزامات المشتركة'
+              : 'الالتزامات الشخصية',
+        );
+      },
+    );
+  }
+
   Future<void> _bootstrapHomeState() async {
     final prefs = await SharedPreferences.getInstance();
     final persistedLayout = prefs.getBool(_layoutPrefsKey);
@@ -195,9 +357,10 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
     }
     if (!mounted) return;
     setState(() {
-      // العرض الافتراضي: أربعة مستطيلات تحت بعضها. عرض المربعين جنبًا
-      // إلى جنب يبقى خيارًا يختاره المستخدم من زر التبديل ويُحفظ.
-      _showCategoriesInTwoColumns = persistedLayout ?? false;
+      // يفتح التطبيق دائمًا على المربعات الأربعة (كل اثنين في صف)؛ زر
+      // التبديل يغيّر العرض أثناء الاستعمال فقط.
+      if (persistedLayout == false) prefs.setBool(_layoutPrefsKey, true);
+      _showCategoriesInTwoColumns = true;
       _pinnedShortcuts = shortcuts;
       _metrics = metrics;
       _metricsError = loadError;
@@ -222,6 +385,64 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
     }
   }
 
+  /// تبديل العرض: مربعات (بطاقتان في الصف) أو قائمة (بطاقة في الصف)،
+  /// والمختار بإطار وخلفية خضراء خفيفة.
+  Widget _layoutToggle() {
+    Widget option(bool twoColumns, IconData icon, String tooltip) {
+      final selected = _showCategoriesInTwoColumns == twoColumns;
+      return Tooltip(
+        message: AppTr.tr(tooltip),
+        child: InkWell(
+          key: ValueKey('home-layout-${twoColumns ? 'grid' : 'list'}'),
+          borderRadius: BorderRadius.circular(10),
+          onTap: () {
+            if (selected) return;
+            HapticFeedback.selectionClick();
+            _toggleLayout();
+          },
+          child: AnimatedContainer(
+            duration: const Duration(milliseconds: 160),
+            width: 34,
+            height: 30,
+            decoration: BoxDecoration(
+              color: selected
+                  ? const Color(0xFF0E7161).withValues(alpha: 0.10)
+                  : Colors.transparent,
+              borderRadius: BorderRadius.circular(10),
+              border: Border.all(
+                color: selected ? const Color(0xFF0E7161) : Colors.transparent,
+                width: 1.4,
+              ),
+            ),
+            child: Icon(
+              icon,
+              size: 18,
+              color: selected ? const Color(0xFF0E7161) : AppTheme.muted,
+            ),
+          ),
+        ),
+      );
+    }
+
+    return Container(
+      key: const ValueKey('home-categories-layout-toggle'),
+      padding: const EdgeInsets.all(3),
+      decoration: BoxDecoration(
+        color: AppTheme.surface,
+        borderRadius: BorderRadius.circular(13),
+        border: Border.all(color: AppTheme.hairline),
+      ),
+      child: Row(
+        mainAxisSize: MainAxisSize.min,
+        children: [
+          option(true, Icons.grid_view_rounded, 'عرض بطاقتين في كل صف'),
+          const SizedBox(width: 3),
+          option(false, Icons.view_agenda_outlined, 'عرض بطاقة واحدة في كل صف'),
+        ],
+      ),
+    );
+  }
+
   Future<void> _toggleLayout() async {
     final next = !_showCategoriesInTwoColumns;
     setState(() => _showCategoriesInTwoColumns = next);
@@ -236,7 +457,25 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
     await HomePinnedShortcutsStore.save(next);
   }
 
-  Future<void> _removePinnedShortcut(String shortcutId) async {
+  Future<void> _removePinnedShortcut(
+    String shortcutId, {
+    bool confirm = false,
+  }) async {
+    // زر ✕ في الرئيسية: تنبيه قبل الإزالة (من هنا فقط، لا من التطبيق).
+    if (confirm) {
+      final match = _pinnedShortcuts.where((item) => item.id == shortcutId);
+      final name = match.isEmpty ? '' : match.first.title;
+      final ok = await confirmAction(
+        context,
+        title: 'إزالة من المثبتة',
+        message:
+            '${name.isEmpty ? '' : '«$name»\n'}'
+            '${AppTr.tr('سيُزال من هنا فقط ولن يُحذف من التطبيق، ويمكنك تثبيته مرة أخرى بزر +.')}',
+        confirmLabel: 'إزالة',
+        cancelLabel: 'رجوع',
+      );
+      if (!ok || !mounted) return;
+    }
     final next = _pinnedShortcuts
         .where((item) => item.id != shortcutId)
         .toList(growable: false);
@@ -248,6 +487,9 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
   void dispose() {
     AppSettings.instance.removeListener(_onSettingsChanged);
     ReadNotificationsStore.instance.removeListener(_onSettingsChanged);
+    HomeLayoutStore.notifier.removeListener(_onSettingsChanged);
+    _lifecycleListener?.dispose();
+    FundlyAccount.inboxArrivals.removeListener(_checkAccountNotices);
     _searchController.dispose();
     _homeScrollController.dispose();
     _categoryFlashController.dispose();
@@ -286,10 +528,9 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
                     Flexible(
                       child: Text(
                         'الفلتر: $_selectedHomeFilter',
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
+                        maxLines: 3,
                         style: const TextStyle(
-                          fontSize: 12.5,
+                          fontSize: 12,
                           fontWeight: FontWeight.w800,
                           color: AppTheme.accentDark,
                         ),
@@ -311,9 +552,8 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
     );
   }
 
-  /// شريط فشل التحميل: يظهر فقط حين يفشل جلب الأرقام فعلًا، ويفتح شاشة
-  /// "حالة البيانات والاتصال" التي تفصل بين عطل الجلسة وعطل الشبكة وغياب
-  /// السجلات.
+  /// شريط فشل التحميل: يظهر فقط حين يفشل جلب الأرقام فعلًا، والضغط عليه
+  /// يعيد المحاولة.
   Widget _buildMetricsErrorBanner() {
     return Material(
       color: AppTheme.warning.withValues(alpha: 0.12),
@@ -323,9 +563,7 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
         key: const ValueKey('home-metrics-error-banner'),
         onTap: () {
           HapticFeedback.selectionClick();
-          Navigator.of(context).push(
-            MaterialPageRoute(builder: (_) => const DataStatusScreen()),
-          );
+          _bootstrapHomeState();
         },
         child: Padding(
           padding: const EdgeInsets.all(AppTheme.sLg),
@@ -340,9 +578,9 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
               const Expanded(
                 child: Text(
                   'تعذّر تحميل البيانات من الخادم، والأرقام أدناه غير '
-                  'محدَّثة. اضغط لمعرفة السبب.',
+                  'محدَّثة. اضغط لإعادة المحاولة.',
                   style: TextStyle(
-                    fontSize: 12.5,
+                    fontSize: 12,
                     height: 1.5,
                     fontWeight: FontWeight.w700,
                     color: AppTheme.warning,
@@ -358,9 +596,8 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
   }
 
   // ===== ألوان وقياسات لوحة الملخص (رموز تصميم موحّدة في مكان واحد) =====
-  static const _panelSurface = Color(0xFFF7F6F5);
-  static const _panelInner = Color(0xFFFAFAFA);
-  static const _panelBorder = Color(0xFFEEEEEE);
+  static const _panelSurface = Color(0xFFF2F6F5);
+  static const _panelBorder = Color(0xFFE4EAE8);
   // ألوان البطاقة المميّزة من نسق التطبيق نفسه (الأخضر المزرقّ) بدل
   // البنفسجي الغريب عن بقية الشاشات.
   static const _summaryAccentTop = AppTheme.accent;
@@ -368,10 +605,8 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
   static const _rPanel = 22.0;
   static const _rInnerPanel = 18.0;
 
-  /// لوحة الملخص الشامل: صندوق واحد كبير يضم عمودين — يمينًا البطاقة
-  /// البنفسجية المميّزة، ويسارًا صندوق تثبيت الفئات يعلو صفّ اختصارات
-  /// الأقسام. كل عنصر هنا يفتح شاشة حقيقية: البطاقة تفتح الملخص الشامل،
-  /// الصندوق يفتح نافذة التثبيت، وكل بطاقة صغيرة تفتح قسمها.
+  /// لوحة الملخص الشامل: يمينًا مستطيل «ملخص شامل» بطول اللوحة ومحتواه في
+  /// المنتصف، ويسارًا «+ ثبّت ما تستخدمه كثيرًا» والعناصر المثبتة تحته.
   Widget _buildSummaryAndPinnedRow() {
     return Directionality(
       textDirection: AppTr.uiDir,
@@ -390,25 +625,20 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
           ],
         ),
         padding: const EdgeInsets.all(8),
-        child: SizedBox(
-          height: 112,
+        child: IntrinsicHeight(
           child: Row(
             crossAxisAlignment: CrossAxisAlignment.stretch,
             children: [
-              // البطاقة المميّزة أقصى اليمين (الاتجاه هنا RTL).
-              // أنحف من قبل: بعرض يقارب عرض الجملة داخله.
-              Expanded(flex: 27, child: _buildFeaturedSummaryCard()),
+              Expanded(flex: 4, child: _buildSummaryBlock()),
               const SizedBox(width: 8),
               Expanded(
-                flex: 73,
+                flex: 6,
                 child: Column(
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
-                    // الصندوق أنحف من قبل: ارتفاع ثابت صغير بدل ملء
-                    // المساحة، والباقي لصفّ الاختصارات.
-                    SizedBox(height: 38, child: _buildPinnedBox()),
+                    _buildPinHeader(),
                     const SizedBox(height: 8),
-                    Expanded(child: Center(child: _buildQuickModulesRow())),
+                    _buildPinnedTiles(),
                   ],
                 ),
               ),
@@ -419,256 +649,195 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
     );
   }
 
-  /// البطاقة البنفسجية المميّزة — تفتح شيت الملخص الشامل.
-  Widget _buildFeaturedSummaryCard() {
-    return _PressableScale(
-      child: Material(
-        color: Colors.transparent,
-        borderRadius: BorderRadius.circular(_rInnerPanel),
-        clipBehavior: Clip.antiAlias,
-        child: Ink(
-          decoration: BoxDecoration(
-            borderRadius: BorderRadius.circular(_rInnerPanel),
-            gradient: const LinearGradient(
-              begin: Alignment.topRight,
-              end: Alignment.bottomLeft,
-              colors: [
-                _summaryAccentTop,
-                _summaryAccentTop,
-                _summaryAccentBottom,
-              ],
-              stops: [0.0, 0.55, 1.0],
-            ),
-            boxShadow: const [
-              BoxShadow(
-                color: Color(0x332C6B69),
-                blurRadius: 28,
-                offset: Offset(0, 12),
-              ),
-            ],
-          ),
+  /// مستطيل «ملخص شامل»: أيقونة أكبر وخط أكبر، والمحتوى في المنتصف.
+  Widget _buildSummaryBlock() {
+    return ConstrainedBox(
+      constraints: const BoxConstraints(minHeight: 132),
+      child: _PressableScale(
+        child: Material(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(_rInnerPanel),
+          clipBehavior: Clip.antiAlias,
           child: InkWell(
             key: const ValueKey('home-summary-open'),
+            // الملخص يُفتح مباشرة: صفحة «الملخص» بتبويباتها وفلتر الفترة.
             onTap: () {
               HapticFeedback.selectionClick();
-              _openGlobalSummarySheet();
+              Navigator.of(context).push(
+                MaterialPageRoute(builder: (_) => const GlobalSummaryScreen()),
+              );
             },
-            child: Padding(
-              padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 6),
+            child: Container(
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(_rInnerPanel),
+                border: Border.all(color: _panelBorder),
+              ),
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 12),
               child: Column(
-                mainAxisAlignment: MainAxisAlignment.spaceBetween,
+                mainAxisAlignment: MainAxisAlignment.center,
                 children: [
-                  const _SummaryFolderStarIcon(),
-                  Column(
-                    mainAxisSize: MainAxisSize.min,
-                    children: [
-                      const Text(
-                        'ملخص شامل',
-                        textAlign: TextAlign.center,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: TextStyle(
-                          fontSize: 11.5,
-                          fontWeight: FontWeight.w800,
-                          color: Colors.white,
-                          height: 1.2,
-                        ),
-                      ),
-                      const SizedBox(height: 3),
-                      Text(
-                        HomeStrings.summarySubtitle,
-                        textAlign: TextAlign.center,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: TextStyle(
-                          fontSize: 8.5,
-                          fontWeight: FontWeight.w600,
-                          color: Colors.white.withValues(alpha: 0.8),
-                        ),
-                      ),
-                    ],
-                  ),
-                  // زر دائري أبيض بسهم لليسار كما في النموذج.
                   Container(
-                    width: 24,
-                    height: 24,
-                    decoration: const BoxDecoration(
-                      color: Colors.white,
-                      shape: BoxShape.circle,
-                      boxShadow: [
+                    width: 58,
+                    height: 58,
+                    decoration: BoxDecoration(
+                      borderRadius: BorderRadius.circular(16),
+                      gradient: const LinearGradient(
+                        begin: Alignment.topRight,
+                        end: Alignment.bottomLeft,
+                        colors: [
+                          _summaryAccentTop,
+                          _summaryAccentTop,
+                          _summaryAccentBottom,
+                        ],
+                        stops: [0.0, 0.55, 1.0],
+                      ),
+                      boxShadow: const [
                         BoxShadow(
-                          color: Color(0x2E000000),
-                          blurRadius: 20,
-                          offset: Offset(0, 8),
+                          color: Color(0x335C6B68),
+                          blurRadius: 14,
+                          offset: Offset(0, 6),
                         ),
                       ],
                     ),
-                    // السهم معكوس الاتجاه (نحو اليمين) كما طُلب.
-                    child: const Icon(
-                      Icons.arrow_forward_rounded,
-                      size: 13,
-                      color: AppTheme.accentDark,
+                    child: Center(
+                      child: Transform.scale(
+                        scale: 1.2,
+                        child: const _SummaryFolderStarIcon(),
+                      ),
                     ),
                   ),
-                ],
-              ),
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-
-  /// صندوق الفئات المثبتة. فارغًا: نصّ إرشادي وضغطة تفتح نافذة التثبيت.
-  /// ممتلئًا: شريط أفقي بالعناصر المثبتة مع زر لإدارتها.
-  Widget _buildPinnedBox() {
-    final isEmpty = _pinnedShortcuts.isEmpty;
-    return Container(
-      decoration: BoxDecoration(
-        color: _panelInner,
-        borderRadius: BorderRadius.circular(_rInnerPanel),
-        border: Border.all(color: _panelBorder),
-      ),
-      padding: const EdgeInsets.all(6),
-      child: isEmpty
-          // صفّ واحد نحيف: زر التثبيت أقصى اليمين والنصّ الإرشادي بجانبه.
-          ? InkWell(
-              key: const ValueKey('home-pin-empty'),
-              borderRadius: BorderRadius.circular(_rInnerPanel),
-              onTap: () {
-                HapticFeedback.selectionClick();
-                _openPinPicker();
-              },
-              child: Row(
-                children: [
-                  Container(
-                    width: 22,
-                    height: 22,
-                    decoration: BoxDecoration(
-                      color: AppTheme.accentSoft,
-                      borderRadius: BorderRadius.circular(7),
-                    ),
-                    child: const Icon(
-                      Icons.push_pin_outlined,
-                      size: 12,
-                      color: AppTheme.accentDark,
-                    ),
-                  ),
-                  const SizedBox(width: 6),
-                  Expanded(
+                  const SizedBox(height: 10),
+                  const FittedBox(
+                    fit: BoxFit.scaleDown,
                     child: Text(
-                      HomeStrings.pinHint,
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
-                      style: AppTheme.emptyText.copyWith(
-                        fontSize: 9,
-                        height: 1.25,
+                      'ملخص شامل',
+                      maxLines: 3,
+                      style: TextStyle(
+                        fontSize: 16,
+                        fontWeight: FontWeight.w900,
+                        color: AppTheme.accentDark,
+                        height: 1.2,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 4),
+                  const FittedBox(
+                    fit: BoxFit.scaleDown,
+                    child: Text(
+                      'عرض البيانات',
+                      maxLines: 3,
+                      style: TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.w700,
+                        color: AppTheme.muted,
+                        height: 1.2,
                       ),
                     ),
                   ),
                 ],
               ),
-            )
-          // الصندوق نحيف (30 بكسل داخليًا)، فالبطاقة المثبتة هنا شريحة
-          // مضغوطة بدل بطاقة كاملة، وزر الإدارة بحجم يناسب الارتفاع.
-          : Row(
-              children: [
-                AppIconButton(
-                  key: const ValueKey('home-pin-picker'),
-                  icon: Icons.push_pin_outlined,
-                  tooltip: AppTr.tr('إدارة العناصر المثبتة'),
-                  size: 24,
-                  onTap: () {
-                    HapticFeedback.selectionClick();
-                    _openPinPicker();
-                  },
-                ),
-                const SizedBox(width: 6),
-                Expanded(
-                  // بلا reverse: العناصر المثبتة تبدأ من اليمين كبقية
-                  // الأشرطة في التطبيق.
-                  child: ListView.separated(
-                    scrollDirection: Axis.horizontal,
-                    padding: EdgeInsets.zero,
-                    itemCount: _pinnedShortcuts.length,
-                    separatorBuilder: (_, _) => const SizedBox(width: 6),
-                    itemBuilder: (context, index) {
-                      final shortcut = _pinnedShortcuts[index];
-                      return _HomePinnedChip(
-                        key: ValueKey('home-pinned-${shortcut.id}'),
-                        shortcut: shortcut,
-                        onOpen: () => _openShortcut(shortcut),
-                        onRemove: () => _removePinnedShortcut(shortcut.id),
-                      );
-                    },
-                  ),
-                ),
-              ],
             ),
+          ),
+        ),
+      ),
     );
   }
 
-  /// صفّ اختصارات الأقسام الخمسة أسفل صندوق التثبيت. كل بطاقة تفتح
-  /// شاشتها الحقيقية (والعقارات/الأنشطة تفتحان شاشة الأصول على الفئة
-  /// الموافقة، والمالية تنقل إلى تبويب المحافظ).
-  Widget _buildQuickModulesRow() {
-    final tiles = <Widget>[
-      _HomeQuickTile(
-        key: const ValueKey('home-quick-real-estate'),
-        label: 'العقارات',
-        icon: Icons.home_rounded,
-        color: const Color(0xFF3F51B5),
-        onTap: () => Navigator.of(context).push(
-          MaterialPageRoute(
-            builder: (_) =>
-                const ProjectsActivitiesScreen(initialFilter: 'real_estate'),
+  /// «+ ثبّت ما تستخدمه كثيرًا» — يفتح نافذة التثبيت.
+  Widget _buildPinHeader() {
+    return Material(
+      color: Colors.white,
+      borderRadius: BorderRadius.circular(_rInnerPanel),
+      clipBehavior: Clip.antiAlias,
+      child: InkWell(
+        key: const ValueKey('home-pin-picker'),
+        onTap: () {
+          HapticFeedback.selectionClick();
+          _openPinPicker();
+        },
+        child: Container(
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(_rInnerPanel),
+            border: Border.all(color: _panelBorder),
+          ),
+          padding: const EdgeInsets.all(8),
+          child: Row(
+            children: [
+              Container(
+                width: 34,
+                height: 34,
+                decoration: BoxDecoration(
+                  color: AppTheme.accentSoft,
+                  borderRadius: BorderRadius.circular(10),
+                  border: Border.all(
+                    color: AppTheme.accent.withValues(alpha: 0.35),
+                  ),
+                ),
+                child: const Icon(
+                  Icons.add_rounded,
+                  size: 22,
+                  color: AppTheme.accentDark,
+                ),
+              ),
+              const SizedBox(width: 8),
+              const Expanded(
+                child: FittedBox(
+                  fit: BoxFit.scaleDown,
+                  alignment: AlignmentDirectional.centerStart,
+                  child: Text(
+                    'ثبّت ما تستخدمه كثيرًا',
+                    maxLines: 3,
+                    style: TextStyle(
+                      fontSize: 12,
+                      fontWeight: FontWeight.w800,
+                      color: AppTheme.title,
+                      height: 1.2,
+                    ),
+                  ),
+                ),
+              ),
+            ],
           ),
         ),
       ),
-      _HomeQuickTile(
-        key: const ValueKey('home-quick-activities'),
-        label: 'الأنشطة',
-        icon: Icons.work_rounded,
-        color: const Color(0xFF4CAF50),
-        onTap: () => Navigator.of(context).push(
-          MaterialPageRoute(
-            builder: (_) =>
-                const ProjectsActivitiesScreen(initialFilter: 'activity'),
-          ),
+    );
+  }
+
+  /// العناصر المثبتة: مربعات صغيرة تحت «ثبّت ما تستخدمه كثيرًا».
+  Widget _buildPinnedTiles() {
+    if (_pinnedShortcuts.isEmpty) {
+      return Padding(
+        key: const ValueKey('home-pin-empty'),
+        padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 6),
+        child: Text(
+          'لا توجد عناصر مثبتة — اضغط + لتثبيت ما تستخدمه كثيرًا',
+          textAlign: TextAlign.center,
+          maxLines: 4,
+          style: AppTheme.emptyText.copyWith(fontSize: 10.5, height: 1.3),
         ),
-      ),
-      _HomeQuickTile(
-        key: const ValueKey('home-quick-people'),
-        label: 'الأشخاص',
-        icon: Icons.groups_rounded,
-        color: const Color(0xFFF5A623),
-        onTap: () => _openPriorityScreen('إدارة الأشخاص والجهات'),
-      ),
-      _HomeQuickTile(
-        key: const ValueKey('home-quick-commitments'),
-        label: 'الالتزامات',
-        icon: Icons.description_rounded,
-        color: const Color(0xFF673AB7),
-        onTap: () => _openPriorityScreen(HomeStrings.modulePersonal),
-      ),
-      _HomeQuickTile(
-        key: const ValueKey('home-quick-finance'),
-        label: 'المالية',
-        icon: Icons.account_balance_wallet_rounded,
-        color: const Color(0xFFE91E63),
-        onTap: () => setState(() => _selectedIndex = 2),
-      ),
-    ];
-    // قابل للتمرير أفقيًا: خمس بطاقات لا تتسع لعرض الهاتف الضيق، فبدل
-    // ضغطها حتى يختفي النص تنزلق البطاقات.
-    return SizedBox(
-      height: 46,
-      child: ListView.separated(
-        scrollDirection: Axis.horizontal,
-        padding: EdgeInsets.zero,
-        itemCount: tiles.length,
-        separatorBuilder: (_, _) => const SizedBox(width: 6),
-        itemBuilder: (context, index) => tiles[index],
+      );
+    }
+    // صف واحد جنب بعض يُسحب أفقيًا — لا أسطر فوق بعض مهما زادت المثبتات.
+    return SingleChildScrollView(
+      key: const ValueKey('home-pinned-row'),
+      scrollDirection: Axis.horizontal,
+      physics: const BouncingScrollPhysics(),
+      child: Row(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          for (var i = 0; i < _pinnedShortcuts.length; i++) ...[
+            if (i > 0) const SizedBox(width: 8),
+            _HomePinnedTile(
+              key: ValueKey('home-pinned-${_pinnedShortcuts[i].id}'),
+              shortcut: _pinnedShortcuts[i],
+              onOpen: () => _openShortcut(_pinnedShortcuts[i]),
+              onRemove: () => _removePinnedShortcut(
+                _pinnedShortcuts[i].id,
+                confirm: true,
+              ),
+            ),
+          ],
+        ],
       ),
     );
   }
@@ -714,7 +883,7 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
                 decoration: const BoxDecoration(
                   color: Colors.white,
                   border: Border(
-                    bottom: BorderSide(color: Color(0xFFE1E8F0)),
+                    bottom: BorderSide(color: Color(0xFFE4EAE8)),
                   ),
                 ),
                 child: Row(
@@ -731,12 +900,11 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
                             ? 'الملخص الشامل'
                             : selection.title,
                         textAlign: TextAlign.center,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
+                        maxLines: 3,
                         style: const TextStyle(
                           fontSize: 17,
                           fontWeight: FontWeight.w900,
-                          color: Color(0xFF0F172A),
+                          color: Color(0xFF022E2A),
                         ),
                       ),
                     ),
@@ -859,29 +1027,268 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
     return '${_formatArabicNumber(value)} $unit';
   }
 
-  /// فلتر الصفحة الرئيسية بنفس قالب الفلاتر في الشاشات الأربع، لكن
-  /// بالأقسام المنطقية لمحتوى هذه الصفحة فقط: بطاقات الأقسام لا تحمل
-  /// تاريخًا ولا مبلغًا ولا حالة، فالقسم هو الفلتر الحقيقي الوحيد — وأي
-  /// قسم آخر هنا سيكون حقلًا لا يؤثر في شيء.
+  /// فلتر الصفحة الرئيسية: الأقسام بترتيبها، واختيار قسم يُظهر تحته فلترَه نفسه (كما في شاشته)،
+  /// و«تطبيق الفلتر» يفتح القسم مطبَّقًا عليه ما اختير.
   void _openHomeFilterSheet() {
+    const modules = [
+      'الكل',
+      'الالتزامات الشخصية',
+      'الالتزامات المشتركة',
+      'الأفراد والجهات',
+      'العقارات',
+      'الأنشطة التجارية',
+      'المركبات ووسائل النقل',
+    ];
     showAppFilterSheet(
       context: context,
       title: 'الصفحة الرئيسية',
       accent: AppTheme.accent,
-      values: _homeFilter..mainCategory = _selectedHomeFilter,
-      mainCategories: const [
-        HomeStrings.filterAll,
-        HomeStrings.filterPersonal,
-        HomeStrings.filterShared,
-        HomeStrings.filterPeople,
-        HomeStrings.filterAssets,
-      ],
-      sections: const [AppFilterSection.mainCategory],
-      onApply: (values) => setState(() {
-        _selectedHomeFilter = values.mainCategory;
-        _homeFilter.mainCategory = values.mainCategory;
-      }),
+      values: AppFilterValues(),
+      sections: const [],
+      onApply: (_) {},
+      modules: modules,
+      initialModule: 'الكل',
+      moduleConfigFor: (module) => switch (module) {
+        'الالتزامات الشخصية' => personalFilterModuleConfig(),
+        'الالتزامات المشتركة' => sharedFilterModuleConfig(),
+        'الأفراد والجهات' => peopleFilterModuleConfig(),
+        'العقارات' ||
+        'الأنشطة التجارية' ||
+        'المركبات ووسائل النقل' => assetsFilterModuleConfig(module),
+        // «الكل»: نفس فلاتر الأقسام (التاريخ، الحالة، المبلغ، الأفراد)
+        // على كل البيانات.
+        _ => const AppFilterModuleConfig(
+          fixedMainCategory: 'الكل',
+          sectionsFor: _allSectionsFor,
+        ),
+      },
+      onApplyModule: _applyHomeModuleFilter,
     );
+  }
+
+  static List<AppFilterSection> _allSectionsFor(String _) => const [
+    AppFilterSection.period,
+    AppFilterSection.statusSelect,
+    AppFilterSection.amountSelect,
+    AppFilterSection.people,
+  ];
+
+  /// نتائج فلتر «الكل»: كل السجلات من كل الأقسام بحسب ما اختير.
+  Future<void> _showAllFilterResults(AppFilterValues v) async {
+    List<SummaryItem> items;
+    try {
+      items = await HomeSummaryService().loadItems();
+    } catch (_) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('تعذّر تحميل البيانات. حاول مرة أخرى.')),
+      );
+      return;
+    }
+    if (!mounted) return;
+    bool closed(SummaryItem item) => const {
+      'منتهية',
+      'منتهي',
+      'مغلقة',
+      'مكتملة',
+      'مسددة',
+      'ملغاة',
+      'تمت التسوية',
+      'مؤرشف',
+    }.contains(item.status);
+    final from = v.dateFrom == null ? null : DateUtils.dateOnly(v.dateFrom!);
+    final to = v.dateTo == null ? null : DateUtils.dateOnly(v.dateTo!);
+    final person = v.personName.trim();
+    final today = DateUtils.dateOnly(DateTime.now());
+    final matched = items.where((item) {
+      final date = item.date ?? item.createdAt;
+      if (from != null || to != null) {
+        if (date == null) return false;
+        final day = DateUtils.dateOnly(date);
+        if (from != null && day.isBefore(from)) return false;
+        if (to != null && day.isAfter(to)) return false;
+      }
+      switch (v.status) {
+        case 'نشط':
+          if (closed(item)) return false;
+        case 'قريبة الاستحقاق':
+          if (!item.isDueSoon || closed(item)) return false;
+        case 'مستحقة':
+          if (item.date == null ||
+              !DateUtils.isSameDay(item.date, today) ||
+              closed(item)) {
+            return false;
+          }
+        case 'متأخرة':
+          if (!item.isOverdue) return false;
+        case 'مكتملة':
+          if (!closed(item)) return false;
+      }
+      if (v.amountShortcut == 'مخصص') {
+        if (v.amountFrom != null && item.amount < v.amountFrom!) return false;
+        if (v.amountTo != null && item.amount > v.amountTo!) return false;
+      }
+      if (person.isNotEmpty &&
+          !matchesSearchQuery(
+            query: person,
+            fields: [item.person, item.title, item.subtitle],
+          )) {
+        return false;
+      }
+      return true;
+    }).toList();
+    if (v.status == 'الأحدث أولاً') {
+      matched.sort(
+        (a, b) => (b.createdAt ?? DateTime(2000)).compareTo(
+          a.createdAt ?? DateTime(2000),
+        ),
+      );
+    }
+    if (v.amountShortcut == 'أعلى مبلغًا') {
+      matched.sort((a, b) => b.amount.compareTo(a.amount));
+    } else if (v.amountShortcut == 'أقل مبلغًا') {
+      matched.sort((a, b) => a.amount.compareTo(b.amount));
+    }
+    final selection = ScopeSelection(title: AppTr.tr('نتائج الفلتر — الكل'));
+    await showModalBottomSheet<void>(
+      context: context,
+      isScrollControlled: true,
+      useSafeArea: true,
+      backgroundColor: AppTheme.page,
+      builder: (sheetContext) => Directionality(
+        textDirection: AppTr.uiDir,
+        child: FractionallySizedBox(
+          heightFactor: 1,
+          child: Column(
+            children: [
+              Container(
+                padding: const EdgeInsets.fromLTRB(16, 12, 16, 12),
+                decoration: const BoxDecoration(
+                  color: Colors.white,
+                  border: Border(
+                    bottom: BorderSide(color: Color(0xFFE4EAE8)),
+                  ),
+                ),
+                child: Row(
+                  children: [
+                    IconButton(
+                      tooltip: AppTr.tr('إغلاق'),
+                      onPressed: () => Navigator.of(sheetContext).pop(),
+                      icon: const Icon(Icons.close_rounded),
+                    ),
+                    Expanded(
+                      child: Text(
+                        selection.title,
+                        textAlign: TextAlign.center,
+                        maxLines: 3,
+                        style: const TextStyle(
+                          fontSize: 17,
+                          fontWeight: FontWeight.w900,
+                          color: Color(0xFF022E2A),
+                        ),
+                      ),
+                    ),
+                    IconButton(
+                      tooltip: AppTr.tr('تعديل الفلتر'),
+                      onPressed: () {
+                        Navigator.of(sheetContext).pop();
+                        _openHomeFilterSheet();
+                      },
+                      icon: const Icon(Icons.tune_rounded),
+                    ),
+                  ],
+                ),
+              ),
+              Expanded(
+                child: matched.isEmpty
+                    ? const Center(
+                        child: Padding(
+                          padding: EdgeInsets.all(24),
+                          child: Text(
+                            'لا توجد بيانات تطابق الفلتر.',
+                            textAlign: TextAlign.center,
+                            style: TextStyle(
+                              fontSize: 13,
+                              fontWeight: FontWeight.w700,
+                              color: AppTheme.muted,
+                            ),
+                          ),
+                        ),
+                      )
+                    : ListView(
+                        padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
+                        children: [
+                          ScopeResultView(
+                            selection: selection,
+                            items: matched,
+                            accent: AppTheme.accent,
+                          ),
+                          const SizedBox(height: 14),
+                          FilledButton.icon(
+                            onPressed: () => _shareSummary(
+                              title: selection.title,
+                              lines: scopeResultLines(selection, matched),
+                            ),
+                            icon: const Icon(Icons.send_rounded, size: 18),
+                            label: const Text(HomeStrings.summaryShareText),
+                            style: FilledButton.styleFrom(
+                              backgroundColor: AppTheme.accent,
+                              foregroundColor: Colors.white,
+                              minimumSize: const Size.fromHeight(46),
+                            ),
+                          ),
+                        ],
+                      ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// تطبيق فلتر الصفحة الرئيسية: «الكل» يُظهر كل البطاقات، وأي قسم آخر
+  /// يُفتح بشاشته مطبَّقًا عليه الفلتر.
+  void _applyHomeModuleFilter(String module, AppFilterValues values) {
+    if (module == 'الكل') {
+      setState(() {
+        _selectedHomeFilter = HomeStrings.filterAll;
+        _homeFilter.mainCategory = HomeStrings.filterAll;
+      });
+      // «الكل» بفلتر: نتائج من كل الأقسام (بعد إغلاق نافذة الفلتر).
+      // بلا أي اختيار: كل الأقسام تظهر في الرئيسية فقط.
+      final hasFilter =
+          values.dateFrom != null ||
+          values.dateTo != null ||
+          (values.status.isNotEmpty && values.status != 'كل الحالات') ||
+          values.amountShortcut != null ||
+          values.personName.trim().isNotEmpty;
+      if (hasFilter) {
+        Future<void>.delayed(const Duration(milliseconds: 250), () {
+          if (mounted) _showAllFilterResults(values);
+        });
+      }
+      return;
+    }
+    const assetKeys = {
+      'العقارات': 'real_estate',
+      'الأنشطة التجارية': 'activity',
+      'المركبات ووسائل النقل': 'equipment',
+    };
+    final Widget screen = switch (module) {
+      'الالتزامات الشخصية' => PersonalCommitmentsScreen(initialFilter: values),
+      'الالتزامات المشتركة' => SharedCommitmentsScreen(initialFilter: values),
+      'الأفراد والجهات' => PeopleManagementScreen(initialFilter: values),
+      _ => ProjectsActivitiesScreen(
+        initialFilter: assetKeys[module] ?? 'all',
+        initialValues: values,
+      ),
+    };
+    // بعد إغلاق نافذة الفلتر، وإلا أغلق إغلاقُها الصفحةَ المفتوحة للتو.
+    Future<void>.delayed(const Duration(milliseconds: 250), () {
+      if (!mounted) return;
+      Navigator.of(context).push(MaterialPageRoute(builder: (_) => screen));
+    });
   }
 
   Future<void> _openPinPicker() async {
@@ -904,7 +1311,7 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
                 borderRadius: BorderRadius.circular(24),
                 boxShadow: const [
                   BoxShadow(
-                    color: Color(0x260F172A),
+                    color: Color(0x26022E2A),
                     blurRadius: 30,
                     offset: Offset(0, -4),
                   ),
@@ -926,9 +1333,9 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
                         Container(
                           padding: const EdgeInsets.fromLTRB(18, 16, 14, 15),
                           decoration: const BoxDecoration(
-                            color: Color(0xFFEAF6F3),
+                            color: Color(0xFFF2F6F5),
                             border: Border(
-                              bottom: BorderSide(color: Color(0xFFD8EAE6)),
+                              bottom: BorderSide(color: Color(0xFFE4EAE8)),
                             ),
                           ),
                           child: Row(
@@ -937,8 +1344,8 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
                                 width: 44,
                                 height: 44,
                                 decoration: BoxDecoration(
-                                  color: const Color(0xFF087F6A),
-                                  borderRadius: BorderRadius.circular(13),
+                                  color: const Color(0xFF0E7161),
+                                  borderRadius: BorderRadius.circular(12),
                                 ),
                                 child: const Icon(
                                   Icons.push_pin_rounded,
@@ -954,17 +1361,17 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
                                     Text(
                                       'تثبيت عنصر في الصفحة الرئيسية',
                                       style: TextStyle(
-                                        fontSize: 16.5,
+                                        fontSize: 17,
                                         fontWeight: FontWeight.w900,
-                                        color: Color(0xFF173B35),
+                                        color: Color(0xFF04413B),
                                       ),
                                     ),
                                     SizedBox(height: 4),
                                     Text(
                                       'اختر الوحدة وثبّت العناصر التي تحتاجها سريعًا',
                                       style: TextStyle(
-                                        fontSize: 11.5,
-                                        color: Color(0xFF52716B),
+                                        fontSize: 11,
+                                        color: Color(0xFF5C6B68),
                                       ),
                                     ),
                                   ],
@@ -975,7 +1382,7 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
                                 onPressed: () => Navigator.of(context).pop(),
                                 style: IconButton.styleFrom(
                                   backgroundColor: Colors.white,
-                                  foregroundColor: const Color(0xFF52716B),
+                                  foregroundColor: const Color(0xFF5C6B68),
                                 ),
                                 icon: const Icon(Icons.close_rounded, size: 20),
                               ),
@@ -990,24 +1397,24 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
                             isScrollable: true,
                             tabAlignment: TabAlignment.start,
                             dividerColor: Colors.transparent,
-                            labelColor: Color(0xFF087F6A),
-                            unselectedLabelColor: Color(0xFF718096),
+                            labelColor: Color(0xFF0E7161),
+                            unselectedLabelColor: Color(0xFF76837F),
                             labelStyle: TextStyle(
-                              fontSize: 11.5,
+                              fontSize: 11,
                               fontWeight: FontWeight.w900,
                             ),
                             unselectedLabelStyle: TextStyle(
-                              fontSize: 11.5,
+                              fontSize: 11,
                               fontWeight: FontWeight.w700,
                             ),
                             indicatorSize: TabBarIndicatorSize.tab,
                             indicator: BoxDecoration(
-                              color: Color(0xFFE5F3EF),
+                              color: Color(0xFFF2F6F5),
                               borderRadius: BorderRadius.all(
-                                Radius.circular(10),
+                                Radius.circular(12),
                               ),
                               border: Border.fromBorderSide(
-                                BorderSide(color: Color(0xFFC6E4DC)),
+                                BorderSide(color: Color(0xFFD5DEDB)),
                               ),
                             ),
                             tabs: [
@@ -1035,7 +1442,7 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
                               Tab(
                                 key: ValueKey('pin-tab-assets'),
                                 icon: Icon(Icons.apartment_rounded, size: 17),
-                                text: 'العقارات والأنشطة',
+                                text: 'العقارات والأنشطة والمركبات',
                                 iconMargin: EdgeInsets.only(bottom: 2),
                               ),
                             ],
@@ -1046,6 +1453,7 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
                             children: HomePinItemsService.moduleIds
                                 .map(
                                   (moduleId) => _PinItemsList(
+                                    moduleId: moduleId,
                                     items: items[moduleId] ?? const [],
                                     isPinned: (id) => _pinnedShortcuts.any(
                                       (shortcut) => shortcut.id == id,
@@ -1081,6 +1489,43 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
     final moduleId = shortcut.moduleId.isEmpty
         ? shortcut.id.split(':').first
         : shortcut.moduleId;
+    // فئة كاملة مثبّتة: تُفتح وحدتها على تلك الفئة.
+    if (shortcut.id.contains(':group:') && shortcut.group.isNotEmpty) {
+      final group = shortcut.group;
+      switch (moduleId) {
+        case 'personal':
+          _applyHomeModuleFilter(
+            HomeStrings.filterPersonal,
+            AppFilterValues(mainCategory: group),
+          );
+        case 'shared':
+          _applyHomeModuleFilter(
+            HomeStrings.filterShared,
+            AppFilterValues(mainCategory: group),
+          );
+        case 'people':
+          _applyHomeModuleFilter(
+            HomeStrings.filterPeople,
+            AppFilterValues(mainCategory: group),
+          );
+        default:
+          _applyHomeModuleFilter(group, AppFilterValues());
+      }
+      return;
+    }
+    // عنصر بعينه مثبّت: يُفتح على ملخصه مباشرة، والرجوع منه للرئيسية.
+    final colon = shortcut.id.indexOf(':');
+    final itemKey = colon < 0 ? '' : shortcut.id.substring(colon + 1).trim();
+    if (itemKey.isNotEmpty) {
+      final Widget page = switch (moduleId) {
+        'personal' => PersonalCommitmentsScreen(openEntryId: itemKey),
+        'shared' => SharedCommitmentsScreen(openEntryId: itemKey),
+        'people' => PeopleManagementScreen(openPersonName: itemKey),
+        _ => ProjectsActivitiesScreen(openAssetId: itemKey),
+      };
+      Navigator.of(context).push(MaterialPageRoute(builder: (_) => page));
+      return;
+    }
     if (moduleId == 'personal') {
       _openPriorityScreen(HomeStrings.modulePersonal);
       return;
@@ -1102,6 +1547,464 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
     ).push(MaterialPageRoute(builder: (_) => const SettingsHubPage()));
   }
 
+  /// زر أيقونة داخل الترويسة الملوّنة: مربّع شفاف بحواف دائرية وأيقونة
+  /// بيضاء — نفس شكل أزرار الترويسة في التصميم المعتمد.
+  Widget _headerIconButton({
+    required String tooltip,
+    required IconData icon,
+    required VoidCallback onTap,
+    bool badge = false,
+    Key? key,
+    String? label,
+  }) {
+    final button = _headerIconOnly(
+      tooltip: tooltip,
+      icon: icon,
+      onTap: onTap,
+      badge: badge,
+      key: key,
+    );
+    if (label == null) return button;
+    // اسم الزر تحته: التقويم، التنبيهات، القرعة.
+    return Column(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        button,
+        const SizedBox(height: 2),
+        SizedBox(
+          width: 40,
+          child: FittedBox(
+            fit: BoxFit.scaleDown,
+            child: Text(
+              label,
+              maxLines: 3,
+              style: const TextStyle(
+                fontSize: 9,
+                fontWeight: FontWeight.w800,
+                color: Colors.white,
+              ),
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
+  Widget _headerIconOnly({
+    required String tooltip,
+    required IconData icon,
+    required VoidCallback onTap,
+    bool badge = false,
+    Key? key,
+  }) {
+    return Tooltip(
+      message: tooltip,
+      child: Material(
+        color: Colors.white.withValues(alpha: 0.16),
+        borderRadius: BorderRadius.circular(10),
+        clipBehavior: Clip.antiAlias,
+        child: InkWell(
+          key: key,
+          onTap: onTap,
+          // أصغر حتى لا تضيّق على اسم المستخدم.
+          child: SizedBox(
+            width: 32,
+            height: 32,
+            child: Stack(
+              clipBehavior: Clip.none,
+              children: [
+                Center(child: Icon(icon, size: 17, color: Colors.white)),
+                if (badge)
+                  Positioned(
+                    top: 6,
+                    right: 6,
+                    child: Container(
+                      width: 7,
+                      height: 7,
+                      decoration: BoxDecoration(
+                        color: const Color(0xFFE5533D),
+                        shape: BoxShape.circle,
+                        border: Border.all(color: Colors.white, width: 1.2),
+                      ),
+                    ),
+                  ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// تنبيه الميلاد: يظهر قبل الميلاد بخمسة أيام فأقل، وفي يوم الميلاد
+  /// يصير تهنئة. يعتمد على تاريخ الميلاد المحفوظ في صفحة الحساب.
+  Widget _buildBirthdayBanner() {
+    final days = AppSettings.instance.daysToBirthday;
+    if (days == null || days > 5) return const SizedBox.shrink();
+    final isToday = days == 0;
+    final message = isToday
+        ? 'كل عام وأنت بخير — اليوم عيد ميلادك 🎂'
+        : days == 1
+        ? 'باقي يوم واحد على عيد ميلادك'
+        : 'باقي $days أيام على عيد ميلادك';
+    final color = isToday ? AppTheme.brandMid : AppTheme.goldDark;
+    return Padding(
+      padding: const EdgeInsetsDirectional.fromSTEB(
+        _homeHorizontalInset,
+        0,
+        _homeHorizontalInset,
+        10,
+      ),
+      child: InkWell(
+        onTap: () => showBirthdaySheet(context),
+        borderRadius: BorderRadius.circular(AppTheme.rInner),
+        child: Container(
+          padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+          decoration: BoxDecoration(
+            color: color.withValues(alpha: 0.10),
+            borderRadius: BorderRadius.circular(AppTheme.rInner),
+            border: Border.all(color: color.withValues(alpha: 0.35)),
+          ),
+          child: Row(
+            textDirection: AppTr.uiDir,
+            children: [
+              Icon(Icons.cake_outlined, size: 20, color: color),
+              const SizedBox(width: 10),
+              Expanded(
+                child: Text(
+                  message,
+                  textAlign: AppTr.alignEnd,
+                  style: TextStyle(
+                    fontSize: 12.5,
+                    fontWeight: FontWeight.w900,
+                    color: color,
+                  ),
+                ),
+              ),
+              Icon(Icons.chevron_left_rounded, size: 20, color: color),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// لوحة الترويسة: مساحة بلون الهوية حوافها السفلية منحنية وتنتهي عند
+  /// منتصف شريط البحث، فيبدو الشريط جالسًا على المنحنى ولا تبقى أي مساحة
+  /// خضراء تحته.
+  Widget _buildHomeHeaderPanel() {
+    const searchHeight = 54.0;
+    return Stack(
+      children: [
+        // الخلفية الملوّنة: تمتد سطرًا واحدًا تحت شريط البحث ثم تنحني.
+        Positioned.fill(
+          child: Container(
+            decoration: const BoxDecoration(
+              gradient: LinearGradient(
+                begin: Alignment.topLeft,
+                end: Alignment.bottomRight,
+                colors: [AppTheme.brandMid, AppTheme.brand],
+              ),
+              borderRadius: BorderRadius.only(
+                bottomLeft: Radius.circular(30),
+                bottomRight: Radius.circular(30),
+              ),
+            ),
+            clipBehavior: Clip.antiAlias,
+            child: Stack(
+              children: [
+                // دوائر زخرفية خفيفة كما في التصميم.
+                Positioned(
+                  top: -58,
+                  left: -30,
+                  child: Container(
+                    width: 168,
+                    height: 168,
+                    decoration: BoxDecoration(
+                      color: Colors.white.withValues(alpha: 0.06),
+                      shape: BoxShape.circle,
+                    ),
+                  ),
+                ),
+                Positioned(
+                  top: 22,
+                  left: 96,
+                  child: Container(
+                    width: 104,
+                    height: 104,
+                    decoration: BoxDecoration(
+                      color: Colors.white.withValues(alpha: 0.05),
+                      shape: BoxShape.circle,
+                    ),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+        Positioned.fill(
+          child: SafeArea(
+            bottom: false,
+            child: Padding(
+              padding: const EdgeInsets.fromLTRB(16, 6, 16, 20),
+              child: Directionality(
+                textDirection: AppTr.uiDir,
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    Row(
+                      crossAxisAlignment: CrossAxisAlignment.start,
+                      children: [
+                        // الحساب: الشعار والاسم — نفس محتوى الترويسة السابق.
+                        Expanded(
+                          child: Material(
+                            color: Colors.transparent,
+                            child: InkWell(
+                              key: const ValueKey('home-account-entry'),
+                              onTap: _openAccountPage,
+                              borderRadius: BorderRadius.circular(12),
+                              child: Padding(
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 4,
+                                  vertical: 4,
+                                ),
+                                child: Column(
+                                  crossAxisAlignment:
+                                      CrossAxisAlignment.stretch,
+                                  children: [
+                                    Text(
+                                      HomeStrings.homeTagline,
+                                      maxLines: 3,
+                                      textAlign: TextAlign.right,
+                                      style: TextStyle(
+                                        fontSize: 11,
+                                        fontWeight: FontWeight.w600,
+                                        color: Colors.white.withValues(
+                                          alpha: 0.82,
+                                        ),
+                                      ),
+                                    ),
+                                    const SizedBox(height: 4),
+                                    Row(
+                                      textDirection: AppTr.uiDir,
+                                      children: [
+                                        Container(
+                                          width: 28,
+                                          height: 28,
+                                          clipBehavior: Clip.antiAlias,
+                                          decoration: BoxDecoration(
+                                            color: Colors.white.withValues(
+                                              alpha: 0.18,
+                                            ),
+                                            shape: BoxShape.circle,
+                                          ),
+                                          child: _profilePhoto == null
+                                              ? const Icon(
+                                                  Icons.person_rounded,
+                                                  size: 17,
+                                                  color: Colors.white,
+                                                )
+                                              : Image.memory(
+                                                  _profilePhoto!,
+                                                  fit: BoxFit.cover,
+                                                ),
+                                        ),
+                                        const SizedBox(width: 8),
+                                        // الاسم كاملًا (يصغر خطه عند
+                                        // الحاجة بدل قصّه).
+                                        Flexible(
+                                          child: FittedBox(
+                                            fit: BoxFit.scaleDown,
+                                            alignment:
+                                                AlignmentDirectional.centerStart,
+                                            child: Text(
+                                              AppSettings.instance.name,
+                                              maxLines: 3,
+                                              textAlign: TextAlign.right,
+                                              style: const TextStyle(
+                                                fontSize: 17,
+                                                fontWeight: FontWeight.w900,
+                                                color: Colors.white,
+                                              ),
+                                            ),
+                                          ),
+                                        ),
+                                      ],
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 4),
+                        _headerIconButton(
+                          tooltip: AppTr.tr('التقويم الذكي'),
+                          label: 'التقويم',
+                          icon: Icons.calendar_month_rounded,
+                          onTap: () => Navigator.of(context).push(
+                            MaterialPageRoute(
+                              builder: (_) => const SmartCalendarScreen(),
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 4),
+                        _headerIconButton(
+                          tooltip: AppTr.tr('الإشعارات'),
+                          label: 'التنبيهات',
+                          icon: _alertsCount > 0
+                              ? Icons.notifications_active_rounded
+                              : Icons.notifications_none_rounded,
+                          badge: _alertsCount > 0,
+                          onTap: () => Navigator.of(context).push(
+                            MaterialPageRoute(
+                              builder: (_) =>
+                                  const NotificationsCenterScreen(),
+                            ),
+                          ),
+                        ),
+                        const SizedBox(width: 4),
+                        _headerIconButton(
+                          tooltip: HomeStrings.raffle,
+                          label: 'القرعة',
+                          icon: Icons.casino_outlined,
+                          onTap: () => Navigator.of(context).push(
+                            MaterialPageRoute(
+                              builder: (_) => const RaffleScreen(),
+                            ),
+                          ),
+                        ),
+                      ],
+                    ),
+                    const Spacer(),
+                    // شريط البحث الأبيض جالس على حافة المنحنى، وزر الفلتر
+                    // داخله يفصله خط رفيع.
+                    Container(
+                      height: searchHeight,
+                      decoration: BoxDecoration(
+                        color: Colors.white,
+                        borderRadius: BorderRadius.circular(18),
+                        boxShadow: [
+                          BoxShadow(
+                            color: const Color(
+                              0xFF022E2A,
+                            ).withValues(alpha: 0.10),
+                            blurRadius: 14,
+                            offset: const Offset(0, 4),
+                          ),
+                        ],
+                      ),
+                      child: Row(
+                        textDirection: AppTr.uiDir,
+                        children: [
+                          const SizedBox(width: 14),
+                          const Icon(
+                            Icons.search_rounded,
+                            size: 22,
+                            color: AppTheme.chevron,
+                          ),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: TextField(
+                              controller: _searchController,
+                              textDirection: AppTr.uiDir,
+                              style: const TextStyle(
+                                fontSize: 13.5,
+                                fontWeight: FontWeight.w600,
+                                color: AppTheme.title,
+                              ),
+                              decoration: InputDecoration(
+                                isDense: true,
+                                hintText: HomeStrings.searchHint,
+                                hintStyle: const TextStyle(
+                                  color: AppTheme.muted,
+                                  fontSize: 13.5,
+                                  fontWeight: FontWeight.w600,
+                                ),
+                                border: InputBorder.none,
+                                enabledBorder: InputBorder.none,
+                                focusedBorder: InputBorder.none,
+                                contentPadding: EdgeInsets.zero,
+                                suffixIcon: _searchController.text.isEmpty
+                                    ? null
+                                    : IconButton(
+                                        icon: const Icon(
+                                          Icons.close_rounded,
+                                          size: 18,
+                                          color: AppTheme.muted,
+                                        ),
+                                        onPressed: () {
+                                          HapticFeedback.selectionClick();
+                                          _searchController.clear();
+                                        },
+                                      ),
+                              ),
+                            ),
+                          ),
+                          Container(
+                            width: 1,
+                            height: 24,
+                            color: AppTheme.line,
+                          ),
+                          Material(
+                            color: Colors.transparent,
+                            borderRadius: BorderRadius.circular(14),
+                            clipBehavior: Clip.antiAlias,
+                            child: InkWell(
+                              key: const ValueKey('home-filter-button'),
+                              onTap: () {
+                                HapticFeedback.selectionClick();
+                                _openHomeFilterSheet();
+                              },
+                              child: SizedBox(
+                                width: 52,
+                                height: searchHeight,
+                                child: Stack(
+                                  clipBehavior: Clip.none,
+                                  children: [
+                                    const Center(
+                                      child: Icon(
+                                        Icons.tune_rounded,
+                                        color: AppTheme.brandMid,
+                                        size: 22,
+                                      ),
+                                    ),
+                                    if (_selectedHomeFilter !=
+                                        HomeStrings.filterAll)
+                                      Positioned(
+                                        top: 13,
+                                        left: 11,
+                                        child: Container(
+                                          width: 9,
+                                          height: 9,
+                                          decoration: BoxDecoration(
+                                            color: const Color(0xFFF2A93F),
+                                            shape: BoxShape.circle,
+                                            border: Border.all(
+                                              color: Colors.white,
+                                              width: 1.4,
+                                            ),
+                                          ),
+                                        ),
+                                      ),
+                                  ],
+                                ),
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          ),
+        ),
+      ],
+    );
+  }
+
   @override
   Widget build(BuildContext context) {
     return Scaffold(
@@ -1109,171 +2012,24 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
       body: _selectedIndex == 0
           ? RefreshIndicator(
               onRefresh: _refreshHomeMetrics,
-              color: const Color(0xFF0F6AA8),
+              color: const Color(0xFF0A5A50),
               child: CustomScrollView(
                 controller: _homeScrollController,
                 physics: const AlwaysScrollableScrollPhysics(),
                 slivers: [
                   SliverAppBar(
-                    expandedHeight: 88,
-                    toolbarHeight: 88,
+                    expandedHeight: 196,
+                    toolbarHeight: 196,
                     floating: false,
                     pinned: true,
+                    // خلفية الشريط بلون الصفحة: المساحة الخضراء نفسها
+                    // داخل اللوحة وتنتهي عند المنحنى، فلا يظهر أخضر تحت
+                    // شريط البحث. أيقونات شريط الحالة بيضاء فوق المنحنى.
                     backgroundColor: AppTheme.page,
+                    systemOverlayStyle: SystemUiOverlayStyle.light,
                     elevation: 0,
                     flexibleSpace: FlexibleSpaceBar(
-                      background: Container(
-                        // ترويسة بيضاء نظيفة بدل تدرّج أزرق؛ العناصر
-                        // فوقها تأخذ ألوان النظام الموحّد نفسه.
-                        decoration: const BoxDecoration(color: AppTheme.page),
-                        child: SafeArea(
-                          bottom: false,
-                          child: Padding(
-                            padding: const EdgeInsets.fromLTRB(16, 6, 16, 7),
-                            child: Directionality(
-                              textDirection: AppTr.uiDir,
-                              child: Column(
-                                mainAxisAlignment: MainAxisAlignment.center,
-                                children: [
-                                  Row(
-                                    children: [
-                                      Material(
-                                        color: Colors.transparent,
-                                        shape: const CircleBorder(),
-                                        child: InkWell(
-                                          key: const ValueKey(
-                                            'home-account-avatar-entry',
-                                          ),
-                                          onTap: _openAccountPage,
-                                          customBorder: const CircleBorder(),
-                                          child: Container(
-                                            width: 34,
-                                            height: 34,
-                                            clipBehavior: Clip.antiAlias,
-                                            decoration: const BoxDecoration(
-                                              color: AppTheme.field,
-                                              shape: BoxShape.circle,
-                                            ),
-                                            // الصورة الشخصية المحفوظة فعليًا
-                                            // بدل أيقونة ثابتة لا تتغير.
-                                            child: _profilePhoto == null
-                                                ? const Icon(
-                                                    Icons.person_rounded,
-                                                    size: 20,
-                                                    color: AppTheme.chevron,
-                                                  )
-                                                : Image.memory(
-                                                    _profilePhoto!,
-                                                    fit: BoxFit.cover,
-                                                  ),
-                                          ),
-                                        ),
-                                      ),
-                                      const SizedBox(width: 10),
-                                      Expanded(
-                                        child: Align(
-                                          alignment: Alignment.centerRight,
-                                          child: Material(
-                                            color: Colors.transparent,
-                                            child: InkWell(
-                                              key: const ValueKey(
-                                                'home-account-entry',
-                                              ),
-                                              onTap: _openAccountPage,
-                                              borderRadius:
-                                                  BorderRadius.circular(8),
-                                              child: Padding(
-                                                padding:
-                                                    const EdgeInsets.symmetric(
-                                                      horizontal: 6,
-                                                      vertical: 4,
-                                                    ),
-                                                // الاسم المحفوظ في البيانات
-                                                // الشخصية، لا نص ثابت.
-                                                child: Text(
-                                                  AppSettings.instance.name,
-                                                  maxLines: 1,
-                                                  overflow:
-                                                      TextOverflow.ellipsis,
-                                                  style: const TextStyle(
-                                                    fontSize: 14,
-                                                    fontWeight: FontWeight.w800,
-                                                    color: AppTheme.title,
-                                                  ),
-                                                ),
-                                              ),
-                                            ),
-                                          ),
-                                        ),
-                                      ),
-                                      // أزرار الترويسة بمقاس ونصف قطر
-                                      // ولون موحّد مع بقية أزرار التطبيق
-                                      // بدل ثلاثة أشكال مختلفة بحدود ملوّنة.
-                                      AppIconButton(
-                                        tooltip: AppTr.tr('التقويم الذكي'),
-                                        icon: Icons.calendar_month_rounded,
-                                        background: AppTheme.field,
-                                        color: const Color(0xFF2E7D62),
-                                        onTap: () => Navigator.of(context).push(
-                                          MaterialPageRoute(
-                                            builder: (_) =>
-                                                const SmartCalendarScreen(),
-                                          ),
-                                        ),
-                                      ),
-                                      const SizedBox(width: AppTheme.sSm),
-                                      AppIconButton(
-                                        tooltip: AppTr.tr('الإشعارات'),
-                                        icon: _alertsCount > 0
-                                            ? Icons.notifications_active_rounded
-                                            : Icons.notifications_none_rounded,
-                                        background: AppTheme.field,
-                                        color: const Color(0xFFB4741A),
-                                        // النقطة الحمراء كانت مضاءة دائمًا
-                                        // حتى بلا تنبيه واحد؛ الآن تعكس
-                                        // عدد الاستحقاقات القريبة فعلًا.
-                                        badge: _alertsCount > 0,
-                                        onTap: () => Navigator.of(context).push(
-                                          MaterialPageRoute(
-                                            builder: (_) =>
-                                                const NotificationsCenterScreen(),
-                                          ),
-                                        ),
-                                      ),
-                                      const SizedBox(width: AppTheme.sSm),
-                                      AppIconButton(
-                                        tooltip: HomeStrings.raffle,
-                                        icon: Icons.casino_outlined,
-                                        background: AppTheme.field,
-                                        color: const Color(0xFF6D5BC4),
-                                        onTap: () => Navigator.of(context).push(
-                                          MaterialPageRoute(
-                                            builder: (_) =>
-                                                const RaffleScreen(),
-                                          ),
-                                        ),
-                                      ),
-                                    ],
-                                  ),
-                                  const SizedBox(height: 5),
-                                  const Text(
-                                    key: ValueKey('home-header-tagline'),
-                                    HomeStrings.homeTagline,
-                                    maxLines: 1,
-                                    overflow: TextOverflow.ellipsis,
-                                    textAlign: TextAlign.center,
-                                    style: TextStyle(
-                                      fontSize: 12.5,
-                                      fontWeight: FontWeight.w600,
-                                      color: AppTheme.muted,
-                                    ),
-                                  ),
-                                ],
-                              ),
-                            ),
-                          ),
-                        ),
-                      ),
+                      background: _buildHomeHeaderPanel(),
                     ),
                   ),
                   SliverToBoxAdapter(
@@ -1288,133 +2044,8 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
                           ).animate(_entranceCurve),
                           child: Column(
                             children: [
-                              const SizedBox(height: 10),
-                              Padding(
-                                padding: const EdgeInsetsDirectional.fromSTEB(
-                                  _homeHorizontalInset,
-                                  0,
-                                  _homeHorizontalInset,
-                                  10,
-                                ),
-                                child: Row(
-                                  children: [
-                                    // حقل بحث ممتلئ بلا حدود ولا ظل، بنفس
-                                    // نصف قطر ولون حقول التطبيق الموحّدة.
-                                    Expanded(
-                                      child: SizedBox(
-                                        height: 52,
-                                        child: TextField(
-                                          controller: _searchController,
-                                          textDirection: AppTr.uiDir,
-                                          style: const TextStyle(
-                                            fontSize: 13.5,
-                                            fontWeight: FontWeight.w600,
-                                            color: AppTheme.title,
-                                          ),
-                                          decoration: InputDecoration(
-                                            hintText: HomeStrings.searchHint,
-                                            hintStyle: const TextStyle(
-                                              color: AppTheme.muted,
-                                              fontSize: 13,
-                                              fontWeight: FontWeight.w600,
-                                            ),
-                                            filled: true,
-                                            fillColor: AppTheme.field,
-                                            prefixIcon: const Icon(
-                                              Icons.search_rounded,
-                                              color: AppTheme.chevron,
-                                              size: 21,
-                                            ),
-                                            suffixIcon:
-                                                _searchController.text.isEmpty
-                                                ? null
-                                                : IconButton(
-                                                    icon: const Icon(
-                                                      Icons.close_rounded,
-                                                      size: 18,
-                                                      color: AppTheme.muted,
-                                                    ),
-                                                    onPressed: () {
-                                                      HapticFeedback.selectionClick();
-                                                      _searchController.clear();
-                                                    },
-                                                  ),
-                                            border: OutlineInputBorder(
-                                              borderRadius:
-                                                  BorderRadius.circular(
-                                                    AppTheme.rField,
-                                                  ),
-                                              borderSide: BorderSide.none,
-                                            ),
-                                            contentPadding:
-                                                const EdgeInsets.symmetric(
-                                                  vertical: 15,
-                                                ),
-                                          ),
-                                        ),
-                                      ),
-                                    ),
-                                    const SizedBox(width: AppTheme.sSm),
-                                    // زر الفلتر: أيقونة موحّدة مع بقية
-                                    // الشاشات (بلا كلمة "فلتر")، ونقطة
-                                    // برتقالية تظهر متى كان هناك فلتر فعّال.
-                                    _PressableScale(
-                                      child: Material(
-                                        color: AppTheme.accent,
-                                        borderRadius: BorderRadius.circular(
-                                          AppTheme.rField,
-                                        ),
-                                        clipBehavior: Clip.antiAlias,
-                                        child: InkWell(
-                                          key: const ValueKey(
-                                            'home-filter-button',
-                                          ),
-                                          onTap: () {
-                                            HapticFeedback.selectionClick();
-                                            _openHomeFilterSheet();
-                                          },
-                                          child: SizedBox(
-                                            width: 52,
-                                            height: 52,
-                                            child: Stack(
-                                              clipBehavior: Clip.none,
-                                              children: [
-                                                const Center(
-                                                  child: Icon(
-                                                    Icons.tune_rounded,
-                                                    color: Colors.white,
-                                                    size: 22,
-                                                  ),
-                                                ),
-                                                if (_selectedHomeFilter !=
-                                                    HomeStrings.filterAll)
-                                                  Positioned(
-                                                    top: 10,
-                                                    left: 10,
-                                                    child: Container(
-                                                      width: 9,
-                                                      height: 9,
-                                                      decoration: BoxDecoration(
-                                                        color: const Color(
-                                                          0xFFF59E0B,
-                                                        ),
-                                                        shape: BoxShape.circle,
-                                                        border: Border.all(
-                                                          color: Colors.white,
-                                                          width: 1.4,
-                                                        ),
-                                                      ),
-                                                    ),
-                                                  ),
-                                              ],
-                                            ),
-                                          ),
-                                        ),
-                                      ),
-                                    ),
-                                  ],
-                                ),
-                              ),
+                              const SizedBox(height: 12),
+                              _buildBirthdayBanner(),
                               // الفلتر النشط ظاهر دائمًا: كان اختيار فلتر
                               // يُخفي ثلاثة من أربعة صناديق بلا أي أثر مرئي،
                               // فيبدو كأن الأقسام اختفت من التطبيق.
@@ -1447,6 +2078,27 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
                                 ),
                                 child: _buildSummaryAndPinnedRow(),
                               ),
+                              // «الطلبات»: كل ما ينتظر ردك أو اعتمادك، وما
+                              // أرسلته — بنفس شكل «الملخص الشامل».
+                              Padding(
+                                padding: const EdgeInsetsDirectional.fromSTEB(
+                                  _homeHorizontalInset,
+                                  0,
+                                  _homeHorizontalInset,
+                                  10,
+                                ),
+                                child: RequestsCenterCard(
+                                  refresh: FundlyAccount.inboxArrivals,
+                                  onOpenDelegations: () =>
+                                      Navigator.of(context).push(
+                                    MaterialPageRoute<void>(
+                                      builder: (_) => const _DelegationsHubPage(
+                                        initialDirection: 'received',
+                                      ),
+                                    ),
+                                  ),
+                                ),
+                              ),
                               Padding(
                                 // مسافة أقل أسفل العنوان منها أعلاه، فيلتصق
                                 // بصفّ البطاقات الذي يعنونه بدل أن يطفو في
@@ -1461,21 +2113,7 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
                                 // أقصى اليمين وزر تبديل العرض أقصى اليسار.
                                 child: AppSectionTitle(
                                   text: HomeStrings.manageTitle,
-                                  trailing: AppIconButton(
-                                    key: const ValueKey(
-                                      'home-categories-layout-toggle',
-                                    ),
-                                    tooltip: _showCategoriesInTwoColumns
-                                        ? 'عرض بطاقة واحدة في كل صف'
-                                        : 'عرض بطاقتين في كل صف',
-                                    icon: _showCategoriesInTwoColumns
-                                        ? Icons.grid_view_rounded
-                                        : Icons.view_agenda_rounded,
-                                    onTap: () {
-                                      HapticFeedback.selectionClick();
-                                      _toggleLayout();
-                                    },
-                                  ),
+                                  trailing: _layoutToggle(),
                                 ),
                               ),
                               if (_isLoadingMetrics)
@@ -1506,8 +2144,9 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
     if (_selectedIndex == 1) {
       return const _ReportsArchiveHubPage();
     }
+    // «المستندات» مكان «المحافظ» (حُذفت صفحة المحافظ).
     if (_selectedIndex == 2) {
-      return const _WalletsHubPage();
+      return const DocumentsHubPage();
     }
     return const ProfileSettingsScreen(delegationsPage: _DelegationsHubPage());
   }
@@ -1517,100 +2156,90 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
       (
         HomeStrings.modulePersonal,
         Icons.person_outline_rounded,
-        const Color(0xFF3B82F6),
+        const Color(0xFF0E7161),
         [
           (
-            'ديون لك: ${_formatAmount(_metrics.personalDebtsForYou)}',
-            Icons.south_west_rounded,
-            const Color(0xFF07835C),
+            'مالية تحتاج متابعة: ${_formatArabicNumber(_metrics.personalMoneyFollowup)}',
+            Icons.payments_outlined,
+            const Color(0xFFA6691A),
           ),
           (
-            'ديون عليك: ${_formatAmount(_metrics.personalDebtsOnYou)}',
-            Icons.north_east_rounded,
-            const Color(0xFFC73E4D),
-          ),
-          (
-            'تحتاج متابعة: ${_formatArabicNumber(_metrics.personalNeedsFollowup)}',
-            Icons.task_alt_rounded,
-            const Color(0xFF2563B8),
+            'مستندات تحتاج متابعة: ${_formatArabicNumber(_metrics.personalDocsFollowup)}',
+            Icons.description_outlined,
+            const Color(0xFF0A5A50),
           ),
         ],
       ),
       (
         HomeStrings.moduleShared,
         Icons.groups_2_outlined,
-        const Color(0xFF10B981),
+        const Color(0xFF34A894),
         [
           (
-            'رحلات نشطة: ${_formatArabicNumber(_metrics.sharedActiveTrips)}',
-            Icons.flight_takeoff_rounded,
-            const Color(0xFF087F6A),
+            'مالية تحتاج متابعة: ${_formatArabicNumber(_metrics.sharedMoneyFollowup)}',
+            Icons.payments_outlined,
+            const Color(0xFFA6691A),
           ),
           (
-            'جمعيات نشطة: ${_formatArabicNumber(_metrics.sharedActiveCircles)}',
-            Icons.groups_rounded,
-            const Color(0xFF0F766E),
-          ),
-          (
-            'تحتاج متابعة: ${_formatArabicNumber(_metrics.sharedNeedsFollowup)}',
-            Icons.warning_amber_rounded,
-            const Color(0xFFB56A09),
+            'مستندات تحتاج متابعة: ${_formatArabicNumber(_metrics.sharedDocsFollowup)}',
+            Icons.description_outlined,
+            const Color(0xFF0A5A50),
           ),
         ],
       ),
       (
         'إدارة الأشخاص والجهات',
         Icons.people_alt_outlined,
-        const Color(0xFF7956A8),
+        const Color(0xFF5C6B68),
         [
           (
-            'عدد الأفراد: ${_formatArabicNumber(_metrics.peopleCount)}',
-            Icons.person_outline_rounded,
-            const Color(0xFF6D28D9),
+            'مالية تحتاج متابعة: ${_formatArabicNumber(_metrics.peopleMoneyFollowup)}',
+            Icons.payments_outlined,
+            const Color(0xFFA6691A),
           ),
           (
-            'عدد الجهات: ${_formatArabicNumber(_metrics.entitiesCount)}',
-            Icons.apartment_outlined,
-            const Color(0xFF7C3AED),
-          ),
-          (
-            'تحتاج متابعة: ${_formatArabicNumber(_metrics.peopleNeedsFollowup)}',
-            Icons.warning_amber_rounded,
-            const Color(0xFFC05A15),
+            'مستندات تحتاج متابعة: ${_formatArabicNumber(_metrics.peopleDocsFollowup)}',
+            Icons.description_outlined,
+            const Color(0xFF0A5A50),
           ),
         ],
       ),
       (
         'العقارات/الأنشطة التجارية/المعدات وأخرى',
         Icons.apartment_rounded,
-        const Color(0xFFF59E0B),
+        const Color(0xFFF2A93F),
         [
           (
-            'عدد العقارات: ${_formatArabicNumber(_metrics.assetsCount)}',
-            Icons.home_work_outlined,
-            const Color(0xFFB45309),
+            'مالية تحتاج متابعة: ${_formatArabicNumber(_metrics.assetsMoneyFollowup)}',
+            Icons.payments_outlined,
+            const Color(0xFFA6691A),
           ),
           (
-            'عدد الأنشطة التجارية: ${_formatArabicNumber(_metrics.businessCount)}',
-            Icons.storefront_outlined,
-            const Color(0xFFB45309),
-          ),
-          (
-            'عدد المعدات: ${_formatArabicNumber(_metrics.equipmentCount)}',
-            Icons.construction_outlined,
-            const Color(0xFF92400E),
-          ),
-          (
-            'تحتاج متابعة: ${_formatArabicNumber(_metrics.assetsNeedsFollowup)}',
-            Icons.event_busy_outlined,
-            const Color(0xFFC2415D),
+            'مستندات تحتاج متابعة: ${_formatArabicNumber(_metrics.assetsDocsFollowup)}',
+            Icons.description_outlined,
+            const Color(0xFF0A5A50),
           ),
         ],
       ),
     ];
 
+    // ترتيب المستخدم وإخفاؤه (من «تخصيص الصفحة الرئيسية»).
+    final layout = HomeLayoutStore.notifier.value;
+    String layoutIdOf(String title) {
+      if (title == HomeStrings.modulePersonal) return HomeLayoutStore.personal;
+      if (title == HomeStrings.moduleShared) return HomeLayoutStore.shared;
+      if (title == 'إدارة الأشخاص والجهات') return HomeLayoutStore.people;
+      return HomeLayoutStore.assets;
+    }
+
+    final orderedCategories = [
+      for (final id in layout.order)
+        if (layout.isVisible(id))
+          ...categories.where((category) => layoutIdOf(category.$1) == id),
+    ];
+
     final query = _searchController.text.trim();
-    final filteredCategories = categories
+    final filteredCategories = orderedCategories
         .where((category) {
           final matchesFilter =
               _selectedHomeFilter == HomeStrings.filterAll ||
@@ -1748,13 +2377,19 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
                 ),
                 const SizedBox(width: AppTheme.sSm),
                 Expanded(
+                  // العنوان كاملًا على أي هاتف: سطران، ويصغر الخط بدل القص.
                   child: Text(
                     key: ValueKey('home-category-title-$categoryIndex'),
-                    title,
-                    maxLines: compact ? 2 : 1,
-                    overflow: TextOverflow.ellipsis,
+                    switch (title) {
+                      'العقارات/الأنشطة التجارية/المعدات وأخرى' =>
+                        'العقارات والأنشطة والمركبات',
+                      'إدارة الأشخاص والجهات' => 'الأفراد والجهات',
+                      _ => title,
+                    },
+                    maxLines: 4,
+                    softWrap: true,
                     style: TextStyle(
-                      fontSize: compact ? 12 : 14.5,
+                      fontSize: compact ? 11.5 : 15,
                       height: 1.25,
                       fontWeight: FontWeight.w800,
                       color: AppTheme.title,
@@ -1917,7 +2552,7 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
                   gradient: LinearGradient(
                     colors: [color.withOpacity(0.2), color.withOpacity(0.08)],
                   ),
-                  borderRadius: BorderRadius.circular(14),
+                  borderRadius: BorderRadius.circular(12),
                   border: Border.all(color: color.withOpacity(0.2), width: 1),
                 ),
                 child: Icon(icon, color: color, size: 26),
@@ -1926,10 +2561,9 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
                 child: Text(
                   title,
                   style: TextStyle(
-                    fontSize: 16,
+                    fontSize: 15,
                     fontWeight: FontWeight.w800,
-                    color: Colors.black87,
-                    letterSpacing: 0.3,
+                    color: const Color(0xFF0F1F1C),
                   ),
                   textAlign: TextAlign.right,
                 ),
@@ -1963,12 +2597,11 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
                       style: TextStyle(
                         fontSize: 13,
                         fontWeight: FontWeight.w500,
-                        color: Colors.grey[700],
+                        color: const Color(0xFF46534F),
                         height: 1.4,
                       ),
                       textDirection: AppTr.uiDir,
-                      maxLines: 2,
-                      overflow: TextOverflow.ellipsis,
+                      maxLines: 4,
                     ),
                   ),
                 ],
@@ -1988,7 +2621,7 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
                 padding: EdgeInsets.symmetric(horizontal: 12, vertical: 6),
                 decoration: BoxDecoration(
                   color: color.withOpacity(0.1),
-                  borderRadius: BorderRadius.circular(10),
+                  borderRadius: BorderRadius.circular(12),
                   border: Border.all(color: color.withOpacity(0.2), width: 1),
                 ),
                 child: Row(
@@ -2024,13 +2657,13 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
             padding: EdgeInsets.symmetric(horizontal: 12, vertical: 10),
             decoration: BoxDecoration(
               gradient: LinearGradient(
-                colors: [Color(0xFFFEE2E2), Color(0xFFFFF1F2)],
+                colors: [Color(0xFFFBE7E4), Color(0xFFFDF4F2)],
                 begin: Alignment.topRight,
                 end: Alignment.bottomLeft,
               ),
-              borderRadius: BorderRadius.circular(14),
+              borderRadius: BorderRadius.circular(12),
               border: Border.all(
-                color: Color(0xFFFB7185).withOpacity(0.3),
+                color: Color(0xFFE88C83).withOpacity(0.3),
                 width: 1,
               ),
             ),
@@ -2041,19 +2674,19 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
                   textDirection: AppTr.uiDir,
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
-                    Icon(Icons.south_east, color: Color(0xFFFB7185), size: 16),
+                    Icon(Icons.south_east, color: Color(0xFFE88C83), size: 16),
                     Text(
                       'عليك',
                       style: TextStyle(
                         fontSize: 11,
                         fontWeight: FontWeight.w700,
-                        color: Color(0xFF9F1239),
+                        color: Color(0xFFA82F26),
                       ),
                     ),
                   ],
                 ),
                 SizedBox(height: 8),
-                _buildCurrencyAmount('2,000', Color(0xFFBE123C)),
+                _buildCurrencyAmount('2,000', Color(0xFFA82F26)),
               ],
             ),
           ),
@@ -2064,13 +2697,13 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
             padding: EdgeInsets.symmetric(horizontal: 12, vertical: 10),
             decoration: BoxDecoration(
               gradient: LinearGradient(
-                colors: [Color(0xFFDCFCE7), Color(0xFFF0FDF4)],
+                colors: [Color(0xFFE9F4F1), Color(0xFFF3F9F7)],
                 begin: Alignment.topRight,
                 end: Alignment.bottomLeft,
               ),
-              borderRadius: BorderRadius.circular(14),
+              borderRadius: BorderRadius.circular(12),
               border: Border.all(
-                color: Color(0xFF10B981).withOpacity(0.35),
+                color: Color(0xFF34A894).withOpacity(0.35),
                 width: 1,
               ),
             ),
@@ -2081,19 +2714,19 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
                   textDirection: AppTr.uiDir,
                   mainAxisAlignment: MainAxisAlignment.spaceBetween,
                   children: [
-                    Icon(Icons.north_west, color: Color(0xFF10B981), size: 16),
+                    Icon(Icons.north_west, color: Color(0xFF34A894), size: 16),
                     Text(
                       'لك',
                       style: TextStyle(
                         fontSize: 11,
                         fontWeight: FontWeight.w700,
-                        color: Color(0xFF047857),
+                        color: Color(0xFF0E7161),
                       ),
                     ),
                   ],
                 ),
                 SizedBox(height: 8),
-                _buildCurrencyAmount('2,500', Color(0xFF047857)),
+                _buildCurrencyAmount('2,500', Color(0xFF0E7161)),
               ],
             ),
           ),
@@ -2110,14 +2743,14 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
           TextSpan(
             text: amount,
             style: TextStyle(
-              fontSize: 16,
+              fontSize: 15,
               fontWeight: FontWeight.w800,
               color: amountColor,
             ),
           ),
           WidgetSpan(child: SizedBox(width: 4)),
           TextSpan(
-            text: AppSettings.currencySuffix,
+            text: AppTr.tr(AppSettings.currencySuffix),
             style: TextStyle(
               fontSize: 10,
               fontWeight: FontWeight.w600,
@@ -2162,9 +2795,9 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
               Expanded(
                 child: _buildGlassNavItem(
                   index: 2,
-                  label: 'المحافظ',
-                  icon: Icons.account_balance_wallet_outlined,
-                  selectedIcon: Icons.account_balance_wallet_rounded,
+                  label: 'المستندات',
+                  icon: Icons.folder_copy_outlined,
+                  selectedIcon: Icons.folder_copy_rounded,
                 ),
               ),
               Expanded(
@@ -2227,7 +2860,7 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
                 height: 16,
                 child: FittedBox(
                   fit: BoxFit.scaleDown,
-                  child: Text(
+                  child: FittedBox(fit: BoxFit.scaleDown, alignment: AlignmentDirectional.centerStart, child: Text(
                     label,
                     maxLines: 1,
                     style: TextStyle(
@@ -2237,7 +2870,7 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
                           : FontWeight.w600,
                       color: isSelected ? AppTheme.accentDark : AppTheme.muted,
                     ),
-                  ),
+                  )),
                 ),
               ),
             ],
@@ -2283,7 +2916,7 @@ class _HomeCategoryMetric extends StatelessWidget {
                 alignment: Alignment.centerRight,
                 child: Text(
                   label,
-                  maxLines: 1,
+                  maxLines: 3,
                   style: TextStyle(
                     fontSize: compact ? 11 : 12,
                     fontWeight: FontWeight.w700,
@@ -2305,37 +2938,37 @@ class _HomeCategoryMetric extends StatelessWidget {
   }
 }
 
-/// شريحة مضغوطة للعنصر المثبَّت داخل الصندوق النحيف في الصفحة الرئيسية:
-/// أيقونة + الاسم + زر إلغاء التثبيت، بارتفاع يناسب 30 بكسل.
 /// نمط الوحدة التي ينتمي إليها العنصر المثبَّت (اسم، أيقونة، لون) —
 /// مصدر واحد تستخدمه شرائح التثبيت في الصفحة الرئيسية ونافذة الاختيار.
 ({String label, IconData icon, Color color}) _pinModuleStyle(String moduleId) {
   return switch (moduleId) {
     'personal' => (
-      label: 'التزامات شخصية',
+      label: 'الالتزامات الشخصية',
       icon: Icons.person_outline_rounded,
-      color: const Color(0xFF2563EB),
+      color: const Color(0xFF0A5A50),
     ),
     'shared' => (
-      label: 'التزامات مشتركة',
+      label: 'الالتزامات المشتركة',
       icon: Icons.groups_2_outlined,
-      color: const Color(0xFF10B981),
+      color: const Color(0xFF34A894),
     ),
     'people' => (
       label: 'الأفراد والجهات',
       icon: Icons.badge_outlined,
-      color: const Color(0xFF7C3AED),
+      color: const Color(0xFF0E7161),
     ),
     _ => (
       label: 'العقارات والأنشطة',
       icon: Icons.apartment_rounded,
-      color: const Color(0xFFEA580C),
+      color: const Color(0xFFCE8422),
     ),
   };
 }
 
-class _HomePinnedChip extends StatelessWidget {
-  const _HomePinnedChip({
+/// مربع عنصر مثبَّت في الصفحة الرئيسية: أيقونة وحدته واسمه، وزر صغير
+/// لإلغاء التثبيت في الزاوية.
+class _HomePinnedTile extends StatelessWidget {
+  const _HomePinnedTile({
     super.key,
     required this.shortcut,
     required this.onOpen,
@@ -2352,46 +2985,72 @@ class _HomePinnedChip extends StatelessWidget {
         ? shortcut.id.split(':').first
         : shortcut.moduleId;
     final style = _pinModuleStyle(moduleId);
-    return Material(
-      color: Colors.white,
-      borderRadius: BorderRadius.circular(10),
-      clipBehavior: Clip.antiAlias,
-      child: InkWell(
-        onTap: onOpen,
-        child: Container(
-          constraints: const BoxConstraints(maxWidth: 150),
-          padding: const EdgeInsetsDirectional.fromSTEB(8, 0, 2, 0),
-          child: Row(
-            mainAxisSize: MainAxisSize.min,
+    // مربع صغير ثابت الحجم، وزر الإلغاء داخل المربع في زاويته.
+    return SizedBox(
+      width: 62,
+      height: 62,
+      child: Material(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(12),
+        clipBehavior: Clip.antiAlias,
+        child: Ink(
+          decoration: BoxDecoration(
+            borderRadius: BorderRadius.circular(12),
+            border: Border.all(color: const Color(0xFFE4EAE8)),
+          ),
+          child: Stack(
             children: [
-              Icon(style.icon, size: 13, color: style.color),
-              const SizedBox(width: 5),
-              Flexible(
-                child: Text(
-                  shortcut.title,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
-                    fontSize: 10,
-                    fontWeight: FontWeight.w800,
-                    color: AppTheme.title,
-                    height: 1.1,
+              Positioned.fill(
+                child: InkWell(
+                  onTap: () {
+                    HapticFeedback.selectionClick();
+                    onOpen();
+                  },
+                  child: Padding(
+                    padding: const EdgeInsets.fromLTRB(4, 12, 4, 6),
+                    child: Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Icon(style.icon, size: 18, color: style.color),
+                        const SizedBox(height: 4),
+                        FittedBox(fit: BoxFit.scaleDown, alignment: Alignment.center, child: Text(
+                          shortcut.title,
+                          maxLines: 1,
+                          textAlign: TextAlign.center,
+                          style: const TextStyle(
+                            fontSize: 9.5,
+                            fontWeight: FontWeight.w800,
+                            color: AppTheme.title,
+                            height: 1.1,
+                          ),
+                        )),
+                      ],
+                    ),
                   ),
                 ),
               ),
-              IconButton(
-                tooltip: AppTr.tr('إلغاء التثبيت'),
-                onPressed: onRemove,
-                visualDensity: VisualDensity.compact,
-                constraints: const BoxConstraints.tightFor(
-                  width: 22,
-                  height: 22,
-                ),
-                padding: EdgeInsets.zero,
-                icon: const Icon(
-                  Icons.close_rounded,
-                  size: 13,
-                  color: AppTheme.muted,
+              PositionedDirectional(
+                top: 3,
+                end: 3,
+                child: Tooltip(
+                  message: AppTr.tr('إلغاء التثبيت'),
+                  child: InkWell(
+                    onTap: onRemove,
+                    customBorder: const CircleBorder(),
+                    child: Container(
+                      width: 16,
+                      height: 16,
+                      decoration: const BoxDecoration(
+                        color: Color(0xFFF2F6F5),
+                        shape: BoxShape.circle,
+                      ),
+                      child: const Icon(
+                        Icons.close_rounded,
+                        size: 11,
+                        color: AppTheme.muted,
+                      ),
+                    ),
+                  ),
                 ),
               ),
             ],
@@ -2404,11 +3063,14 @@ class _HomePinnedChip extends StatelessWidget {
 
 class _PinItemsList extends StatefulWidget {
   const _PinItemsList({
+    required this.moduleId,
     required this.items,
     required this.isPinned,
     required this.onToggle,
   });
 
+  /// الوحدة: personal / shared / people / assets.
+  final String moduleId;
   final List<HomePinnedShortcut> items;
   final bool Function(String id) isPinned;
   final Future<void> Function(HomePinnedShortcut item) onToggle;
@@ -2422,6 +3084,157 @@ class _PinItemsListState extends State<_PinItemsList> {
       .where((item) => widget.isPinned(item.id))
       .map((item) => item.id)
       .toSet();
+
+  /// التبويب الفرعي المختار داخل الوحدة («الكل» = كل العناصر).
+  String _group = 'الكل';
+
+  /// تبويبات الوحدة كما في شاشتها، و«أخرى» لما لا يدخل في أي منها.
+  List<String> get _groups {
+    final defined = HomePinItemsService.groupsFor(widget.moduleId);
+    final hasOther = widget.items.any(
+      (item) => !defined.contains(item.group),
+    );
+    return ['الكل', ...defined, if (hasOther) 'أخرى'];
+  }
+
+  int _countOf(String group) {
+    if (group == 'الكل') return widget.items.length;
+    final defined = HomePinItemsService.groupsFor(widget.moduleId);
+    if (group == 'أخرى') {
+      return widget.items.where((item) => !defined.contains(item.group)).length;
+    }
+    return widget.items.where((item) => item.group == group).length;
+  }
+
+  List<HomePinnedShortcut> get _visible {
+    if (_group == 'الكل') return widget.items;
+    final defined = HomePinItemsService.groupsFor(widget.moduleId);
+    if (_group == 'أخرى') {
+      return widget.items
+          .where((item) => !defined.contains(item.group))
+          .toList(growable: false);
+    }
+    return widget.items
+        .where((item) => item.group == _group)
+        .toList(growable: false);
+  }
+
+  /// شريط تبويبات الوحدة (مالية، مستند… / مشاركات مشتركة، الرحلة / السفر…).
+  Widget _groupTabs(Color color) {
+    return SizedBox(
+      height: 40,
+      child: ListView.separated(
+        scrollDirection: Axis.horizontal,
+        padding: const EdgeInsets.symmetric(horizontal: 14),
+        itemCount: _groups.length,
+        separatorBuilder: (_, _) => const SizedBox(width: 6),
+        itemBuilder: (context, index) {
+          final group = _groups[index];
+          final selected = group == _group;
+          return Material(
+            color: selected ? color.withValues(alpha: 0.10) : Colors.white,
+            borderRadius: BorderRadius.circular(12),
+            child: InkWell(
+              key: ValueKey('pin-group-${widget.moduleId}-$group'),
+              borderRadius: BorderRadius.circular(12),
+              onTap: () => setState(() => _group = group),
+              child: Container(
+                padding: const EdgeInsets.symmetric(horizontal: 12),
+                decoration: BoxDecoration(
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(
+                    color: selected
+                        ? color.withValues(alpha: 0.45)
+                        : const Color(0xFFE4EAE8),
+                  ),
+                ),
+                child: Row(
+                  mainAxisSize: MainAxisSize.min,
+                  children: [
+                    Text(
+                      group,
+                      style: TextStyle(
+                        fontSize: 11,
+                        fontWeight: selected
+                            ? FontWeight.w900
+                            : FontWeight.w700,
+                        color: selected ? color : const Color(0xFF5C6B68),
+                      ),
+                    ),
+                    const SizedBox(width: 5),
+                    Text(
+                      '${_countOf(group)}',
+                      style: TextStyle(
+                        fontSize: 10,
+                        fontWeight: FontWeight.w800,
+                        color: selected ? color : const Color(0xFF8C9A97),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+            ),
+          );
+        },
+      ),
+    );
+  }
+
+  Widget _groupPinCard(Color color) {
+    final item = HomePinnedShortcut(
+      id: '${widget.moduleId}:group:$_group',
+      title: _group,
+      moduleId: widget.moduleId,
+      subtitle: 'فئة كاملة',
+      group: _group,
+    );
+    final pinned = _pinnedIds.contains(item.id);
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(14, 0, 14, 8),
+      child: Material(
+        color: pinned ? color.withValues(alpha: 0.10) : Colors.white,
+        borderRadius: BorderRadius.circular(12),
+        child: InkWell(
+          key: ValueKey('pin-whole-group-${widget.moduleId}-$_group'),
+          onTap: () => _toggle(item),
+          borderRadius: BorderRadius.circular(12),
+          child: Container(
+            padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 10),
+            decoration: BoxDecoration(
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(
+                color: pinned
+                    ? color.withValues(alpha: 0.45)
+                    : const Color(0xFFE4EAE8),
+                width: pinned ? 1.4 : 1,
+              ),
+            ),
+            child: Row(
+              children: [
+                Icon(Icons.folder_special_outlined, color: color, size: 20),
+                const SizedBox(width: 10),
+                Expanded(
+                  child: Text(
+                    '${AppTr.tr('تثبيت الفئة كاملة')}: ${AppTr.tr(_group)}',
+                    style: const TextStyle(
+                      fontSize: 12,
+                      fontWeight: FontWeight.w900,
+                      color: Color(0xFF2C3B38),
+                    ),
+                  ),
+                ),
+                Icon(
+                  pinned ? Icons.push_pin_rounded : Icons.push_pin_outlined,
+                  color: pinned ? color : const Color(0xFF8C9A97),
+                  size: 20,
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
 
   Future<void> _toggle(HomePinnedShortcut item) async {
     setState(() {
@@ -2447,33 +3260,31 @@ class _PinItemsListState extends State<_PinItemsList> {
               Icon(
                 Icons.bookmark_add_outlined,
                 size: 34,
-                color: Color(0xFF94A3B8),
+                color: Color(0xFF8C9A97),
               ),
               SizedBox(height: 10),
               Text(
                 'لا توجد عناصر محفوظة',
                 textAlign: TextAlign.center,
                 style: TextStyle(
-                  fontSize: 13.5,
+                  fontSize: 13,
                   fontWeight: FontWeight.w900,
-                  color: Color(0xFF334155),
+                  color: Color(0xFF2C3B38),
                 ),
               ),
               SizedBox(height: 4),
               Text(
                 'أضف عنصرًا داخل هذه الوحدة ليظهر هنا',
                 textAlign: TextAlign.center,
-                style: TextStyle(fontSize: 11, color: Color(0xFF718096)),
+                style: TextStyle(fontSize: 11, color: Color(0xFF76837F)),
               ),
             ],
           ),
         ),
       );
     }
-    final moduleId = widget.items.first.moduleId.isEmpty
-        ? widget.items.first.id.split(':').first
-        : widget.items.first.moduleId;
-    final style = _pinModuleStyle(moduleId);
+    final style = _pinModuleStyle(widget.moduleId);
+    final visible = _visible;
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,
       children: [
@@ -2487,7 +3298,7 @@ class _PinItemsListState extends State<_PinItemsList> {
                   style: const TextStyle(
                     fontSize: 13,
                     fontWeight: FontWeight.w900,
-                    color: Color(0xFF334155),
+                    color: Color(0xFF2C3B38),
                   ),
                 ),
               ),
@@ -2498,7 +3309,7 @@ class _PinItemsListState extends State<_PinItemsList> {
                   borderRadius: BorderRadius.circular(20),
                 ),
                 child: Text(
-                  '${widget.items.length} عناصر',
+                  '${visible.length} عناصر',
                   style: TextStyle(
                     fontSize: 10,
                     fontWeight: FontWeight.w800,
@@ -2509,13 +3320,26 @@ class _PinItemsListState extends State<_PinItemsList> {
             ],
           ),
         ),
+        _groupTabs(style.color),
+        const SizedBox(height: 8),
+        // تثبيت الفئة كاملة (الرحلة / السفر، العقارات...) لا عنصر واحد.
+        if (_group != 'الكل' && _group != 'أخرى') _groupPinCard(style.color),
+        if (visible.isEmpty)
+          Padding(
+            padding: const EdgeInsets.fromLTRB(16, 30, 16, 0),
+            child: Text(
+              'لا توجد عناصر في «$_group»',
+              textAlign: TextAlign.center,
+              style: const TextStyle(fontSize: 12, color: Color(0xFF76837F)),
+            ),
+          ),
         Expanded(
           child: ListView.separated(
             padding: const EdgeInsets.fromLTRB(14, 4, 14, 20),
-            itemCount: widget.items.length,
+            itemCount: visible.length,
             separatorBuilder: (_, _) => const SizedBox(height: 9),
             itemBuilder: (context, index) {
-              final item = widget.items[index];
+              final item = visible[index];
               final pinned = _pinnedIds.contains(item.id);
               return AnimatedContainer(
                 duration: const Duration(milliseconds: 180),
@@ -2524,16 +3348,16 @@ class _PinItemsListState extends State<_PinItemsList> {
                   color: pinned
                       ? style.color.withValues(alpha: 0.08)
                       : Colors.white,
-                  borderRadius: BorderRadius.circular(14),
+                  borderRadius: BorderRadius.circular(12),
                   border: Border.all(
                     color: pinned
                         ? style.color.withValues(alpha: 0.42)
-                        : const Color(0xFFE5ECEA),
+                        : const Color(0xFFE4EAE8),
                     width: pinned ? 1.4 : 1,
                   ),
                   boxShadow: const [
                     BoxShadow(
-                      color: Color(0x0A0F172A),
+                      color: Color(0x0A022E2A),
                       blurRadius: 10,
                       offset: Offset(0, 3),
                     ),
@@ -2541,10 +3365,10 @@ class _PinItemsListState extends State<_PinItemsList> {
                 ),
                 child: Material(
                   color: Colors.transparent,
-                  borderRadius: BorderRadius.circular(14),
+                  borderRadius: BorderRadius.circular(12),
                   child: InkWell(
                     onTap: () => _toggle(item),
-                    borderRadius: BorderRadius.circular(14),
+                    borderRadius: BorderRadius.circular(12),
                     child: Padding(
                       padding: const EdgeInsets.fromLTRB(12, 10, 10, 10),
                       child: Row(
@@ -2569,12 +3393,11 @@ class _PinItemsListState extends State<_PinItemsList> {
                               children: [
                                 Text(
                                   item.title,
-                                  maxLines: 1,
-                                  overflow: TextOverflow.ellipsis,
+                                  maxLines: 3,
                                   style: const TextStyle(
                                     fontSize: 13,
                                     fontWeight: FontWeight.w900,
-                                    color: Color(0xFF17212B),
+                                    color: Color(0xFF0F1F1C),
                                   ),
                                 ),
                                 const SizedBox(height: 4),
@@ -2582,11 +3405,10 @@ class _PinItemsListState extends State<_PinItemsList> {
                                   item.subtitle.isEmpty
                                       ? style.label
                                       : item.subtitle,
-                                  maxLines: 1,
-                                  overflow: TextOverflow.ellipsis,
+                                  maxLines: 3,
                                   style: const TextStyle(
-                                    fontSize: 10.5,
-                                    color: Color(0xFF718096),
+                                    fontSize: 10,
+                                    color: Color(0xFF76837F),
                                   ),
                                 ),
                               ],
@@ -2602,7 +3424,7 @@ class _PinItemsListState extends State<_PinItemsList> {
                               decoration: BoxDecoration(
                                 color: pinned
                                     ? style.color
-                                    : const Color(0xFFF1F5F4),
+                                    : const Color(0xFFF2F6F5),
                                 borderRadius: BorderRadius.circular(12),
                               ),
                               child: IconButton(
@@ -2615,7 +3437,7 @@ class _PinItemsListState extends State<_PinItemsList> {
                                       : Icons.push_pin_outlined,
                                   color: pinned
                                       ? Colors.white
-                                      : const Color(0xFF64748B),
+                                      : const Color(0xFF5C6B68),
                                   size: 20,
                                 ),
                               ),
@@ -2654,7 +3476,7 @@ class _PinPickerLoading extends StatelessWidget {
           style: TextStyle(
             fontSize: 12,
             fontWeight: FontWeight.w700,
-            color: Color(0xFF64748B),
+            color: Color(0xFF5C6B68),
           ),
         ),
       ],
@@ -2683,7 +3505,7 @@ class _SummaryFolderStarIcon extends StatelessWidget {
               decoration: BoxDecoration(
                 color: Colors.white.withValues(alpha: 0.32),
                 borderRadius: const BorderRadius.vertical(
-                  top: Radius.circular(5),
+                  top: Radius.circular(8),
                 ),
               ),
             ),
@@ -2694,7 +3516,7 @@ class _SummaryFolderStarIcon extends StatelessWidget {
               width: 36,
               height: 25,
               decoration: BoxDecoration(
-                borderRadius: BorderRadius.circular(9),
+                borderRadius: BorderRadius.circular(8),
                 gradient: LinearGradient(
                   begin: Alignment.topCenter,
                   end: Alignment.bottomCenter,
@@ -2715,72 +3537,12 @@ class _SummaryFolderStarIcon extends StatelessWidget {
                 child: Icon(
                   Icons.star_rounded,
                   size: 17,
-                  color: Colors.white,
+                  color: AppTheme.gold,
                 ),
               ),
             ),
           ),
         ],
-      ),
-    );
-  }
-}
-
-/// بطاقة اختصار قسم صغيرة أسفل صندوق التثبيت.
-class _HomeQuickTile extends StatelessWidget {
-  const _HomeQuickTile({
-    super.key,
-    required this.label,
-    required this.icon,
-    required this.color,
-    required this.onTap,
-  });
-
-  final String label;
-  final IconData icon;
-  final Color color;
-  final VoidCallback onTap;
-
-  @override
-  Widget build(BuildContext context) {
-    return _PressableScale(
-      child: Material(
-        color: Colors.white,
-        borderRadius: BorderRadius.circular(13),
-        clipBehavior: Clip.antiAlias,
-        child: InkWell(
-          onTap: () {
-            HapticFeedback.selectionClick();
-            onTap();
-          },
-          child: Container(
-            width: 52,
-            decoration: BoxDecoration(
-              borderRadius: BorderRadius.circular(13),
-              border: Border.all(color: const Color(0xFFEEEEEE)),
-            ),
-            padding: const EdgeInsets.symmetric(horizontal: 3, vertical: 5),
-            child: Column(
-              mainAxisAlignment: MainAxisAlignment.center,
-              children: [
-                Icon(icon, size: 16, color: color),
-                const SizedBox(height: 4),
-                Text(
-                  label,
-                  maxLines: 1,
-                  textAlign: TextAlign.center,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
-                    fontSize: 8.5,
-                    fontWeight: FontWeight.w700,
-                    color: AppTheme.title,
-                    height: 1.1,
-                  ),
-                ),
-              ],
-            ),
-          ),
-        ),
       ),
     );
   }
@@ -2819,6 +3581,72 @@ class _PressableScaleState extends State<_PressableScale> {
   }
 }
 
+/// فلتر التقارير والأرشيف: أقسام فلتر الصفحة الرئيسية نفسها وفلتر كل قسم
+/// كما في شاشته، مقصورًا على ما يطبّقه التقرير فعلًا، والتاريخ ظاهر دائمًا.
+AppFilterModuleConfig _reportModuleConfigFor(String module) {
+  final base = switch (module) {
+    'الالتزامات الشخصية' => personalFilterModuleConfig(),
+    'الالتزامات المشتركة' => sharedFilterModuleConfig(),
+    'الأفراد والجهات' => peopleFilterModuleConfig(),
+    'العقارات' ||
+    'الأنشطة التجارية' ||
+    'المركبات ووسائل النقل' => assetsFilterModuleConfig(module),
+    _ => null,
+  };
+  if (base == null) {
+    // «الكل»: الفترة والحالة والمبلغ على كل الأقسام.
+    return AppFilterModuleConfig(
+      sectionsFor: (_) => const [
+        AppFilterSection.period,
+        AppFilterSection.statusSelect,
+        AppFilterSection.amountSelect,
+      ],
+      selectStatuses: const [
+        'الأحدث أولاً',
+        'نشط',
+        'قريبة الاستحقاق',
+        'مستحقة',
+        'متأخرة',
+        'مكتملة',
+      ],
+    );
+  }
+  List<AppFilterSection> sectionsFor(String main) {
+    final shown = base
+        .sectionsFor(main)
+        .where(kReportFilterSections.contains)
+        .toList();
+    if (!shown.contains(AppFilterSection.period) &&
+        !shown.contains(AppFilterSection.date)) {
+      final after = shown.lastIndexWhere(
+        (section) =>
+            section == AppFilterSection.mainCategory ||
+            section == AppFilterSection.subCategory,
+      );
+      shown.insert(after + 1, AppFilterSection.period);
+    }
+    return shown;
+  }
+
+  return AppFilterModuleConfig(
+    sectionsFor: sectionsFor,
+    mainCategories: base.mainCategories,
+    subCategoriesFor: base.subCategoriesFor,
+    fixedMainCategory: base.fixedMainCategory,
+    statuses: base.statuses,
+    selectStatuses: base.selectStatuses,
+    selectStatusesFor: base.selectStatusesFor,
+    currencies: base.currencies,
+    amountShortcuts: base.amountShortcuts,
+    amountShortcutsFor: base.amountShortcutsFor,
+    personCategories: base.personCategories,
+    documentStates: base.documentStates,
+    delegatesLabel: base.delegatesLabel,
+    placeLabel: base.placeLabel,
+    placeHint: base.placeHint,
+  );
+}
+
 class _ReportsArchiveHubPage extends StatefulWidget {
   const _ReportsArchiveHubPage();
 
@@ -2828,17 +3656,31 @@ class _ReportsArchiveHubPage extends StatefulWidget {
 
 class _ReportsArchiveHubPageState extends State<_ReportsArchiveHubPage> {
   static const _storageKey = 'reports_archive_records_v1';
-  static const _accent = Color(0xFF0F6AA8);
+  static const _accent = Color(0xFF0A5A50);
 
   /// السجلات الحقيقية التي تُبنى منها التقارير والأرشيف والملخصات.
   List<SummaryItem> _items = const [];
   bool _loadingItems = true;
 
-  /// آخر اختيار في كل من نافذتي التقرير والأرشيف — يعود كما تركه المستخدم.
-  ScopeSelection? _reportSelection;
-  ScopeSelection? _archiveSelection;
+  /// البحث أعلى صفحة التقارير (في التقارير المنشأة).
+  final TextEditingController _reportsSearch = TextEditingController();
+
+  /// فلتر قائمتَي «التقارير المنجزة» و«ملفات الأرشيف»: الأحدث أولاً، آخر
+  /// أسبوع، آخر شهر، مخصص (من/إلى).
+  static const _listFilters = ['الأحدث أولاً', 'آخر أسبوع', 'آخر شهر', 'مخصص'];
+  String _reportsListFilter = 'الأحدث أولاً';
+  DateTimeRange? _reportsRange;
+  String _archiveListFilter = 'الأحدث أولاً';
+  DateTimeRange? _archiveRange;
   List<_GeneratedReport> _recentReports = [];
   List<_GeneratedReport> _archivedReports = [];
+
+  /// ما أُرشف فعلًا داخل الأقسام (التزامات، أفراد، عقارات) — يُجمع هنا
+  /// ليُبحث فيه ويُستخرج ويُلغى أرشفته من مكان واحد.
+  List<ArchivedRecord> _archivedRecords = const [];
+  String _archivedSource = 'الكل';
+  final TextEditingController _archivedSearch = TextEditingController();
+  bool _loadingArchived = true;
 
 
 
@@ -2849,10 +3691,293 @@ class _ReportsArchiveHubPageState extends State<_ReportsArchiveHubPage> {
     super.initState();
     _restore();
     _loadItems();
+    _loadArchivedRecords();
+  }
+
+  /// تحميل المؤرشفات من كل الأقسام.
+  Future<void> _loadArchivedRecords() async {
+    if (mounted) setState(() => _loadingArchived = true);
+    final rows = await ArchiveCenter.loadAll();
+    if (!mounted) return;
+    setState(() {
+      _archivedRecords = rows;
+      _loadingArchived = false;
+    });
+  }
+
+  /// المؤرشفات بعد تطبيق تبويب القسم ونص البحث.
+  List<ArchivedRecord> get _visibleArchivedRecords {
+    final query = _archivedSearch.text.trim();
+    return _archivedRecords.where((row) {
+      final sourceOk =
+          _archivedSource == 'الكل' || row.source == _archivedSource;
+      final queryOk =
+          query.isEmpty ||
+          row.title.contains(query) ||
+          row.subtitle.contains(query);
+      return sourceOk && queryOk;
+    }).toList(growable: false);
+  }
+
+  /// ملف PDF بالمؤرشفات المعروضة الآن (القسم المختار + البحث).
+  void _exportArchivedRecords() {
+    final rows = _visibleArchivedRecords;
+    if (_loadingArchived) {
+      _toast('جارٍ تحميل البيانات...');
+      return;
+    }
+    if (rows.isEmpty) {
+      _toast('لا توجد عناصر مؤرشفة للتصدير');
+      return;
+    }
+    final now = DateTime.now();
+    final query = _archivedSearch.text.trim();
+    final stamp = now.millisecondsSinceEpoch.toString();
+    final document = ReportDocument(
+      title: _archivedSource == 'الكل'
+          ? 'سجل المؤرشفات'
+          : 'سجل المؤرشفات — $_archivedSource',
+      archive: true,
+      reference: 'AR-${stamp.substring(stamp.length - 6)}',
+      createdAt: now,
+      createdBy: AppSettings.instance.name,
+      criteria: [
+        ('القسم', _archivedSource),
+        if (query.isNotEmpty) ('كلمة البحث', query),
+      ],
+      items: [
+        for (final row in rows)
+          SummaryItem(
+            scope: row.source,
+            section: row.source,
+            type: row.source,
+            title: row.title,
+            subtitle: row.subtitle,
+            status: 'مؤرشف',
+          ),
+      ],
+    );
+    Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => ReportPreviewScreen(document: document),
+      ),
+    );
+  }
+
+  /// رقاقة قسم مع عدد مؤرشفاته.
+  Widget _archiveSourcePill(String source, int count) {
+    final selected = _archivedSource == source;
+    return Padding(
+      padding: const EdgeInsetsDirectional.only(end: 8),
+      child: InkWell(
+        onTap: () => setState(() => _archivedSource = source),
+        borderRadius: BorderRadius.circular(AppTheme.rPill),
+        child: AnimatedContainer(
+          duration: const Duration(milliseconds: 180),
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 7),
+          decoration: BoxDecoration(
+            color: selected ? _accent : Colors.white,
+            borderRadius: BorderRadius.circular(AppTheme.rPill),
+            border: Border.all(
+              color: selected ? _accent : AppTheme.hairline,
+            ),
+          ),
+          child: Row(
+            mainAxisSize: MainAxisSize.min,
+            children: [
+              Text(
+                source,
+                style: TextStyle(
+                  fontSize: 11.5,
+                  fontWeight: FontWeight.w800,
+                  color: selected ? Colors.white : AppTheme.title,
+                ),
+              ),
+              const SizedBox(width: 6),
+              Container(
+                padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 1),
+                decoration: BoxDecoration(
+                  color: selected
+                      ? Colors.white.withValues(alpha: 0.22)
+                      : AppTheme.field,
+                  borderRadius: BorderRadius.circular(AppTheme.rPill),
+                ),
+                child: Text(
+                  '$count',
+                  style: TextStyle(
+                    fontSize: 10.5,
+                    fontWeight: FontWeight.w900,
+                    color: selected ? Colors.white : AppTheme.muted,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+  }
+
+  Future<void> _unarchiveRecord(ArchivedRecord row) async {
+    final ok = await confirmAction(
+      context,
+      title: 'إلغاء الأرشفة',
+      message: 'سيعود «${row.title}» إلى ${row.source}. هل تريد المتابعة؟',
+      confirmLabel: 'إلغاء الأرشفة',
+    );
+    if (!ok) return;
+    final done = await row.unarchive();
+    if (!mounted) return;
+    if (!done) {
+      _toast('تعذّر إلغاء الأرشفة');
+      return;
+    }
+    _toast('أُلغيت أرشفة «${row.title}»');
+    await _loadArchivedRecords();
+  }
+
+  /// حذف عنصر مؤرشف إلى سلة المهملات (وحدات العقارات).
+  Future<void> _trashArchivedRecord(ArchivedRecord row) async {
+    final move = row.moveToTrash;
+    if (move == null) return;
+    final ok = await confirmAction(
+      context,
+      title: 'حذف',
+      message: 'سيُنقل «${row.title}» إلى سلة المهملات، ومنها يمكن استعادته '
+          'أو حذفه نهائيًا. هل تريد المتابعة؟',
+      confirmLabel: 'حذف',
+      danger: true,
+    );
+    if (!ok) return;
+    final done = await move();
+    if (!mounted) return;
+    if (!done) {
+      _toast('تعذّر الحذف');
+      return;
+    }
+    _toast('نُقل «${row.title}» إلى سلة المهملات');
+    await _loadArchivedRecords();
+  }
+
+  /// بطاقة عنصر مؤرشف: أيقونة القسم، العنوان، القسم وتفاصيله، و«استعادة».
+  Widget _archivedRecordCard(ArchivedRecord row) {
+    return Container(
+      margin: const EdgeInsets.only(bottom: 10),
+      padding: const EdgeInsets.fromLTRB(12, 12, 10, 12),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(AppTheme.rInner),
+        border: Border.all(color: const Color(0xFFE6EEEC)),
+        boxShadow: [
+          BoxShadow(
+            color: const Color(0xFF022E2A).withValues(alpha: 0.05),
+            blurRadius: 10,
+            offset: const Offset(0, 3),
+          ),
+        ],
+      ),
+      child: Row(
+        textDirection: AppTr.uiDir,
+        children: [
+          Container(
+            width: 44,
+            height: 44,
+            decoration: BoxDecoration(
+              color: row.color.withValues(alpha: 0.12),
+              borderRadius: BorderRadius.circular(AppTheme.rIcon),
+            ),
+            child: Icon(row.icon, size: 21, color: row.color),
+          ),
+          const SizedBox(width: 11),
+          Expanded(
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                Text(
+                  row.title,
+                  maxLines: 3,
+                  style: const TextStyle(
+                    fontSize: 13.5,
+                    fontWeight: FontWeight.w900,
+                    color: AppTheme.title,
+                  ),
+                ),
+                const SizedBox(height: 5),
+                Row(
+                  children: [
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 8,
+                        vertical: 2,
+                      ),
+                      decoration: BoxDecoration(
+                        color: row.color.withValues(alpha: 0.10),
+                        borderRadius: BorderRadius.circular(AppTheme.rPill),
+                      ),
+                      child: Text(
+                        row.source,
+                        style: TextStyle(
+                          fontSize: 10,
+                          fontWeight: FontWeight.w800,
+                          color: row.color,
+                        ),
+                      ),
+                    ),
+                    if (row.subtitle.isNotEmpty) ...[
+                      const SizedBox(width: 6),
+                      Expanded(
+                        child: Text(
+                          row.subtitle,
+                          maxLines: 3,
+                          style: const TextStyle(
+                            fontSize: 11,
+                            fontWeight: FontWeight.w600,
+                            color: AppTheme.muted,
+                          ),
+                        ),
+                      ),
+                    ],
+                  ],
+                ),
+              ],
+            ),
+          ),
+          const SizedBox(width: 6),
+          if (row.moveToTrash != null)
+            IconButton(
+              tooltip: AppTr.tr('حذف'),
+              onPressed: () => _trashArchivedRecord(row),
+              icon: const Icon(
+                Icons.delete_outline_rounded,
+                color: AppTheme.danger,
+              ),
+            ),
+          TextButton.icon(
+            onPressed: () => _unarchiveRecord(row),
+            icon: const Icon(Icons.unarchive_outlined, size: 17),
+            label: const Text(
+              'استعادة',
+              style: TextStyle(fontSize: 11.5, fontWeight: FontWeight.w900),
+            ),
+            style: TextButton.styleFrom(
+              foregroundColor: _accent,
+              backgroundColor: AppTheme.brandSoft,
+              padding: const EdgeInsets.symmetric(horizontal: 10),
+              minimumSize: const Size(0, 36),
+              shape: RoundedRectangleBorder(
+                borderRadius: BorderRadius.circular(AppTheme.rPill),
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
   }
 
   @override
   void dispose() {
+    _reportsSearch.dispose();
+    _archivedSearch.dispose();
     super.dispose();
   }
 
@@ -2872,6 +3997,8 @@ class _ReportsArchiveHubPageState extends State<_ReportsArchiveHubPage> {
 
   /// عناصر تقرير/أرشيف بعينه = ما يطابق اختياره المحفوظ.
   List<SummaryItem> _reportItems(_GeneratedReport report) {
+    final filter = report.filter;
+    if (filter != null) return applyReportFilter(_items, filter);
     final selection = report.selection;
     if (selection == null) return const [];
     return _items.where(selection.matches).toList(growable: false);
@@ -2955,53 +4082,118 @@ class _ReportsArchiveHubPageState extends State<_ReportsArchiveHubPage> {
         buffer.writeln(line);
       }
     }
+    final filter = report.filter;
+    if (filter != null) {
+      for (final (label, value) in filter.describe()) {
+        buffer.writeln('$label: $value');
+      }
+      final items = _reportItems(report);
+      buffer
+        ..writeln('')
+        ..writeln('عدد العناصر: ${items.length}');
+      for (final item in items) {
+        final amount = item.amount == 0
+            ? ''
+            : ' — ${reportAmount(item.amount)} ${AppSettings.currencySuffix}';
+        final date = item.date == null ? '' : ' — ${_formatDate(item.date!)}';
+        buffer.writeln('• ${item.title}$amount$date');
+      }
+    }
     return buffer.toString();
   }
 
   // ===== إجراءات التقارير =====
 
-  /// يفتح قالب الاختيار الموحّد (نفس تسلسل الملخص الشامل) ثم ينشئ منه
-  /// تقريرًا أو عنصر أرشيف حقيقيًا.
-  Future<void> _openScopeBuilder({required bool archive}) async {
-    final kind = archive ? 'الأرشيف' : 'التقرير';
-    final selection = await showScopeBuilderSheet(
-      context: context,
-      kind: kind,
-      accent: _accent,
-      items: _items,
-      initial: archive ? _archiveSelection : _reportSelection,
-    );
-    if (selection == null || !mounted) return;
-    setState(() {
-      if (archive) {
-        _archiveSelection = selection;
-      } else {
-        _reportSelection = selection;
-      }
-    });
-
-    var reason = '';
-    if (archive) {
-      reason = await _askArchiveReason() ?? '';
-      if (!mounted) return;
+  /// فلتر الصفحة الرئيسية نفسه (الأقسام ← فلتر القسم)، وفي آخره عنوان
+  /// التقرير وكلمة البحث (وسبب الأرشفة)، ثم زر «إنشاء تقرير» / «إنشاء
+  /// أرشيف». بعد الإنشاء تُفتح معاينة الملف مباشرة.
+  Future<void> _openReportFilter({required bool archive}) async {
+    if (_loadingItems) {
+      _toast('جارٍ تحميل البيانات...');
+      return;
     }
+    final titleCtrl = TextEditingController();
+    final queryCtrl = TextEditingController();
+    final reasonCtrl = TextEditingController();
+    String? pickedModule;
+    AppFilterValues? pickedValues;
+    await showAppFilterSheet(
+      context: context,
+      title: archive ? 'البحث في الأرشيف' : 'إنشاء تقرير',
+      icon: archive ? Icons.manage_search_rounded : Icons.description_outlined,
+      accent: _accent,
+      values: AppFilterValues(),
+      sections: const [],
+      onApply: (_) {},
+      modules: kReportModules,
+      initialModule: 'الكل',
+      moduleConfigFor: _reportModuleConfigFor,
+      // في الأرشيف الزر «ابحث»: النتيجة تُحفظ في ملفات الأرشيف وتُفتح.
+      applyLabel: archive ? 'ابحث' : 'إنشاء تقرير',
+      applyIcon: archive ? Icons.search_rounded : Icons.picture_as_pdf_rounded,
+      extraFieldsLabel: archive ? 'بيانات الأرشيف' : 'بيانات التقرير',
+      extraFields: [
+        _sheetField(
+          titleCtrl,
+          archive ? 'عنوان الأرشيف (اختياري)' : 'عنوان التقرير (اختياري)',
+          Icons.title_rounded,
+        ),
+        _sheetField(
+          queryCtrl,
+          'كلمة بحث داخل البيانات (اختياري)',
+          Icons.search_rounded,
+        ),
+        if (archive)
+          _sheetField(
+            reasonCtrl,
+            'سبب الأرشفة (اختياري)',
+            Icons.notes_rounded,
+          ),
+      ],
+      onApplyModule: (chosenModule, chosenValues) {
+        pickedModule = chosenModule;
+        pickedValues = chosenValues;
+      },
+    );
+    final typedTitle = titleCtrl.text.trim();
+    final query = queryCtrl.text.trim();
+    final reason = reasonCtrl.text.trim();
+    // التخلّص بعد انتهاء حركة الإغلاق، وإلا استُعملت المتحكّمات بعد تحريرها.
+    Future.delayed(const Duration(milliseconds: 600), () {
+      titleCtrl.dispose();
+      queryCtrl.dispose();
+      reasonCtrl.dispose();
+    });
+    final module = pickedModule;
+    final values = pickedValues;
+    if (module == null || values == null || !mounted) return;
 
-    final title = selection.title.trim().isEmpty
-        ? '$kind ${selection.scope}'
-        : selection.title.trim();
+    final filter = ReportFilter(module: module, values: values, query: query);
+    final kind = archive ? 'أرشيف' : 'تقرير';
+    final now = DateTime.now();
+    final category =
+        values.mainCategory != 'الكل' && values.mainCategory != module
+        ? ' · ${values.mainCategory}'
+        : '';
     final report = _GeneratedReport(
-      id: DateTime.now().microsecondsSinceEpoch.toString(),
-      title: title,
-      type: selection.scope,
-      subject: selection.sections.join('، '),
-      mode: archive ? 'أرشيف' : 'تقرير',
-      fromDate: selection.from,
-      toDate: selection.to,
-      dataFields: selection.sections.toList(growable: false),
+      id: now.microsecondsSinceEpoch.toString(),
+      title: typedTitle.isEmpty
+          ? '$kind ${module == 'الكل' ? 'شامل' : module}$category'
+          : typedTitle,
+      type: module,
+      subject: filter
+          .describe()
+          .skip(1)
+          .map((entry) => '${entry.$1}: ${entry.$2}')
+          .join('، '),
+      mode: kind,
+      fromDate: values.dateFrom,
+      toDate: values.dateTo,
+      dataFields: const [],
       createdBy: AppSettings.instance.name,
-      createdAt: DateTime.now(),
-      selection: selection,
-      archivedAt: archive ? DateTime.now() : null,
+      createdAt: now,
+      filter: filter,
+      archivedAt: archive ? now : null,
       archiveReason: archive ? reason : '',
     );
     setState(() {
@@ -3013,7 +4205,107 @@ class _ReportsArchiveHubPageState extends State<_ReportsArchiveHubPage> {
     });
     await _persist();
     if (!mounted) return;
-    _toast(archive ? 'تمت إضافة العنصر إلى الأرشيف' : 'تم إنشاء التقرير');
+    _toast(
+      archive ? 'حُفظت نتيجة البحث في ملفات الأرشيف' : 'تم إنشاء التقرير',
+    );
+    _showReportPreview(report);
+  }
+
+  /// حقل كتابة داخل ورقة الفلتر (العنوان، كلمة البحث، سبب الأرشفة).
+  Widget _sheetField(
+    TextEditingController controller,
+    String hint,
+    IconData icon,
+  ) {
+    return TextField(
+      controller: controller,
+      textDirection: AppTr.uiDir,
+      style: const TextStyle(
+        fontSize: 13,
+        fontWeight: FontWeight.w700,
+        color: AppTheme.title,
+      ),
+      decoration: InputDecoration(
+        isDense: true,
+        hintText: AppTr.tr(hint),
+        hintStyle: const TextStyle(
+          fontSize: 12,
+          fontWeight: FontWeight.w600,
+          color: AppTheme.muted,
+        ),
+        prefixIcon: Icon(icon, size: 19, color: AppTheme.muted),
+        filled: true,
+        fillColor: AppTheme.field,
+        contentPadding: const EdgeInsets.symmetric(
+          horizontal: 12,
+          vertical: 13,
+        ),
+        border: OutlineInputBorder(
+          borderRadius: BorderRadius.circular(AppTheme.rField),
+          borderSide: BorderSide.none,
+        ),
+      ),
+    );
+  }
+
+  /// مستند التقرير/الأرشيف كما يُعرض ويُطبع ويُشارك.
+  ReportDocument _documentFor(_GeneratedReport report) {
+    final archived = report.archivedAt != null || report.mode == 'أرشيف';
+    final criteria =
+        report.filter?.describe() ??
+        <(String, String)>[
+          ('القسم', report.selection?.scope ?? report.type),
+          if (report.subject.isNotEmpty) ('الأقسام', report.subject),
+          if (report.fromDate != null || report.toDate != null)
+            (
+              'الفترة',
+              '${report.fromDate == null ? '—' : _formatDate(report.fromDate!)}'
+                  ' ← '
+                  '${report.toDate == null ? '—' : _formatDate(report.toDate!)}',
+            ),
+        ];
+    final digits = report.id.length > 6
+        ? report.id.substring(report.id.length - 6)
+        : report.id;
+    return ReportDocument(
+      title: report.title,
+      archive: archived,
+      reference: '${archived ? 'AR' : 'RP'}-$digits',
+      createdAt: report.createdAt,
+      createdBy: report.createdBy.trim().isEmpty
+          ? AppSettings.instance.name
+          : report.createdBy,
+      criteria: criteria,
+      items: _reportItems(report),
+      archivedAt: report.archivedAt,
+      archiveReason: report.archiveReason,
+    );
+  }
+
+  /// هل يمكن بناء محتوى هذا التقرير الآن؟ (البيانات محمّلة ومعاييره محفوظة)
+  bool _canBuild(_GeneratedReport report) {
+    if (_loadingItems) {
+      _toast('جارٍ تحميل البيانات...');
+      return false;
+    }
+    if (report.filter == null && report.selection == null) {
+      _toast(
+        'هذا التقرير أُنشئ بنسخة سابقة بلا معايير محفوظة — أنشئ تقريرًا جديدًا.',
+      );
+      return false;
+    }
+    return true;
+  }
+
+  Future<void> _printReport(_GeneratedReport report) async {
+    if (!_canBuild(report)) return;
+    if (!PlanGate.hasFeature(context, PlanFeatures.pdf)) return;
+    try {
+      await printReportDocument(_documentFor(report));
+    } catch (_) {
+      if (!mounted) return;
+      _toast('تعذّر فتح الطباعة');
+    }
   }
 
   /// سبب الأرشفة — يظهر لاحقًا في بطاقة العنصر المؤرشف.
@@ -3046,7 +4338,8 @@ class _ReportsArchiveHubPageState extends State<_ReportsArchiveHubPage> {
         ),
       ),
     );
-    controller.dispose();
+    // التخلّص بعد انتهاء حركة الإغلاق، وإلا استُعمل المتحكّم بعد تحريره.
+    Future.delayed(const Duration(milliseconds: 600), controller.dispose);
     return reason;
   }
 
@@ -3093,7 +4386,7 @@ class _ReportsArchiveHubPageState extends State<_ReportsArchiveHubPage> {
               onPressed: () => Navigator.of(dialogContext).pop(true),
               child: const Text(
                 'حذف',
-                style: TextStyle(color: Color(0xFFEF4444)),
+                style: TextStyle(color: Color(0xFFD95A4E)),
               ),
             ),
           ],
@@ -3114,9 +4407,19 @@ class _ReportsArchiveHubPageState extends State<_ReportsArchiveHubPage> {
   /// الإرسال أو الطباعة من التطبيق الذي يختاره المستخدم). كانت أزرار
   /// "طباعة" و"تصدير PDF" سابقًا تعرض رسالة نجاح دون تنفيذ أي شيء.
   Future<void> _shareReport(_GeneratedReport report) async {
+    if (!_canBuild(report)) return;
+    if (!PlanGate.hasFeature(context, PlanFeatures.pdf)) return;
     // على الأجهزة اللوحية تحتاج قائمة المشاركة موضع انطلاق وإلا فشل النداء،
     // بنفس ما تفعله بقية مواضع المشاركة في هذا الملف.
     final box = context.findRenderObject() as RenderBox?;
+    try {
+      // ملف PDF بتصميم التقرير — يُرسل عبر واتساب أو البريد أو يُحفظ.
+      await shareReportDocument(_documentFor(report));
+      return;
+    } catch (_) {
+      // احتياط: إن تعذّر بناء الملف على هذا الجهاز تُشارك نسخة نصية.
+    }
+    if (!mounted) return;
     try {
       await SharePlus.instance.share(
         ShareParams(
@@ -3139,6 +4442,8 @@ class _ReportsArchiveHubPageState extends State<_ReportsArchiveHubPage> {
         _showReportPreview(report);
       case 'share':
         _shareReport(report);
+      case 'print':
+        _printReport(report);
       case 'archive':
         _archiveReport(report);
       case 'restore':
@@ -3149,128 +4454,13 @@ class _ReportsArchiveHubPageState extends State<_ReportsArchiveHubPage> {
   }
 
   void _showReportPreview(_GeneratedReport report) {
-    final selection = report.selection;
-    final matched = _reportItems(report);
-    showModalBottomSheet<void>(
-      context: context,
-      isScrollControlled: true,
-      backgroundColor: Colors.white,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(AppTheme.rCard)),
+    if (!_canBuild(report)) return;
+    Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => ReportPreviewScreen(document: _documentFor(report)),
       ),
-      builder: (sheetContext) {
-        return Directionality(
-          textDirection: AppTr.uiDir,
-          child: DraggableScrollableSheet(
-            expand: false,
-            initialChildSize: 0.75,
-            maxChildSize: 0.95,
-            builder: (_, scrollController) => Column(
-              children: [
-                const SizedBox(height: 10),
-                Container(
-                  width: 42,
-                  height: 4,
-                  decoration: BoxDecoration(
-                    color: const Color(0xFFE2E8F0),
-                    borderRadius: BorderRadius.circular(99),
-                  ),
-                ),
-                Expanded(
-                  child: ListView(
-                    controller: scrollController,
-                    padding: const EdgeInsets.fromLTRB(18, 14, 18, 20),
-                    children: [
-                      Text(
-                        report.title,
-                        style: const TextStyle(
-                          fontSize: 17,
-                          fontWeight: FontWeight.w900,
-                          color: Color(0xFF0F172A),
-                        ),
-                      ),
-                      const SizedBox(height: 6),
-                      Text(
-                        '${report.type} • ${_formatDate(report.createdAt)}',
-                        style: const TextStyle(
-                          fontSize: 12,
-                          fontWeight: FontWeight.w700,
-                          color: Color(0xFF64748B),
-                        ),
-                      ),
-                      if (report.subject.isNotEmpty) ...[
-                        const SizedBox(height: 3),
-                        Text(
-                          'الموضوع: ${report.subject}',
-                          style: const TextStyle(
-                            fontSize: 12,
-                            fontWeight: FontWeight.w600,
-                            color: Color(0xFF64748B),
-                          ),
-                        ),
-                      ],
-                      if (report.fromDate != null || report.toDate != null) ...[
-                        const SizedBox(height: 3),
-                        Text(
-                          'الفترة: ${report.fromDate == null ? '—' : _formatDate(report.fromDate!)} إلى ${report.toDate == null ? '—' : _formatDate(report.toDate!)}',
-                          style: const TextStyle(
-                            fontSize: 12,
-                            fontWeight: FontWeight.w600,
-                            color: Color(0xFF64748B),
-                          ),
-                        ),
-                      ],
-                      const SizedBox(height: 14),
-                      if (_loadingItems)
-                        const Padding(
-                          padding: EdgeInsets.symmetric(vertical: 24),
-                          child: Center(child: CircularProgressIndicator()),
-                        )
-                      else if (selection == null)
-                        const Text(
-                          'هذا التقرير أُنشئ بنسخة سابقة بلا معايير محفوظة — أنشئ تقريرًا جديدًا لعرض محتواه.',
-                          style: TextStyle(
-                            fontSize: 12.5,
-                            height: 1.5,
-                            fontWeight: FontWeight.w700,
-                            color: Color(0xFF64748B),
-                          ),
-                        )
-                      else
-                        ScopeResultView(
-                          selection: selection,
-                          items: matched,
-                          accent: _accent,
-                        ),
-                      const SizedBox(height: 10),
-                      const SizedBox(height: 6),
-                      FilledButton.icon(
-                        onPressed: () {
-                          Navigator.of(sheetContext).pop();
-                          _shareReport(report);
-                        },
-                        icon: const Icon(Icons.ios_share_rounded, size: 18),
-                        label: const Text('مشاركة / تصدير التقرير'),
-                        style: FilledButton.styleFrom(
-                          backgroundColor: _accent,
-                          minimumSize: const Size.fromHeight(46),
-                          shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(AppTheme.rField),
-        ),
-                        ),
-                      ),
-                    ],
-                  ),
-                ),
-              ],
-            ),
-          ),
-        );
-      },
     );
   }
-
-
 
   // ===== عناصر الواجهة =====
 
@@ -3284,7 +4474,7 @@ class _ReportsArchiveHubPageState extends State<_ReportsArchiveHubPage> {
             height: 17,
             decoration: BoxDecoration(
               color: _accent,
-              borderRadius: BorderRadius.circular(99),
+              borderRadius: BorderRadius.circular(999),
             ),
           ),
           const SizedBox(width: 8),
@@ -3292,19 +4482,23 @@ class _ReportsArchiveHubPageState extends State<_ReportsArchiveHubPage> {
             child: Text(
               text,
               style: const TextStyle(
-                fontSize: 14.5,
+                fontSize: 15,
                 fontWeight: FontWeight.w900,
-                color: Color(0xFF0F172A),
+                color: Color(0xFF022E2A),
               ),
             ),
           ),
           if (trailing != null)
-            Text(
-              trailing,
-              style: const TextStyle(
-                fontSize: 11.5,
-                fontWeight: FontWeight.w700,
-                color: Color(0xFF94A3B8),
+            Flexible(
+              child: Text(
+                trailing,
+                textAlign: AppTr.alignEnd,
+                maxLines: 2,
+                style: const TextStyle(
+                  fontSize: 11,
+                  fontWeight: FontWeight.w700,
+                  color: Color(0xFF8C9A97),
+                ),
               ),
             ),
         ],
@@ -3322,15 +4516,15 @@ class _ReportsArchiveHubPageState extends State<_ReportsArchiveHubPage> {
           ),
       child: Column(
         children: [
-          Icon(icon, size: 30, color: const Color(0xFFCBD5E1)),
+          Icon(icon, size: 30, color: const Color(0xFFD5DEDB)),
           const SizedBox(height: 10),
           Text(
             message,
             textAlign: TextAlign.center,
             style: const TextStyle(
-              fontSize: 12.5,
+              fontSize: 12,
               fontWeight: FontWeight.w700,
-              color: Color(0xFF94A3B8),
+              color: Color(0xFF8C9A97),
             ),
           ),
         ],
@@ -3381,35 +4575,34 @@ class _ReportsArchiveHubPageState extends State<_ReportsArchiveHubPage> {
                         children: [
                           Text(
                             report.title,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
+                            maxLines: 3,
                             style: const TextStyle(
-                              fontSize: 14,
+                              fontSize: 13,
                               fontWeight: FontWeight.w900,
-                              color: Color(0xFF0F172A),
+                              color: Color(0xFF022E2A),
                             ),
                           ),
                           const SizedBox(height: 3),
                           Text(
                             '${report.type}  •  ${_formatDate(report.createdAt)}',
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
+                            maxLines: 3,
                             style: const TextStyle(
                               fontSize: 11,
                               fontWeight: FontWeight.w600,
-                              color: Color(0xFF64748B),
+                              color: Color(0xFF5C6B68),
                             ),
                           ),
                           if (report.subject.isNotEmpty) ...[
                             const SizedBox(height: 2),
                             Text(
-                              'الأقسام: ${report.subject}',
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
+                              report.filter != null
+                                  ? report.subject
+                                  : 'الأقسام: ${report.subject}',
+                              maxLines: 3,
                               style: const TextStyle(
                                 fontSize: 11,
                                 fontWeight: FontWeight.w600,
-                                color: Color(0xFF94A3B8),
+                                color: Color(0xFF8C9A97),
                               ),
                             ),
                           ],
@@ -3419,23 +4612,21 @@ class _ReportsArchiveHubPageState extends State<_ReportsArchiveHubPage> {
                             const SizedBox(height: 2),
                             Text(
                               'تاريخ الأرشفة: ${report.archivedAt == null ? '—' : _formatDate(report.archivedAt!)}',
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
+                              maxLines: 3,
                               style: const TextStyle(
                                 fontSize: 11,
                                 fontWeight: FontWeight.w600,
-                                color: Color(0xFF94A3B8),
+                                color: Color(0xFF8C9A97),
                               ),
                             ),
                             const SizedBox(height: 2),
                             Text(
                               'سبب الأرشفة: ${report.archiveReason.isEmpty ? 'غير محدد' : report.archiveReason}',
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
+                              maxLines: 3,
                               style: const TextStyle(
                                 fontSize: 11,
                                 fontWeight: FontWeight.w600,
-                                color: Color(0xFF94A3B8),
+                                color: Color(0xFF8C9A97),
                               ),
                             ),
                           ],
@@ -3450,33 +4641,33 @@ class _ReportsArchiveHubPageState extends State<_ReportsArchiveHubPage> {
                       ),
                       decoration: BoxDecoration(
                         color: (archived
-                                ? const Color(0xFF64748B)
-                                : const Color(0xFF10B981))
+                                ? const Color(0xFF5C6B68)
+                                : const Color(0xFF34A894))
                             .withValues(alpha: 0.12),
-                        borderRadius: BorderRadius.circular(99),
+                        borderRadius: BorderRadius.circular(999),
                       ),
                       child: Text(
                         archived ? 'مؤرشف' : 'نشط',
                         style: TextStyle(
-                          fontSize: 10.5,
+                          fontSize: 10,
                           fontWeight: FontWeight.w800,
                           color: archived
-                              ? const Color(0xFF64748B)
-                              : const Color(0xFF059669),
+                              ? const Color(0xFF5C6B68)
+                              : const Color(0xFF178F7B),
                         ),
                       ),
                     ),
                   ],
                 ),
                 const SizedBox(height: 10),
-                const Divider(height: 1, color: Color(0xFFF1F5F9)),
+                const Divider(height: 1, color: Color(0xFFF2F6F5)),
                 const SizedBox(height: 8),
                 Row(
                   children: [
                     const Icon(
                       Icons.list_alt_rounded,
                       size: 14,
-                      color: Color(0xFF94A3B8),
+                      color: Color(0xFF8C9A97),
                     ),
                     const SizedBox(width: 4),
                     Text(
@@ -3484,7 +4675,7 @@ class _ReportsArchiveHubPageState extends State<_ReportsArchiveHubPage> {
                       style: const TextStyle(
                         fontSize: 11,
                         fontWeight: FontWeight.w700,
-                        color: Color(0xFF94A3B8),
+                        color: Color(0xFF8C9A97),
                       ),
                     ),
                     const Spacer(),
@@ -3504,7 +4695,7 @@ class _ReportsArchiveHubPageState extends State<_ReportsArchiveHubPage> {
                       icon: const Icon(
                         Icons.ios_share_rounded,
                         size: 18,
-                        color: Color(0xFF64748B),
+                        color: Color(0xFF5C6B68),
                       ),
                     ),
                     PopupMenuButton<String>(
@@ -3512,11 +4703,15 @@ class _ReportsArchiveHubPageState extends State<_ReportsArchiveHubPage> {
                       icon: const Icon(
                         Icons.more_horiz_rounded,
                         size: 20,
-                        color: Color(0xFF64748B),
+                        color: Color(0xFF5C6B68),
                       ),
                       onSelected: (value) =>
                           _handleReportAction(report, value),
                       itemBuilder: (context) => [
+                        const PopupMenuItem(
+                          value: 'print',
+                          child: Text('طباعة'),
+                        ),
                         if (archived)
                           const PopupMenuItem(
                             value: 'restore',
@@ -3531,7 +4726,7 @@ class _ReportsArchiveHubPageState extends State<_ReportsArchiveHubPage> {
                           value: 'delete',
                           child: Text(
                             archived ? 'حذف نهائي' : 'حذف',
-                            style: const TextStyle(color: Color(0xFFEF4444)),
+                            style: const TextStyle(color: Color(0xFFD95A4E)),
                           ),
                         ),
                       ],
@@ -3546,66 +4741,342 @@ class _ReportsArchiveHubPageState extends State<_ReportsArchiveHubPage> {
     );
   }
 
-  Widget _buildReportsTab() {
-    return ListView(
-      padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
-      children: [
-        _buildScopeIntroCard(
-          icon: Icons.description_outlined,
-          title: 'إنشاء تقرير جديد',
-          subtitle:
-              'اختر القسم ثم الأقسام المطلوب إظهارها وصفِّ عناصرك بالتاريخ والحالة.',
-          buttonLabel: 'إنشاء تقرير جديد',
-          onPressed: _loadingItems
-              ? null
-              : () => _openScopeBuilder(archive: false),
-        ),
-        const SizedBox(height: 20),
-        _sectionTitle(
-          'آخر التقارير المنشأة',
-          trailing: _recentReports.isEmpty ? null : '${_recentReports.length}',
-        ),
-        if (_recentReports.isEmpty)
-          _emptyCard(
-            Icons.description_outlined,
-            'لا توجد تقارير منشأة بعد.\nابدأ من زر "إنشاء تقرير جديد" في الأعلى.',
-          )
-        else
-          ..._recentReports.map(
-            (report) => _buildReportRow(report, archived: false),
-          ),
-      ],
+  bool _reportMatchesSearch(_GeneratedReport report, String query) =>
+      query.isEmpty ||
+      matchesSearchQuery(
+        query: query,
+        fields: [
+          report.title,
+          report.type,
+          report.subject,
+          report.archiveReason,
+          _formatDate(report.createdAt),
+        ],
+      );
+
+  /// فلتر القائمة: الأحدث أولًا دائمًا، مقصورًا على الفترة المختارة.
+  List<_GeneratedReport> _applyListFilter(
+    Iterable<_GeneratedReport> reports,
+    String filter,
+    DateTimeRange? range,
+  ) {
+    final today = DateUtils.dateOnly(DateTime.now());
+    final from = switch (filter) {
+      'آخر أسبوع' => today.subtract(const Duration(days: 7)),
+      'آخر شهر' => DateTime(today.year, today.month - 1, today.day),
+      'مخصص' => range?.start,
+      _ => null,
+    };
+    final to = filter == 'مخصص' ? range?.end : null;
+    return _newestFirst(
+      reports.where((report) {
+        final day = DateUtils.dateOnly(report.archivedAt ?? report.createdAt);
+        if (from != null && day.isBefore(DateUtils.dateOnly(from))) {
+          return false;
+        }
+        if (to != null && day.isAfter(DateUtils.dateOnly(to))) return false;
+        return true;
+      }),
     );
   }
 
-  /// بطاقة تمهيدية موحّدة أعلى صفحتَي التقارير والأرشيف: عنوان وشرح وزر
-  /// واحد يفتح قالب الاختيار.
-  Widget _buildScopeIntroCard({
+  /// «ابحث في الفلتر أعلاه…» — سطر واحد صغير رمادي.
+  Widget _searchHintLine() => const Padding(
+    padding: EdgeInsets.only(bottom: 8),
+    child: Text(
+      'ابحث في الفلتر أعلاه للوصول إلى ما تحتاجه',
+      maxLines: 3,
+      style: TextStyle(
+        fontSize: 11,
+        fontWeight: FontWeight.w600,
+        color: AppTheme.muted,
+      ),
+    ),
+  );
+
+  /// عنوان قائمة بخط عمودي ملوّن وعددها — بلا فلتر.
+  Widget _plainListTitle(String title, int count) => Padding(
+    padding: const EdgeInsets.only(bottom: 10),
+    child: Row(
+      children: [
+        Container(
+          width: 4,
+          height: 17,
+          decoration: BoxDecoration(
+            color: _accent,
+            borderRadius: BorderRadius.circular(999),
+          ),
+        ),
+        const SizedBox(width: 8),
+        Expanded(
+          child: Text(
+            '${AppTr.tr(title)} ($count)',
+            maxLines: 3,
+            style: const TextStyle(
+              fontSize: 15,
+              fontWeight: FontWeight.w900,
+              color: Color(0xFF022E2A),
+            ),
+          ),
+        ),
+      ],
+    ),
+  );
+
+  /// زر فلتر الفترة: الأحدث أولاً، آخر أسبوع، آخر شهر، مخصص.
+  Widget _periodFilterButton({
+    required String value,
+    required DateTimeRange? range,
+    required void Function(String value, DateTimeRange? range) onChanged,
+    bool tall = false,
+  }) {
+    final label = value == 'مخصص' && range != null
+        ? '${_formatDate(range.start)} - ${_formatDate(range.end)}'
+        : value;
+    return PopupMenuButton<String>(
+      tooltip: AppTr.tr('الفترة'),
+      onSelected: (selected) async {
+        if (selected != 'مخصص') {
+          onChanged(selected, null);
+          return;
+        }
+        final now = DateTime.now();
+        final picked = await showDateRangePicker(
+          context: context,
+          firstDate: DateTime(2000),
+          lastDate: DateTime(now.year + 1),
+          initialDateRange:
+              range ??
+              DateTimeRange(
+                start: now.subtract(const Duration(days: 30)),
+                end: now,
+              ),
+        );
+        if (picked == null || !mounted) return;
+        onChanged('مخصص', picked);
+      },
+      itemBuilder: (context) => [
+        for (final option in _listFilters)
+          PopupMenuItem(
+            value: option,
+            child: Text(
+              option,
+              style: TextStyle(
+                fontWeight: option == value ? FontWeight.w900 : FontWeight.w600,
+                color: option == value ? _accent : AppTheme.title,
+              ),
+            ),
+          ),
+      ],
+      child: Container(
+        height: tall ? 46 : null,
+        padding: EdgeInsets.symmetric(horizontal: 10, vertical: tall ? 0 : 6),
+        decoration: BoxDecoration(
+          color: AppTheme.field,
+          borderRadius: BorderRadius.circular(
+            tall ? AppTheme.rField : AppTheme.rPill,
+          ),
+          border: Border.all(color: AppTheme.hairline),
+        ),
+        child: Row(
+          mainAxisSize: MainAxisSize.min,
+          children: [
+            const Icon(Icons.filter_list_rounded, size: 16, color: _accent),
+            const SizedBox(width: 4),
+            Text(
+              label,
+              style: const TextStyle(
+                fontSize: 11,
+                fontWeight: FontWeight.w800,
+                color: _accent,
+              ),
+            ),
+            const Icon(
+              Icons.keyboard_arrow_down_rounded,
+              size: 16,
+              color: _accent,
+            ),
+          ],
+        ),
+      ),
+    );
+  }
+
+  /// قسم ملف الأرشيف (لرقائق الأقسام): من القسم الذي اختير في فلتره.
+  String? _archiveSourceOf(_GeneratedReport report) {
+    final module = report.filter?.module ?? report.type;
+    return switch (module) {
+      'الالتزامات الشخصية' => ArchiveCenter.personalSource,
+      'الالتزامات المشتركة' => ArchiveCenter.sharedSource,
+      'الأفراد والجهات' => ArchiveCenter.peopleSource,
+      'العقارات' ||
+      'الأنشطة التجارية' ||
+      'المركبات ووسائل النقل' ||
+      'آليات ومعدات' => ArchiveCenter.assetsSource,
+      _ => null,
+    };
+  }
+
+  /// عنوان القائمة يمينًا، وفلتر الفترة يسارًا في السطر نفسه.
+  Widget _listHeader({
+    required String title,
+    required int count,
+    required String value,
+    required DateTimeRange? range,
+    required void Function(String value, DateTimeRange? range) onChanged,
+  }) {
+    final label = value == 'مخصص' && range != null
+        ? '${_formatDate(range.start)} - ${_formatDate(range.end)}'
+        : value;
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 10),
+      child: Row(
+        children: [
+          Container(
+            width: 4,
+            height: 17,
+            decoration: BoxDecoration(
+              color: _accent,
+              borderRadius: BorderRadius.circular(999),
+            ),
+          ),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              '$title ($count)',
+              maxLines: 3,
+              style: const TextStyle(
+                fontSize: 15,
+                fontWeight: FontWeight.w900,
+                color: Color(0xFF022E2A),
+              ),
+            ),
+          ),
+          PopupMenuButton<String>(
+            tooltip: AppTr.tr('الفترة'),
+            onSelected: (selected) async {
+              if (selected != 'مخصص') {
+                onChanged(selected, null);
+                return;
+              }
+              final now = DateTime.now();
+              final picked = await showDateRangePicker(
+                context: context,
+                firstDate: DateTime(2000),
+                lastDate: DateTime(now.year + 1),
+                initialDateRange:
+                    range ??
+                    DateTimeRange(
+                      start: now.subtract(const Duration(days: 30)),
+                      end: now,
+                    ),
+              );
+              if (picked == null || !mounted) return;
+              onChanged('مخصص', picked);
+            },
+            itemBuilder: (context) => [
+              for (final option in _listFilters)
+                PopupMenuItem(
+                  value: option,
+                  child: Text(
+                    option,
+                    style: TextStyle(
+                      fontWeight: option == value
+                          ? FontWeight.w900
+                          : FontWeight.w600,
+                      color: option == value ? _accent : AppTheme.title,
+                    ),
+                  ),
+                ),
+            ],
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 6),
+              decoration: BoxDecoration(
+                color: AppTheme.field,
+                borderRadius: BorderRadius.circular(AppTheme.rPill),
+                border: Border.all(color: AppTheme.hairline),
+              ),
+              child: Row(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Icon(
+                    Icons.filter_list_rounded,
+                    size: 16,
+                    color: _accent,
+                  ),
+                  const SizedBox(width: 4),
+                  Text(
+                    label,
+                    style: const TextStyle(
+                      fontSize: 11,
+                      fontWeight: FontWeight.w800,
+                      color: _accent,
+                    ),
+                  ),
+                  const Icon(
+                    Icons.keyboard_arrow_down_rounded,
+                    size: 16,
+                    color: _accent,
+                  ),
+                ],
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  /// الأحدث أولًا (تاريخ الأرشفة للمؤرشف، وإلا تاريخ الإنشاء).
+  List<_GeneratedReport> _newestFirst(Iterable<_GeneratedReport> reports) =>
+      reports.toList()..sort(
+        (a, b) => (b.archivedAt ?? b.createdAt).compareTo(
+          a.archivedAt ?? a.createdAt,
+        ),
+      );
+
+  /// المستطيل الموحّد أعلى التبويب: العنوان والشرح، وزر الفلتر في زاويته،
+  /// وحقل البحث، وزر التنفيذ — البحث والفلتر والإنشاء من مكان واحد.
+  Widget _buildActionCard({
     required IconData icon,
     required String title,
     required String subtitle,
+    required TextEditingController controller,
+    required String hint,
     required String buttonLabel,
+    required IconData buttonIcon,
     required VoidCallback? onPressed,
+    List<Widget> footer = const [],
+    Widget? searchTrailing,
   }) {
     return Container(
       padding: const EdgeInsets.all(14),
       decoration: BoxDecoration(
-        color: AppTheme.surface,
-        borderRadius: BorderRadius.circular(AppTheme.rField),
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(AppTheme.rCard),
+        border: Border.all(color: const Color(0xFFE6EEEC)),
+        boxShadow: [
+          BoxShadow(
+            color: const Color(0xFF022E2A).withValues(alpha: 0.07),
+            blurRadius: 16,
+            offset: const Offset(0, 5),
+          ),
+        ],
       ),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           Row(
+            crossAxisAlignment: CrossAxisAlignment.start,
             children: [
               Container(
-                width: 38,
-                height: 38,
+                width: 40,
+                height: 40,
                 decoration: BoxDecoration(
                   color: _accent.withValues(alpha: 0.12),
                   borderRadius: BorderRadius.circular(12),
                 ),
-                child: Icon(icon, size: 19, color: _accent),
+                child: Icon(icon, size: 20, color: _accent),
               ),
               const SizedBox(width: 10),
               Expanded(
@@ -3617,7 +5088,7 @@ class _ReportsArchiveHubPageState extends State<_ReportsArchiveHubPage> {
                       style: const TextStyle(
                         fontSize: 14,
                         fontWeight: FontWeight.w900,
-                        color: Color(0xFF0F172A),
+                        color: Color(0xFF022E2A),
                       ),
                     ),
                     const SizedBox(height: 3),
@@ -3627,7 +5098,7 @@ class _ReportsArchiveHubPageState extends State<_ReportsArchiveHubPage> {
                         fontSize: 11,
                         height: 1.4,
                         fontWeight: FontWeight.w600,
-                        color: Color(0xFF64748B),
+                        color: Color(0xFF5C6B68),
                       ),
                     ),
                   ],
@@ -3636,56 +5107,256 @@ class _ReportsArchiveHubPageState extends State<_ReportsArchiveHubPage> {
             ],
           ),
           const SizedBox(height: 12),
-          FilledButton.icon(
-            onPressed: onPressed,
-            icon: const Icon(Icons.add_rounded, size: 18),
-            label: Text(
-              onPressed == null ? 'جارٍ تحميل البيانات...' : buttonLabel,
-              style: const TextStyle(fontWeight: FontWeight.w900),
+          Row(
+            textDirection: AppTr.uiDir,
+            children: [
+              Expanded(child: TextField(
+            controller: controller,
+            textDirection: AppTr.uiDir,
+            onChanged: (_) => setState(() {}),
+            style: const TextStyle(
+              fontSize: 13,
+              fontWeight: FontWeight.w700,
+              color: AppTheme.title,
             ),
-            style: FilledButton.styleFrom(
-              backgroundColor: _accent,
-              foregroundColor: Colors.white,
-              minimumSize: const Size.fromHeight(48),
-              shape: RoundedRectangleBorder(
+            decoration: InputDecoration(
+              isDense: true,
+              hintText: AppTr.tr(hint),
+              hintStyle: const TextStyle(
+                fontSize: 12.5,
+                fontWeight: FontWeight.w600,
+                color: AppTheme.muted,
+              ),
+              prefixIcon: const Icon(
+                Icons.search_rounded,
+                size: 20,
+                color: AppTheme.muted,
+              ),
+              suffixIcon: controller.text.isEmpty
+                  ? null
+                  : IconButton(
+                      icon: const Icon(
+                        Icons.close_rounded,
+                        size: 18,
+                        color: AppTheme.muted,
+                      ),
+                      onPressed: () {
+                        controller.clear();
+                        setState(() {});
+                      },
+                    ),
+              filled: true,
+              fillColor: AppTheme.field,
+              contentPadding: const EdgeInsets.symmetric(
+                horizontal: 12,
+                vertical: 13,
+              ),
+              border: OutlineInputBorder(
                 borderRadius: BorderRadius.circular(AppTheme.rField),
+                borderSide: BorderSide.none,
               ),
             ),
+          )),
+              if (searchTrailing != null) ...[
+                const SizedBox(width: 8),
+                searchTrailing,
+              ],
+            ],
           ),
+          const SizedBox(height: 12),
+          // الزر وحده يفتح الفلتر — حُذفت علامة الفلتر المكررة بجانبه.
+          Row(
+            textDirection: AppTr.uiDir,
+            children: [
+              Expanded(
+                child: FilledButton.icon(
+                  onPressed: onPressed,
+                  icon: Icon(buttonIcon, size: 19),
+                  label: Text(
+                    onPressed == null ? 'جارٍ تحميل البيانات...' : buttonLabel,
+                    style: const TextStyle(fontWeight: FontWeight.w900),
+                  ),
+                  style: FilledButton.styleFrom(
+                    backgroundColor: _accent,
+                    foregroundColor: Colors.white,
+                    minimumSize: const Size.fromHeight(48),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(AppTheme.rField),
+                    ),
+                  ),
+                ),
+              ),
+            ],
+          ),
+          ...footer,
         ],
       ),
     );
   }
 
-  Widget _buildArchiveTab() {
+  Widget _buildReportsTab() {
+    final query = _reportsSearch.text.trim();
+    final reports = _applyListFilter(
+      _recentReports.where((report) => _reportMatchesSearch(report, query)),
+      _reportsListFilter,
+      _reportsRange,
+    );
     return ListView(
       padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
       children: [
-        _buildScopeIntroCard(
-          icon: Icons.inventory_2_outlined,
-          title: 'إستخراج أرشيف جديد',
+        _buildActionCard(
+          icon: Icons.description_outlined,
+          title: 'التقارير',
           subtitle:
-              'اختر القسم والأقسام والفترة، ثم استخرج العنصر إلى الأرشيف مع سبب الأرشفة.',
-          buttonLabel: 'إستخراج أرشيف جديد',
-          onPressed: _loadingItems ? null : () => _openScopeBuilder(archive: true),
+              'اختر القسم وفلتره كما في الصفحة الرئيسية، ثم «إنشاء تقرير» '
+              'لتحصل على ملف PDF جاهز للمشاركة والطباعة.',
+          controller: _reportsSearch,
+          hint: 'ابحث في التقارير',
+          buttonLabel: 'إنشاء تقرير',
+          buttonIcon: Icons.add_rounded,
+          onPressed: _loadingItems
+              ? null
+              : () => _openReportFilter(archive: false),
         ),
         const SizedBox(height: 20),
-        _sectionTitle(
-          'العناصر المؤرشفة',
-          trailing: _archivedReports.isEmpty
-              ? null
-              : '${_archivedReports.length}',
+        _searchHintLine(),
+        _listHeader(
+          title: 'التقارير المنجزة',
+          count: reports.length,
+          value: _reportsListFilter,
+          range: _reportsRange,
+          onChanged: (value, range) => setState(() {
+            _reportsListFilter = value;
+            _reportsRange = range;
+          }),
         ),
-        if (_archivedReports.isEmpty)
+        if (_recentReports.isEmpty)
           _emptyCard(
-            Icons.inventory_2_outlined,
-            'لا توجد عناصر مؤرشفة بعد.\nأنشئ أرشيفًا جديدًا أو أرشف تقريرًا من صفحة التقارير.',
+            Icons.description_outlined,
+            'لا توجد تقارير منشأة بعد.\nابدأ من زر "إنشاء تقرير" في الأعلى.',
+          )
+        else if (reports.isEmpty)
+          _emptyCard(
+            Icons.search_off_rounded,
+            'لا توجد تقارير تطابق البحث أو الفترة.',
           )
         else
-          ..._archivedReports.map(
-            (report) => _buildReportRow(report, archived: true),
+          ...reports.map(
+            (report) => _buildReportRow(report, archived: false),
           ),
       ],
+    );
+  }
+
+  Widget _buildArchiveTab() {
+    final query = _archivedSearch.text.trim();
+    final files = _applyListFilter(
+      _archivedReports.where((report) => _reportMatchesSearch(report, query)),
+      _archiveListFilter,
+      _archiveRange,
+    );
+    bool inSource(_GeneratedReport report, String source) =>
+        source == 'الكل' || _archiveSourceOf(report) == source;
+    final shownFiles = files
+        .where((report) => inSource(report, _archivedSource))
+        .toList(growable: false);
+    final rows = _visibleArchivedRecords;
+    int countOf(String source) =>
+        files.where((report) => inSource(report, source)).length +
+        _archivedRecords
+            .where(
+              (row) =>
+                  (source == 'الكل' || row.source == source) &&
+                  (query.isEmpty ||
+                      row.title.contains(query) ||
+                      row.subtitle.contains(query)),
+            )
+            .length;
+    return RefreshIndicator(
+      color: _accent,
+      onRefresh: _loadArchivedRecords,
+      child: ListView(
+        padding: const EdgeInsets.fromLTRB(16, 16, 16, 24),
+        children: [
+          // البحث وبجانبه فلتر الفترة، ثم زر «البحث في الأرشيف» وعلامة
+          // الفلتر — كلاهما يفتح نافذة الفلتر نفسها وزرّها الأخير «ابحث».
+          _buildActionCard(
+            icon: Icons.inventory_2_outlined,
+            title: 'الأرشيف',
+            subtitle:
+                'اختر القسم وفلتره كما في الصفحة الرئيسية ثم «ابحث»؛ تُحفظ '
+                'النتيجة ملفًا يمكن مشاركته وطباعته.',
+            controller: _archivedSearch,
+            hint: 'ابحث في الأرشيف',
+            searchTrailing: _periodFilterButton(
+              value: _archiveListFilter,
+              range: _archiveRange,
+              tall: true,
+              onChanged: (value, range) => setState(() {
+                _archiveListFilter = value;
+                _archiveRange = range;
+              }),
+            ),
+            buttonLabel: 'البحث في الأرشيف',
+            buttonIcon: Icons.manage_search_rounded,
+            onPressed: _loadingItems
+                ? null
+                : () => _openReportFilter(archive: true),
+            footer: [
+              const SizedBox(height: 8),
+              OutlinedButton.icon(
+                onPressed: _exportArchivedRecords,
+                icon: const Icon(Icons.picture_as_pdf_rounded, size: 18),
+                label: const Text(
+                  'تصدير المؤرشفات PDF',
+                  style: TextStyle(fontWeight: FontWeight.w900),
+                ),
+                style: OutlinedButton.styleFrom(
+                  foregroundColor: _accent,
+                  minimumSize: const Size.fromHeight(44),
+                  side: BorderSide(color: _accent.withValues(alpha: 0.4)),
+                  shape: RoundedRectangleBorder(
+                    borderRadius: BorderRadius.circular(AppTheme.rField),
+                  ),
+                ),
+              ),
+            ],
+          ),
+          const SizedBox(height: 22),
+          // الجملة مكان «ملفات الأرشيف»، وتحتها الأقسام؛ ملفات الأرشيف
+          // والمؤرشف من الأقسام في قائمة واحدة، كلٌّ تحت قسمه ومع «الكل».
+          _searchHintLine(),
+          _plainListTitle('ملفات الأرشيف', shownFiles.length + rows.length),
+          SizedBox(
+            height: 36,
+            child: ListView(
+              scrollDirection: Axis.horizontal,
+              children: [
+                for (final source in ['الكل', ...ArchiveCenter.sources])
+                  _archiveSourcePill(source, countOf(source)),
+              ],
+            ),
+          ),
+          const SizedBox(height: 12),
+          if (_loadingArchived && shownFiles.isEmpty)
+            const Padding(
+              padding: EdgeInsets.symmetric(vertical: 20),
+              child: Center(child: CircularProgressIndicator()),
+            )
+          else if (shownFiles.isEmpty && rows.isEmpty)
+            _emptyCard(
+              Icons.inventory_2_outlined,
+              query.isEmpty
+                  ? 'لا يوجد شيء مؤرشف في هذا القسم بعد.'
+                  : 'لا يوجد ما يطابق البحث في هذا القسم.',
+            )
+          else ...[
+            for (final report in shownFiles)
+              _buildReportRow(report, archived: true),
+            for (final row in rows) _archivedRecordCard(row),
+          ],
+        ],
+      ),
     );
   }
 
@@ -3717,11 +5388,11 @@ class _ReportsArchiveHubPageState extends State<_ReportsArchiveHubPage> {
               indicatorColor: _accent,
               indicatorWeight: 3,
               labelStyle: TextStyle(
-                fontSize: 13.5,
+                fontSize: 13,
                 fontWeight: FontWeight.w900,
               ),
               unselectedLabelStyle: TextStyle(
-                fontSize: 13.5,
+                fontSize: 13,
                 fontWeight: FontWeight.w700,
               ),
               tabs: [
@@ -3752,6 +5423,7 @@ class _GeneratedReport {
     required this.createdBy,
     required this.createdAt,
     this.selection,
+    this.filter,
     this.archivedAt,
     this.archiveReason = '',
   });
@@ -3772,6 +5444,9 @@ class _GeneratedReport {
   /// البيانات لا صورة ثابتة بلا مصدر.
   final ScopeSelection? selection;
 
+  /// معايير فلتر الصفحة الرئيسية (التقارير الجديدة) — بديل [selection].
+  final ReportFilter? filter;
+
   /// تاريخ الأرشفة وسببها — يظهران في بطاقة العنصر المؤرشف.
   final DateTime? archivedAt;
   final String archiveReason;
@@ -3789,6 +5464,7 @@ class _GeneratedReport {
         createdBy: createdBy,
         createdAt: createdAt,
         selection: selection,
+        filter: filter,
         archivedAt: archivedAt ?? this.archivedAt,
         archiveReason: archiveReason ?? this.archiveReason,
       );
@@ -3805,6 +5481,7 @@ class _GeneratedReport {
     'createdBy': createdBy,
     'createdAt': createdAt.toIso8601String(),
     'selection': selection?.toMap(),
+    'filter': filter?.toMap(),
     'archivedAt': archivedAt?.toIso8601String(),
     'archiveReason': archiveReason,
   };
@@ -3833,6 +5510,11 @@ class _GeneratedReport {
               Map<String, dynamic>.from(map['selection'] as Map),
             )
           : null,
+      filter: map['filter'] is Map
+          ? ReportFilter.fromMap(
+              Map<String, dynamic>.from(map['filter'] as Map),
+            )
+          : null,
       archivedAt: parse(map['archivedAt']),
       archiveReason: (map['archiveReason'] ?? '').toString(),
     );
@@ -3840,7 +5522,22 @@ class _GeneratedReport {
 }
 
 class _DelegationsHubPage extends StatefulWidget {
-  const _DelegationsHubPage();
+  const _DelegationsHubPage({
+    this.presetDelegate,
+    this.initialDirection = 'granted',
+    this.presetSub,
+    this.presetTarget,
+  });
+
+  /// «تفويض آخرين» من صفحة عنصر: القسم الفرعي والعنصر مختاران مسبقًا.
+  final String? presetSub;
+  final DelegationTarget? presetTarget;
+
+  /// الاتجاه المعروض أولًا: granted (تفويضاتي) أو received (وصلتني).
+  final String initialDirection;
+
+  /// فتح «تفويض جديد» مباشرة لهذا المفوَّض، ثم الرجوع بعد إغلاق النموذج.
+  final String? presetDelegate;
 
   @override
   State<_DelegationsHubPage> createState() => _DelegationsHubPageState();
@@ -3851,7 +5548,7 @@ class _DelegationsHubPageState extends State<_DelegationsHubPage> {
 
   /// اتجاه التفويض المعروض: تفويضات منحتُها (granted) أو تفويضات مُنحت لي
   /// (received). الاتجاه محفوظ داخل السجل نفسه، فلا يضيع بين الجلسات.
-  String _direction = 'granted';
+  late String _direction = widget.initialDirection;
 
   // كانت هذه قائمة داخل الذاكرة مصحوبة بثلاثة تفويضات وهمية: كل إضافة أو
   // تعديل أو حذف يضيع بمجرد الخروج من الصفحة، وتعود البيانات الوهمية.
@@ -3864,6 +5561,17 @@ class _DelegationsHubPageState extends State<_DelegationsHubPage> {
   void initState() {
     super.initState();
     _load();
+    final preset = widget.presetDelegate;
+    if (preset != null) {
+      WidgetsBinding.instance.addPostFrameCallback((_) async {
+        await _openCreateSheet(
+          presetDelegate: preset,
+          presetSub: widget.presetSub,
+          presetTarget: widget.presetTarget,
+        );
+        if (mounted) Navigator.of(context).pop();
+      });
+    }
   }
 
   Future<void> _load() async {
@@ -3875,7 +5583,8 @@ class _DelegationsHubPageState extends State<_DelegationsHubPage> {
       _loadError = null;
     });
     try {
-      final rows = await _repository.fetchDelegations();
+      // ومعها ما وصلني من حسابات أخرى بالرقم التعريفي.
+      final rows = await _repository.fetchDelegations(includeIncoming: true);
       if (!mounted) return;
       setState(() {
         _delegations = rows.map(_DelegationRecord.fromRecord).toList();
@@ -3901,8 +5610,14 @@ class _DelegationsHubPageState extends State<_DelegationsHubPage> {
     try {
       await _repository.upsertDelegation(record.toRecord());
       await _load();
-      if (notice != null) _notify(notice);
-    } catch (_) {
+      if (notice != null) {
+        _notify(notice.contains('بنجاح') ? notice : '$notice بنجاح');
+      }
+    } catch (error) {
+      if (error is PlanLockedException) {
+        if (mounted) PlanGate.canEdit(context, PlanModules.delegations);
+        return;
+      }
       _notify('تعذّر حفظ التفويض. حاول مرة أخرى.');
     }
   }
@@ -3936,44 +5651,70 @@ class _DelegationsHubPageState extends State<_DelegationsHubPage> {
   ({String label, Color color, IconData icon}) _statusOf(
     _DelegationRecord delegation,
   ) {
+    // التفويض بالرقم التعريفي: رد المفوَّض قبل حالة المدة.
+    final answer = DelegationRecord.acceptOf(delegation.permissions);
+    // المفوَّض ألغى التفويض من عنده (ويستطيع العودة إليه).
+    if (answer == 'withdrawn') {
+      return (
+        label: delegation.isIncoming ? 'ألغيتَه من عندك' : 'ألغاه المفوَّض',
+        color: const Color(0xFFC4392E),
+        icon: Icons.logout_rounded,
+      );
+    }
+    if (answer == 'rejected') {
+      return (
+        label: delegation.isIncoming ? 'رفضتَه' : 'رفضه المفوَّض',
+        color: const Color(0xFFC4392E),
+        icon: Icons.block_rounded,
+      );
+    }
+    if (answer == 'pending' && !_isEnded(delegation)) {
+      return (
+        label: delegation.isIncoming
+            ? 'بانتظار ردك'
+            : '${AppTr.tr('بانتظار قبول')} ${delegation.delegateName}',
+        color: const Color(0xFFCE8422),
+        icon: Icons.hourglass_top_rounded,
+      );
+    }
     if (_isEnded(delegation)) {
       return (
         label: 'منتهي',
-        color: const Color(0xFF64748B),
+        color: const Color(0xFF5C6B68),
         icon: Icons.event_busy_outlined,
       );
     }
     if (!delegation.active) {
       return (
         label: 'موقوف',
-        color: const Color(0xFFDC2626),
+        color: const Color(0xFFC4392E),
         icon: Icons.pause_circle_outline_rounded,
       );
     }
     if (_isScheduled(delegation)) {
       return (
         label: 'مجدول',
-        color: const Color(0xFF2563EB),
+        color: const Color(0xFF0A5A50),
         icon: Icons.schedule_rounded,
       );
     }
     if (_isExpiringSoon(delegation)) {
       return (
         label: 'ينتهي قريبًا',
-        color: const Color(0xFFD97706),
+        color: const Color(0xFFCE8422),
         icon: Icons.timer_outlined,
       );
     }
     return (
       label: 'نشط',
-      color: const Color(0xFF07835C),
+      color: const Color(0xFF178F7B),
       icon: Icons.check_circle_outline_rounded,
     );
   }
 
   String _periodSummary(_DelegationRecord delegation) {
     if (_isEnded(delegation))
-      return 'انتهى في ${_formatDate(delegation.endDate)}';
+      return 'منتهي في ${_formatDate(delegation.endDate)}';
     if (_isScheduled(delegation)) {
       return 'يبدأ في ${_formatDate(delegation.startDate)}';
     }
@@ -4056,9 +5797,9 @@ class _DelegationsHubPageState extends State<_DelegationsHubPage> {
                   child: Text(
                     'التفويضات المسجلة',
                     style: TextStyle(
-                      fontSize: 13.5,
+                      fontSize: 13,
                       fontWeight: FontWeight.w900,
-                      color: Color(0xFF24332F),
+                      color: Color(0xFF1C2C29),
                     ),
                   ),
                 ),
@@ -4073,7 +5814,7 @@ class _DelegationsHubPageState extends State<_DelegationsHubPage> {
                       fontWeight: _selectedFilter == option.key
                           ? FontWeight.w900
                           : FontWeight.w600,
-                      color: const Color(0xFF24332F),
+                      color: const Color(0xFF1C2C29),
                     ),
                   ),
                   trailing: Text(
@@ -4081,7 +5822,7 @@ class _DelegationsHubPageState extends State<_DelegationsHubPage> {
                     style: const TextStyle(
                       fontSize: 12,
                       fontWeight: FontWeight.w800,
-                      color: Color(0xFF087F6A),
+                      color: Color(0xFF0E7161),
                     ),
                   ),
                   leading: Icon(
@@ -4090,8 +5831,8 @@ class _DelegationsHubPageState extends State<_DelegationsHubPage> {
                         : Icons.radio_button_unchecked_rounded,
                     size: 19,
                     color: _selectedFilter == option.key
-                        ? const Color(0xFF087F6A)
-                        : const Color(0xFF94A3B8),
+                        ? const Color(0xFF0E7161)
+                        : const Color(0xFF8C9A97),
                   ),
                   onTap: () {
                     setState(() => _selectedFilter = option.key);
@@ -4106,13 +5847,209 @@ class _DelegationsHubPageState extends State<_DelegationsHubPage> {
     );
   }
 
+  /// اختيار المفوَّض من «الأفراد والجهات».
+  /// (الاسم، الرقم التعريفي المسجَّل له في «الأفراد والجهات» إن وُجد).
+  Future<(String, String)?> _pickDelegateFromPeople() async {
+    final entries = await PeopleDirectoryStore.load();
+    if (!mounted) return null;
+    if (entries.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('لا يوجد أفراد أو جهات بعد — اضغط «شخص جديد»'),
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+      return null;
+    }
+    var query = '';
+    return showModalBottomSheet<(String, String)>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: AppTheme.page,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(
+          top: Radius.circular(AppTheme.rCard),
+        ),
+      ),
+      builder: (sheetContext) => StatefulBuilder(
+        builder: (sheetContext, setSheet) {
+          final q = query.trim();
+          final filtered = entries
+              .where(
+                (e) =>
+                    q.isEmpty ||
+                    e.fullName.contains(q) ||
+                    e.categoryName.contains(q),
+              )
+              .toList(growable: false);
+          return Directionality(
+            textDirection: AppTr.uiDir,
+            child: Padding(
+              padding: EdgeInsets.fromLTRB(
+                16,
+                14,
+                16,
+                MediaQuery.of(sheetContext).viewInsets.bottom + 16,
+              ),
+              child: Column(
+                mainAxisSize: MainAxisSize.min,
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  const Text(
+                    'اختر من الأفراد والجهات',
+                    style: TextStyle(
+                      fontSize: 14,
+                      fontWeight: FontWeight.w900,
+                      color: AppTheme.title,
+                    ),
+                  ),
+                  const SizedBox(height: 10),
+                  TextField(
+                    textDirection: AppTr.uiDir,
+                    onChanged: (value) => setSheet(() => query = value),
+                    decoration: InputDecoration(
+                      isDense: true,
+                      hintText: AppTr.tr('ابحث بالاسم أو التصنيف'),
+                      prefixIcon: const Icon(Icons.search_rounded, size: 20),
+                      filled: true,
+                      fillColor: AppTheme.field,
+                      border: OutlineInputBorder(
+                        borderRadius: BorderRadius.circular(AppTheme.rField),
+                        borderSide: BorderSide.none,
+                      ),
+                    ),
+                  ),
+                  const SizedBox(height: 10),
+                  SizedBox(
+                    height: 320,
+                    child: ListView.separated(
+                      itemCount: filtered.length,
+                      separatorBuilder: (_, __) =>
+                          const Divider(height: 1, color: AppTheme.line),
+                      itemBuilder: (context, index) {
+                        final entry = filtered[index];
+                        return ListTile(
+                          dense: true,
+                          contentPadding: EdgeInsets.zero,
+                          leading: Icon(
+                            entry.isEntity
+                                ? Icons.business_rounded
+                                : Icons.person_rounded,
+                            color: const Color(0xFF0E7161),
+                          ),
+                          title: Text(
+                            entry.fullName,
+                            style: const TextStyle(
+                              fontSize: 13,
+                              fontWeight: FontWeight.w800,
+                            ),
+                          ),
+                          subtitle: Text(
+                            entry.categoryName,
+                            style: const TextStyle(fontSize: 11),
+                          ),
+                          onTap: () => Navigator.pop(sheetContext, (
+                            entry.fullName,
+                            entry.detail('الرقم التعريفي').trim(),
+                          )),
+                        );
+                      },
+                    ),
+                  ),
+                ],
+              ),
+            ),
+          );
+        },
+      ),
+    );
+  }
+
+  /// «شخص جديد»: الاسم والجوال، ثم تنبيه أنه سيُحفظ في «الأفراد والجهات».
+  /// «شخص جديد»: بالرقم التعريفي فقط — يظهر اسم صاحبه من الخادم ليتأكد
+  /// المستخدم، ثم يُحفظ في «الأفراد والجهات» برقمه. (الاسم، الرقم).
+  Future<(String, String)?> _addNewDelegatePerson() async {
+    final found = await askFndPerson(
+      context,
+      title: 'شخص جديد بالرقم التعريفي',
+      confirmLabel: 'التالي',
+    );
+    if (found == null || !mounted) return null;
+    final (fnd, name) = found;
+    final confirmed = await confirmAction(
+      context,
+      title: 'حفظ في الأفراد والجهات',
+      message: 'سيُحفظ «$name» ($fnd) هنا في التفويض وفي «الأفراد والجهات» '
+          'أيضًا. موافق؟',
+      confirmLabel: 'موافق',
+    );
+    if (!confirmed) return null;
+    await PeopleDirectoryStore.upsert(
+      fullName: name,
+      typeKey: 'person_other',
+      categoryName: 'أخرى',
+      roleTitle: 'مفوَّض',
+      details: {'الرقم التعريفي': fnd},
+      sourceNote: 'تفويض',
+    );
+    return (name, fnd);
+  }
+
   Future<void> _openCreateSheet({
     _DelegationRecord? existing,
     int? index,
+    String? presetDelegate,
+    String? presetSub,
+    DelegationTarget? presetTarget,
   }) async {
     final delegateController = TextEditingController(
-      text: existing?.delegateName ?? '',
+      text: existing?.delegateName ?? presetDelegate ?? '',
     );
+    // الرقم التعريفي للمفوَّض: به يصله التفويض في تطبيقه ليقبل أو يرفض.
+    final delegateIdController = TextEditingController(
+      text: DelegationRecord.delegateFndOf(
+        existing?.permissions ?? const <String>[],
+      ),
+    );
+    if (existing == null &&
+        (presetDelegate ?? '').trim().isNotEmpty &&
+        delegateIdController.text.trim().isEmpty) {
+      final entries = await PeopleDirectoryStore.load();
+      for (final entry in entries) {
+        if (entry.fullName.trim() == presetDelegate!.trim()) {
+          delegateIdController.text = entry.detail('الرقم التعريفي').trim();
+          break;
+        }
+      }
+      if (!mounted) return;
+    }
+    final previousAnswer = DelegationRecord.acceptOf(
+      existing?.permissions ?? const <String>[],
+    );
+    // صاحب الرقم التعريفي يُعرض تحته، فيتأكد المستخدم أنه المفوَّض الصحيح.
+    var fndChecked = '';
+    String? fndOwner;
+    var fndLooking = false;
+    Future<void> lookupFnd(StateSetter setModalState) async {
+      final id = AppIdentity.normalize(delegateIdController.text);
+      if (!AppIdentity.isValid(id)) {
+        setModalState(() {
+          fndChecked = '';
+          fndOwner = null;
+          fndLooking = false;
+        });
+        return;
+      }
+      if (id == fndChecked) return;
+      setModalState(() => fndLooking = true);
+      final name = await FundlyAccount.nameForFnd(id);
+      if (AppIdentity.normalize(delegateIdController.text) != id) return;
+      setModalState(() {
+        fndChecked = id;
+        fndOwner = name;
+        fndLooking = false;
+      });
+    }
     // القوائم الرسمية من طبقة البيانات بدل ثلاث قوائم متباينة (النموذج،
     // المستودع، القاعدة) لا يطابق بعضها بعضًا.
     final types = DelegationRecord.scopes;
@@ -4124,12 +6061,55 @@ class _DelegationsHubPageState extends State<_DelegationsHubPage> {
     final selectedSubScopes = <String>{
       ...DelegationRecord.subScopesOf(existing?.delegationType),
     };
-    final allPermissions = DelegationRecord.allPermissions;
     final selectedPermissions = <String>{
-      ...?existing?.permissions,
+      ...?existing?.permissions.where((p) => !DelegationRecord.isMeta(p)),
       if (existing == null) 'عرض البيانات',
     };
+    // عناصر بعينها (عهدة، بناية، مركبة، شخص...) بدل القسم الفرعي كاملًا.
+    final selectedTargets = <DelegationTarget>{
+      for (final p in existing?.permissions ?? const <String>[])
+        if (DelegationTarget.decode(p) case final target?) target,
+    };
+    // من صفحة عقار/وحدة/مركبة/نشاط: القسم والعنصر مختاران مسبقًا.
+    if (existing == null && presetSub != null && presetTarget != null) {
+      selectedType = 'العقارات والأنشطة والمركبات';
+      selectedSubScopes
+        ..clear()
+        ..add(presetSub);
+      selectedTargets.add(presetTarget);
+    }
+    final existingLimit = DelegationRecord.limitOf(
+      existing?.permissions ?? const <String>[],
+    );
+    final limitController = TextEditingController(
+      text: existingLimit == null ? '' : '$existingLimit',
+    );
+    final notesController = TextEditingController(text: existing?.notes ?? '');
+    // المستوى يحدد الإجراءات: الأساسية ثابتة له، والإضافية تُختار من
+    // المسموح به فقط — «اطّلاع فقط» لا يسمح بإضافة سجلات.
+    var selectedLevel = DelegationRecord.levelOf(selectedPermissions);
+    void applyLevel(String level) {
+      final approval = selectedPermissions.contains(
+        DelegationRecord.kNeedsOwnerApproval,
+      );
+      final allowed = DelegationRecord.levelExtras[level] ?? const <String>[];
+      final keptExtras = level == DelegationRecord.fullLevel
+          ? DelegationRecord.extraPermissions
+          : selectedPermissions.where(allowed.contains).toList();
+      selectedLevel = level;
+      selectedPermissions
+        ..clear()
+        ..addAll(DelegationRecord.coreOf(level))
+        ..addAll(keptExtras);
+      if (approval) {
+        selectedPermissions.add(DelegationRecord.kNeedsOwnerApproval);
+      }
+    }
+
+    applyLevel(selectedLevel);
     DateTime startDate = existing?.startDate ?? DateTime.now();
+    // مدة التفويض الجاهزة المختارة من القائمة بجانب «مدة التفويض».
+    var durationPreset = 'مخصص';
     DateTime endDate =
         existing?.endDate ?? DateTime.now().add(const Duration(days: 365));
     // اتجاه التفويض: صادر مني أو وارد إليّ — يحدّد أيّ من الخيارين
@@ -4181,7 +6161,7 @@ class _DelegationsHubPageState extends State<_DelegationsHubPage> {
                                 style: const TextStyle(
                                   fontSize: 17,
                                   fontWeight: FontWeight.w900,
-                                  color: Color(0xFF1F2D29),
+                                  color: Color(0xFF1C2C29),
                                 ),
                               ),
                             ),
@@ -4192,12 +6172,15 @@ class _DelegationsHubPageState extends State<_DelegationsHubPage> {
                           'امنح وصولًا محددًا ولمدة واضحة. يمكنك إيقاف التفويض في أي وقت.',
                           textAlign: TextAlign.center,
                           style: TextStyle(
-                            fontSize: 11.5,
+                            fontSize: 11,
                             height: 1.4,
-                            color: Color(0xFF71807C),
+                            color: Color(0xFF76837F),
                           ),
                         ),
                         const SizedBox(height: 12),
+                        // صفحة الإنشاء بلا «منحتُه / مُنح لي»: الاتجاه من
+                        // التبويب المفتوح. يظهر الاختيار عند التعديل فقط.
+                        if (existing != null)
                         Row(
                           children: [
                             Expanded(
@@ -4227,37 +6210,259 @@ class _DelegationsHubPageState extends State<_DelegationsHubPage> {
                         const Text(
                           '1. الشخص أو الجهة المفوضة',
                           style: TextStyle(
-                            fontSize: 12.5,
+                            fontSize: 12,
                             fontWeight: FontWeight.w900,
-                            color: Color(0xFF24332F),
+                            color: Color(0xFF1C2C29),
                           ),
                         ),
                         const SizedBox(height: 6),
-                        TextField(
-                          controller: delegateController,
-                          textDirection: AppTr.uiDir,
-                          decoration: InputDecoration(
-                            hintText: AppTr.tr('اكتب اسم الشخص أو الجهة'),
-                            filled: true,
-                            fillColor: AppTheme.field,
-                            border: OutlineInputBorder(
+                        if (delegateController.text.trim().isNotEmpty) ...[
+                          Container(
+                            padding: const EdgeInsets.fromLTRB(12, 4, 4, 4),
+                            decoration: BoxDecoration(
+                              color: const Color(0xFFE9F4F1),
                               borderRadius: BorderRadius.circular(12),
-                              borderSide: const BorderSide(
-                                color: Color(0xFFDDE5E2),
+                              border: Border.all(
+                                color: const Color(0xFFCFE5DF),
                               ),
                             ),
-                            suffixIcon: const Icon(
-                              Icons.person_outline_rounded,
+                            child: Row(
+                              children: [
+                                const Icon(
+                                  Icons.person_rounded,
+                                  size: 20,
+                                  color: Color(0xFF0E7161),
+                                ),
+                                const SizedBox(width: 8),
+                                Expanded(
+                                  child: Text(
+                                    delegateController.text.trim(),
+                                    style: const TextStyle(
+                                      fontSize: 13,
+                                      fontWeight: FontWeight.w900,
+                                      color: Color(0xFF1C2C29),
+                                    ),
+                                  ),
+                                ),
+                                IconButton(
+                                  tooltip: AppTr.tr('إزالة'),
+                                  onPressed: () => setModalState(
+                                    delegateController.clear,
+                                  ),
+                                  icon: const Icon(
+                                    Icons.close_rounded,
+                                    size: 18,
+                                  ),
+                                ),
+                              ],
                             ),
                           ),
+                          const SizedBox(height: 8),
+                        ],
+                        Row(
+                          children: [
+                            Expanded(
+                              child: OutlinedButton.icon(
+                                onPressed: () async {
+                                  final picked =
+                                      await _pickDelegateFromPeople();
+                                  if (picked == null) return;
+                                  final (name, fnd) = picked;
+                                  setModalState(() {
+                                    delegateController.text = name;
+                                    // رقمه التعريفي المسجَّل يُكتب تلقائيًا.
+                                    if (fnd.isNotEmpty && !isReceived) {
+                                      delegateIdController.text = fnd;
+                                    }
+                                  });
+                                  await lookupFnd(setModalState);
+                                },
+                                icon: const Icon(
+                                  Icons.person_search_rounded,
+                                  size: 19,
+                                ),
+                                label: const Text('جلب من الأفراد'),
+                                style: OutlinedButton.styleFrom(
+                                  foregroundColor: const Color(0xFF0E7161),
+                                  minimumSize: const Size.fromHeight(48),
+                                  shape: RoundedRectangleBorder(
+                                    borderRadius: BorderRadius.circular(12),
+                                  ),
+                                ),
+                              ),
+                            ),
+                            const SizedBox(width: 8),
+                            Expanded(
+                              child: OutlinedButton.icon(
+                                onPressed: () async {
+                                  final added = await _addNewDelegatePerson();
+                                  if (added == null) return;
+                                  final (name, fnd) = added;
+                                  setModalState(() {
+                                    delegateController.text = name;
+                                    if (!isReceived) {
+                                      delegateIdController.text = fnd;
+                                    }
+                                  });
+                                  await lookupFnd(setModalState);
+                                },
+                                icon: const Icon(
+                                  Icons.person_add_alt_1_rounded,
+                                  size: 19,
+                                ),
+                                label: const Text('شخص جديد'),
+                                style: OutlinedButton.styleFrom(
+                                  foregroundColor: const Color(0xFF0E7161),
+                                  minimumSize: const Size.fromHeight(48),
+                                  shape: RoundedRectangleBorder(
+                                    borderRadius: BorderRadius.circular(12),
+                                  ),
+                                ),
+                              ),
+                            ),
+                          ],
                         ),
+                        if (!isReceived) ...[
+                          const SizedBox(height: 10),
+                          TextField(
+                            controller: delegateIdController,
+                            textDirection: TextDirection.ltr,
+                            textCapitalization: TextCapitalization.characters,
+                            onChanged: (_) => lookupFnd(setModalState),
+                            decoration: InputDecoration(
+                              labelText: AppTr.tr(
+                                'الرقم التعريفي للمفوَّض (إلزامي — به يصله التفويض)',
+                              ),
+                              hintText: 'FND-XXXX-XXXX',
+                              helperText: fndNameHint(),
+                              helperMaxLines: 3,
+                              prefixIcon: const Icon(Icons.badge_outlined),
+                              filled: true,
+                              fillColor: AppTheme.field,
+                              isDense: true,
+                              border: OutlineInputBorder(
+                                borderRadius: BorderRadius.circular(12),
+                              ),
+                            ),
+                          ),
+                          // صاحب الرقم: «الرقم التعريفي يخص: زين».
+                          if (fndLooking)
+                            const Padding(
+                              padding: EdgeInsets.only(top: 6),
+                              child: Text(
+                                'جارٍ التحقق من صاحب الرقم...',
+                                style: TextStyle(
+                                  fontSize: 11,
+                                  fontWeight: FontWeight.w700,
+                                  color: Color(0xFF5C6B68),
+                                ),
+                              ),
+                            )
+                          else if (fndChecked.isNotEmpty &&
+                              fndChecked ==
+                                  AppIdentity.normalize(
+                                    delegateIdController.text,
+                                  ))
+                            Container(
+                              margin: const EdgeInsets.only(top: 6),
+                              padding: const EdgeInsets.all(9),
+                              decoration: BoxDecoration(
+                                color: fndOwner != null
+                                    ? AppTheme.brandSoft
+                                    : const Color(0xFFFFF6E8),
+                                borderRadius: BorderRadius.circular(10),
+                              ),
+                              child: Row(
+                                children: [
+                                  Icon(
+                                    fndOwner != null
+                                        ? Icons.verified_user_outlined
+                                        : Icons.help_outline_rounded,
+                                    size: 18,
+                                    color: fndOwner != null
+                                        ? AppTheme.brand
+                                        : const Color(0xFFA6691A),
+                                  ),
+                                  const SizedBox(width: 7),
+                                  Expanded(
+                                    child: Text(
+                                      fndOwner != null
+                                          ? '${AppTr.tr('الرقم التعريفي يخص')}: '
+                                                '$fndOwner — '
+                                                '${AppTr.tr('تأكد أنه المفوَّض الصحيح')}'
+                                          : AppTr.tr(
+                                              'لم يُعثر على صاحب هذا الرقم — تأكد منه',
+                                            ),
+                                      style: TextStyle(
+                                        fontSize: 11.5,
+                                        fontWeight: FontWeight.w800,
+                                        color: fndOwner != null
+                                            ? AppTheme.brand
+                                            : const Color(0xFF6B4A12),
+                                      ),
+                                    ),
+                                  ),
+                                ],
+                              ),
+                            ),
+                          if (previousAnswer.isNotEmpty) ...[
+                            const SizedBox(height: 6),
+                            Text(
+                              previousAnswer == 'accepted'
+                                  ? 'قبِل المفوَّض هذا التفويض'
+                                  : previousAnswer == 'rejected'
+                                  ? 'رفض المفوَّض هذا التفويض'
+                                  : 'بانتظار قبول المفوَّض',
+                              style: TextStyle(
+                                fontSize: 11.5,
+                                fontWeight: FontWeight.w800,
+                                color: previousAnswer == 'accepted'
+                                    ? const Color(0xFF178F7B)
+                                    : previousAnswer == 'rejected'
+                                    ? const Color(0xFFC4392E)
+                                    : const Color(0xFFCE8422),
+                              ),
+                            ),
+                          ],
+                          const SizedBox(height: 8),
+                          // تنبيه: حالة كل مفوَّض تُتابع من صفحة التفويضات.
+                          Container(
+                            padding: const EdgeInsets.fromLTRB(10, 8, 10, 8),
+                            decoration: BoxDecoration(
+                              color: const Color(0xFFFFF6E8),
+                              borderRadius: BorderRadius.circular(10),
+                            ),
+                            child: const Row(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Icon(
+                                  Icons.info_outline_rounded,
+                                  size: 16,
+                                  color: Color(0xFFA6691A),
+                                ),
+                                SizedBox(width: 6),
+                                Expanded(
+                                  child: Text(
+                                    'بعد الإرسال تعرف حالة كل مفوَّض (بانتظار القبول، نشط، رفضه، ألغاه) وتستطيع إلغاء تفويضه من «المزيد ← التفويضات».',
+                                    style: TextStyle(
+                                      fontSize: 11,
+                                      height: 1.45,
+                                      fontWeight: FontWeight.w700,
+                                      color: Color(0xFF6B4A12),
+                                    ),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ],
                         const SizedBox(height: 10),
                         const Text(
                           '2. نطاق التفويض',
                           style: TextStyle(
-                            fontSize: 12.5,
+                            fontSize: 12,
                             fontWeight: FontWeight.w900,
-                            color: Color(0xFF24332F),
+                            color: Color(0xFF1C2C29),
                           ),
                         ),
                         const SizedBox(height: 6),
@@ -4286,6 +6491,7 @@ class _DelegationsHubPageState extends State<_DelegationsHubPage> {
                               // الأقسام الفرعية تخصّ نطاقًا بعينه، فتُمسح
                               // عند تغييره بدل بقاء اختيار لا ينتمي إليه.
                               selectedSubScopes.clear();
+                              selectedTargets.clear();
                             });
                           },
                         ),
@@ -4300,7 +6506,7 @@ class _DelegationsHubPageState extends State<_DelegationsHubPage> {
                             style: TextStyle(
                               fontSize: 11,
                               fontWeight: FontWeight.w700,
-                              color: Color(0xFF52716B),
+                              color: Color(0xFF5C6B68),
                             ),
                           ),
                           const SizedBox(height: 6),
@@ -4316,19 +6522,48 @@ class _DelegationsHubPageState extends State<_DelegationsHubPage> {
                                         selected: selectedSubScopes.contains(
                                           sub,
                                         ),
-                                        selectedColor: const Color(0xFFDDF1EC),
-                                        checkmarkColor: const Color(0xFF087F6A),
+                                        selectedColor: const Color(0xFFE4EAE8),
+                                        checkmarkColor: const Color(0xFF0E7161),
                                         labelStyle: const TextStyle(
                                           fontSize: 11,
                                           fontWeight: FontWeight.w700,
                                         ),
-                                        onSelected: (selected) {
+                                        onSelected: (selected) async {
                                           setModalState(() {
                                             if (selected) {
                                               selectedSubScopes.add(sub);
                                             } else {
                                               selectedSubScopes.remove(sub);
+                                              selectedTargets.removeWhere(
+                                                (t) => t.sub == sub,
+                                              );
                                             }
+                                          });
+                                          // القسم الذي فيه عناصر (العهد،
+                                          // العقارات...) يفتح قائمتها فورًا
+                                          // لاختيار عنصر بعينه أو «الكل».
+                                          if (!selected ||
+                                              !DelegationTargets.supports(
+                                                selectedType,
+                                                sub,
+                                              )) {
+                                            return;
+                                          }
+                                          final picked =
+                                              await _pickDelegationTargets(
+                                                selectedType,
+                                                sub,
+                                                selectedTargets
+                                                    .where((t) => t.sub == sub)
+                                                    .toSet(),
+                                              );
+                                          if (picked == null) return;
+                                          setModalState(() {
+                                            selectedTargets
+                                              ..removeWhere(
+                                                (t) => t.sub == sub,
+                                              )
+                                              ..addAll(picked);
                                           });
                                         },
                                       ),
@@ -4336,111 +6571,322 @@ class _DelegationsHubPageState extends State<_DelegationsHubPage> {
                                     .toList(growable: false),
                           ),
                         ],
-                        const SizedBox(height: 10),
-                        const Text(
-                          '3. الصلاحيات المسموحة',
-                          style: TextStyle(
-                            fontSize: 12.5,
-                            fontWeight: FontWeight.w900,
-                            color: Color(0xFF24332F),
+                        // ملخص العناصر المحددة لكل قسم فرعي يدعمها.
+                        for (final sub in selectedSubScopes.where(
+                          (s) => DelegationTargets.supports(selectedType, s),
+                        ))
+                          _delegationTargetsTile(
+                            sub: sub,
+                            targets: selectedTargets
+                                .where((t) => t.sub == sub)
+                                .toList(growable: false),
+                            onChange: () async {
+                              final picked = await _pickDelegationTargets(
+                                selectedType,
+                                sub,
+                                selectedTargets
+                                    .where((t) => t.sub == sub)
+                                    .toSet(),
+                              );
+                              if (picked == null) return;
+                              setModalState(() {
+                                selectedTargets
+                                  ..removeWhere((t) => t.sub == sub)
+                                  ..addAll(picked);
+                              });
+                            },
+                            onRemove: (target) =>
+                                setModalState(() => selectedTargets.remove(target)),
                           ),
-                        ),
-                        const SizedBox(height: 4),
-                        // مستويات جاهزة تختصر الاختيار وتوضّح التدرّج.
-                        Wrap(
-                          spacing: 7,
-                          runSpacing: 7,
-                          children: DelegationRecord.permissionLevels.entries
-                              .map(
-                                (level) => ChoiceChip(
-                                  label: Text(level.key),
-                                  selected:
-                                      selectedPermissions.length ==
-                                          level.value.length &&
-                                      selectedPermissions.containsAll(
-                                        level.value,
-                                      ),
-                                  selectedColor: const Color(0xFF087F6A),
-                                  labelStyle: TextStyle(
-                                    fontSize: 11,
-                                    fontWeight: FontWeight.w800,
-                                    color:
-                                        selectedPermissions.length ==
-                                                level.value.length &&
-                                            selectedPermissions.containsAll(
-                                              level.value,
-                                            )
-                                        ? Colors.white
-                                        : const Color(0xFF24332F),
-                                  ),
-                                  onSelected: (_) => setModalState(() {
-                                    selectedPermissions
-                                      ..clear()
-                                      ..addAll(level.value);
-                                  }),
-                                ),
-                              )
-                              .toList(growable: false),
+                        const SizedBox(height: 16),
+                        const Text(
+                          '3. الصلاحيات',
+                          style: TextStyle(
+                            fontSize: 12,
+                            fontWeight: FontWeight.w900,
+                            color: Color(0xFF1C2C29),
+                          ),
                         ),
                         const SizedBox(height: 8),
                         Wrap(
                           spacing: 7,
                           runSpacing: 7,
-                          children: allPermissions
-                              .map(
-                                (permission) => FilterChip(
+                          children: [
+                            for (final level
+                                in DelegationRecord.permissionLevels.keys)
+                              ChoiceChip(
+                                label: Text(level),
+                                selected: selectedLevel == level,
+                                materialTapTargetSize:
+                                    MaterialTapTargetSize.shrinkWrap,
+                                visualDensity: VisualDensity.compact,
+                                selectedColor: const Color(0xFF0E7161),
+                                labelStyle: TextStyle(
+                                  fontSize: 11,
+                                  fontWeight: FontWeight.w800,
+                                  color: selectedLevel == level
+                                      ? Colors.white
+                                      : const Color(0xFF1C2C29),
+                                ),
+                                onSelected: (_) =>
+                                    setModalState(() => applyLevel(level)),
+                              ),
+                          ],
+                        ),
+                        const SizedBox(height: 12),
+                        const Divider(
+                          height: 1,
+                          thickness: 0.8,
+                          color: Color(0xFFDDE5E3),
+                        ),
+                        const SizedBox(height: 12),
+                        const Text(
+                          'الإجراءات',
+                          style: TextStyle(
+                            fontSize: 12,
+                            fontWeight: FontWeight.w900,
+                            color: Color(0xFF1C2C29),
+                          ),
+                        ),
+                        const SizedBox(height: 2),
+                        Text(
+                          'تتحدد حسب «$selectedLevel» — الرمادي غير مسموح به '
+                          'في هذا المستوى.',
+                          style: const TextStyle(
+                            fontSize: 10.5,
+                            fontWeight: FontWeight.w600,
+                            color: Color(0xFF76837F),
+                          ),
+                        ),
+                        const SizedBox(height: 8),
+                        Wrap(
+                          spacing: 7,
+                          runSpacing: 7,
+                          children: () {
+                            final extras =
+                                DelegationRecord.levelExtras[selectedLevel] ??
+                                const <String>[];
+                            // الإضافية: تُختار من المسموح به للمستوى فقط.
+                            bool canPick(String permission) =>
+                                selectedLevel != DelegationRecord.fullLevel &&
+                                extras.contains(permission);
+                            // المتاح (الممنوح أو القابل للاختيار) في الأعلى،
+                            // والباهت غير المسموح به في الأسفل دائمًا.
+                            bool usable(String permission, bool core) =>
+                                selectedPermissions.contains(permission) ||
+                                (!core && canPick(permission));
+                            final all = [
+                              // الأساسية: ثابتة للمستوى المختار.
+                              for (final p in DelegationRecord.orderedPermissions)
+                                (p, true),
+                              for (final p in DelegationRecord.extraPermissions)
+                                (p, false),
+                            ];
+                            final sorted = [
+                              ...all.where((e) => usable(e.$1, e.$2)),
+                              ...all.where((e) => !usable(e.$1, e.$2)),
+                            ];
+                            return [
+                              for (final (permission, core) in sorted)
+                                FilterChip(
                                   label: Text(permission),
                                   selected: selectedPermissions.contains(
                                     permission,
                                   ),
-                                  selectedColor: const Color(0xFFDDF1EC),
-                                  checkmarkColor: const Color(0xFF087F6A),
+                                  selectedColor: const Color(0xFFE4EAE8),
+                                  checkmarkColor: const Color(0xFF0E7161),
+                                  // مسافة عادية بين الأسطر.
+                                  materialTapTargetSize:
+                                      MaterialTapTargetSize.shrinkWrap,
+                                  visualDensity: VisualDensity.compact,
                                   labelStyle: const TextStyle(
                                     fontSize: 11,
                                     fontWeight: FontWeight.w700,
                                   ),
-                                  onSelected: (selected) {
-                                    setModalState(() {
-                                      if (selected) {
-                                        selectedPermissions.add(permission);
-                                      } else {
-                                        selectedPermissions.remove(permission);
-                                        // إلغاء صلاحية أدنى يلغي ما فوقها،
-                                        // فلا يبقى "حذف" بلا "عرض".
-                                        final index = DelegationRecord
-                                            .orderedPermissions
-                                            .indexOf(permission);
-                                        if (index >= 0) {
-                                          selectedPermissions.removeAll(
-                                            DelegationRecord.orderedPermissions
-                                                .skip(index),
-                                          );
-                                          if (permission == 'عرض البيانات') {
-                                            selectedPermissions.clear();
+                                  onSelected: core || !canPick(permission)
+                                      ? null
+                                      : (selected) => setModalState(() {
+                                          if (selected) {
+                                            selectedPermissions.add(permission);
+                                          } else {
+                                            selectedPermissions.remove(
+                                              permission,
+                                            );
                                           }
-                                        }
-                                      }
-                                      final applied =
-                                          DelegationRecord.applyHierarchy(
-                                            selectedPermissions,
-                                          );
-                                      selectedPermissions
-                                        ..clear()
-                                        ..addAll(applied);
-                                    });
-                                  },
+                                        }),
                                 ),
-                              )
-                              .toList(growable: false),
+                            ];
+                          }(),
+                        ),
+                        // سقف مبلغ العملية الواحدة — يظهر مع صلاحية المدفوعات.
+                        if (selectedPermissions.contains(
+                          'تنفيذ المدفوعات والتحويلات',
+                        )) ...[
+                          const SizedBox(height: 10),
+                          TextField(
+                            controller: limitController,
+                            keyboardType: TextInputType.number,
+                            inputFormatters: [
+                              FilteringTextInputFormatter.digitsOnly,
+                            ],
+                            textDirection: AppTr.uiDir,
+                            decoration: InputDecoration(
+                              isDense: true,
+                              filled: true,
+                              fillColor: AppTheme.field,
+                              labelText: AppTr.tr(
+                                'سقف المبلغ للعملية الواحدة (اختياري)',
+                              ),
+                              helperText: AppTr.tr('اتركه فارغًا بلا سقف'),
+                              suffixText: AppSettings.currencySuffix,
+                              prefixIcon: const Icon(
+                                Icons.payments_outlined,
+                                size: 20,
+                              ),
+                              border: OutlineInputBorder(
+                                borderRadius: BorderRadius.circular(12),
+                                borderSide: BorderSide.none,
+                              ),
+                            ),
+                          ),
+                        ],
+                        const SizedBox(height: 10),
+                        // هل يعتمد ما يكتبه المفوَّض مباشرة، أم ينتظر
+                        // موافقة المالك؟
+                        Container(
+                          decoration: BoxDecoration(
+                            color: const Color(0xFFF4F8F7),
+                            borderRadius: BorderRadius.circular(12),
+                            border: Border.all(color: const Color(0xFFE4EAE8)),
+                          ),
+                          child: SwitchListTile.adaptive(
+                            value: selectedPermissions.contains(
+                              DelegationRecord.kNeedsOwnerApproval,
+                            ),
+                            activeThumbColor: const Color(0xFF0E7161),
+                            contentPadding: const EdgeInsets.symmetric(
+                              horizontal: 12,
+                            ),
+                            title: const Text(
+                              'يتطلب موافقة المالك',
+                              style: TextStyle(
+                                fontSize: 12.5,
+                                fontWeight: FontWeight.w900,
+                                color: Color(0xFF1C2C29),
+                              ),
+                            ),
+                            subtitle: Text(
+                              selectedPermissions.contains(
+                                    DelegationRecord.kNeedsOwnerApproval,
+                                  )
+                                  ? 'ما يدخله المفوَّض يُرسل للمالك ولا يُعتمد '
+                                        'إلا بعد موافقته.'
+                                  : 'المفوَّض يكتب ويعتمد مباشرة بلا موافقة '
+                                        'المالك.',
+                              style: const TextStyle(
+                                fontSize: 10.5,
+                                fontWeight: FontWeight.w600,
+                                color: Color(0xFF5C6B68),
+                              ),
+                            ),
+                            onChanged: (value) => setModalState(() {
+                              if (value) {
+                                selectedPermissions.add(
+                                  DelegationRecord.kNeedsOwnerApproval,
+                                );
+                              } else {
+                                selectedPermissions.remove(
+                                  DelegationRecord.kNeedsOwnerApproval,
+                                );
+                              }
+                            }),
+                          ),
                         ),
                         const SizedBox(height: 14),
-                        const Text(
-                          '4. مدة التفويض',
-                          style: TextStyle(
-                            fontSize: 12.5,
-                            fontWeight: FontWeight.w900,
-                            color: Color(0xFF24332F),
-                          ),
+                        // العنوان وبجانبه قائمة المدد الجاهزة (ومعها «مخصص»).
+                        Row(
+                          children: [
+                            const Expanded(
+                              child: Text(
+                                '4. مدة التفويض',
+                                style: TextStyle(
+                                  fontSize: 12,
+                                  fontWeight: FontWeight.w900,
+                                  color: Color(0xFF1C2C29),
+                                ),
+                              ),
+                            ),
+                            PopupMenuButton<(String, int)>(
+                              tooltip: AppTr.tr('مدة التفويض'),
+                              position: PopupMenuPosition.under,
+                              onSelected: (preset) => setModalState(() {
+                                durationPreset = preset.$1;
+                                if (preset.$2 > 0) {
+                                  endDate = startDate.add(
+                                    Duration(days: preset.$2),
+                                  );
+                                }
+                              }),
+                              itemBuilder: (context) => [
+                                for (final preset in const [
+                                  ('أسبوع', 7),
+                                  ('شهر', 30),
+                                  ('3 أشهر', 90),
+                                  ('6 أشهر', 182),
+                                  ('سنة', 365),
+                                  ('مخصص', 0),
+                                ])
+                                  PopupMenuItem<(String, int)>(
+                                    value: preset,
+                                    child: Text(
+                                      preset.$1,
+                                      style: TextStyle(
+                                        fontSize: 12,
+                                        fontWeight:
+                                            preset.$1 == durationPreset
+                                            ? FontWeight.w900
+                                            : FontWeight.w600,
+                                        color: preset.$1 == durationPreset
+                                            ? const Color(0xFF0E7161)
+                                            : const Color(0xFF1C2C29),
+                                      ),
+                                    ),
+                                  ),
+                              ],
+                              child: Container(
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 10,
+                                  vertical: 6,
+                                ),
+                                decoration: BoxDecoration(
+                                  color: const Color(0xFFF4F8F7),
+                                  borderRadius: BorderRadius.circular(10),
+                                  border: Border.all(
+                                    color: const Color(0xFFE4EAE8),
+                                  ),
+                                ),
+                                child: Row(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    Text(
+                                      durationPreset,
+                                      style: const TextStyle(
+                                        fontSize: 11,
+                                        fontWeight: FontWeight.w800,
+                                        color: Color(0xFF0E7161),
+                                      ),
+                                    ),
+                                    const SizedBox(width: 2),
+                                    const Icon(
+                                      Icons.arrow_drop_down_rounded,
+                                      size: 20,
+                                      color: Color(0xFF0E7161),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ),
+                          ],
                         ),
                         const SizedBox(height: 7),
                         Row(
@@ -4457,7 +6903,10 @@ class _DelegationsHubPageState extends State<_DelegationsHubPage> {
                                     lastDate: DateTime(2035),
                                   );
                                   if (picked == null) return;
-                                  setModalState(() => startDate = picked);
+                                  setModalState(() {
+                                    startDate = picked;
+                                    durationPreset = 'مخصص';
+                                  });
                                 },
                               ),
                             ),
@@ -4474,21 +6923,51 @@ class _DelegationsHubPageState extends State<_DelegationsHubPage> {
                                     lastDate: DateTime(2035),
                                   );
                                   if (picked == null) return;
-                                  setModalState(() => endDate = picked);
+                                  setModalState(() {
+                                    endDate = picked;
+                                    durationPreset = 'مخصص';
+                                  });
                                 },
                               ),
                             ),
                           ],
+                        ),
+                        const SizedBox(height: 14),
+                        const Text(
+                          '5. الغرض من التفويض',
+                          style: TextStyle(
+                            fontSize: 12,
+                            fontWeight: FontWeight.w900,
+                            color: Color(0xFF1C2C29),
+                          ),
+                        ),
+                        const SizedBox(height: 6),
+                        TextField(
+                          controller: notesController,
+                          maxLines: 2,
+                          textDirection: AppTr.uiDir,
+                          decoration: InputDecoration(
+                            isDense: true,
+                            filled: true,
+                            fillColor: AppTheme.field,
+                            hintText: AppTr.tr(
+                              'مثال: متابعة تحصيل الإيجار أثناء سفري (اختياري)',
+                            ),
+                            border: OutlineInputBorder(
+                              borderRadius: BorderRadius.circular(12),
+                              borderSide: BorderSide.none,
+                            ),
+                          ),
                         ),
                         if (validationMessage != null) ...[
                           const SizedBox(height: 10),
                           Container(
                             padding: const EdgeInsets.all(10),
                             decoration: BoxDecoration(
-                              color: const Color(0xFFFEF2F2),
-                              borderRadius: BorderRadius.circular(10),
+                              color: const Color(0xFFFDF4F2),
+                              borderRadius: BorderRadius.circular(12),
                               border: Border.all(
-                                color: const Color(0xFFFECACA),
+                                color: const Color(0xFFF4C2BC),
                               ),
                             ),
                             child: Row(
@@ -4496,7 +6975,7 @@ class _DelegationsHubPageState extends State<_DelegationsHubPage> {
                                 const Icon(
                                   Icons.error_outline_rounded,
                                   size: 18,
-                                  color: Color(0xFFDC2626),
+                                  color: Color(0xFFC4392E),
                                 ),
                                 const SizedBox(width: 7),
                                 Expanded(
@@ -4505,7 +6984,7 @@ class _DelegationsHubPageState extends State<_DelegationsHubPage> {
                                     style: const TextStyle(
                                       fontSize: 11,
                                       fontWeight: FontWeight.w700,
-                                      color: Color(0xFFB91C1C),
+                                      color: Color(0xFFA82F26),
                                     ),
                                   ),
                                 ),
@@ -4538,12 +7017,65 @@ class _DelegationsHubPageState extends State<_DelegationsHubPage> {
                               );
                               return;
                             }
+                            final delegateFnd = AppIdentity.normalize(
+                              delegateIdController.text,
+                            );
+                            // الإضافة بالرقم التعريفي فقط: به يصل التفويض.
+                            if (!isReceived && delegateFnd.isEmpty) {
+                              setModalState(
+                                () => validationMessage =
+                                    'أدخل الرقم التعريفي للمفوَّض — التفويض '
+                                    'يصل ويُقبل بالرقم التعريفي فقط.',
+                              );
+                              return;
+                            }
+                            if (!isReceived && delegateFnd.isNotEmpty) {
+                              if (!AppIdentity.isValid(delegateFnd)) {
+                                setModalState(
+                                  () => validationMessage =
+                                      'الرقم التعريفي بصيغة FND-XXXX-XXXX',
+                                );
+                                return;
+                              }
+                              if (delegateFnd == AppIdentity.id) {
+                                setModalState(
+                                  () => validationMessage =
+                                      'لا يمكن تفويض نفسك',
+                                );
+                                return;
+                              }
+                            }
+                            // رقم جديد ← بانتظار القبول؛ نفس الرقم ← يبقى رده.
+                            final idMeta = <String>[
+                              if (!isReceived &&
+                                  AppIdentity.isValid(delegateFnd)) ...[
+                                '${DelegationRecord.fndPrefix}$delegateFnd',
+                                '${DelegationRecord.ownerNamePrefix}'
+                                    '${AppSettings.instance.name}',
+                                '${DelegationRecord.acceptPrefix}'
+                                    '${DelegationRecord.delegateFndOf(existing?.permissions ?? const <String>[]) == delegateFnd && previousAnswer.isNotEmpty ? previousAnswer : 'pending'}',
+                              ],
+                            ];
+                            // تأكيد قبل الحفظ، ثم رسالة «تم ... بنجاح».
+                            final confirmed = await confirmAction(
+                              context,
+                              title: existing == null
+                                  ? 'حفظ التفويض'
+                                  : 'حفظ التعديل',
+                              message: existing == null
+                                  ? 'هل تريد حفظ تفويض «$name»؟'
+                                  : 'هل تريد حفظ تعديل تفويض «$name»؟',
+                              confirmLabel: 'تأكيد',
+                            );
+                            if (!confirmed || !context.mounted) return;
                             final record = _DelegationRecord(
                               // بدون تمرير المعرّف يُنشئ الحفظ سجلًا جديدًا
                               // في كل مرة بدل تعديل القائم — نسخة مكررة عند
                               // كل ضغطة "حفظ التعديل".
                               id: existing?.id,
-                              notes: existing?.notes,
+                              notes: notesController.text.trim().isEmpty
+                                  ? null
+                                  : notesController.text.trim(),
                               // الاتجاه محفوظ داخل مرجع المفوَّض، فلا
                               // يحتاج عمودًا جديدًا في قاعدة البيانات.
                               delegateRef: isReceived
@@ -4556,9 +7088,87 @@ class _DelegationsHubPageState extends State<_DelegationsHubPage> {
                                 selectedType,
                                 selectedSubScopes,
                               ),
-                              permissions: selectedPermissions.toList(
-                                growable: false,
-                              ),
+                              // العناصر المحددة والسقف والسجل تُحفظ مع
+                              // الصلاحيات.
+                              permissions: DelegationRecord.withLog([
+                                ...selectedPermissions,
+                                ...?existing?.permissions.where(
+                                  (p) => p.startsWith(
+                                    DelegationRecord.logPrefix,
+                                  ),
+                                ),
+                                ...selectedTargets
+                                    .where(
+                                      (t) => selectedSubScopes.contains(t.sub),
+                                    )
+                                    .map((t) => t.encode()),
+                                ...idMeta,
+                                if (selectedPermissions.contains(
+                                      'تنفيذ المدفوعات والتحويلات',
+                                    ) &&
+                                    (int.tryParse(
+                                              limitController.text.trim(),
+                                            ) ??
+                                            0) >
+                                        0)
+                                  '${DelegationRecord.limitPrefix}'
+                                      '${int.parse(limitController.text.trim())}',
+                              ], () {
+                                // سجل التعديل بما تغيّر فعلًا — ويصل نصه
+                                // للمفوَّض إشعارًا.
+                                final old = existing;
+                                if (old == null) return 'إنشاء التفويض';
+                                final before = DelegationRecord
+                                    .plainPermissions(old.permissions)
+                                    .toSet();
+                                final after = selectedPermissions
+                                    .where((p) => !DelegationRecord.isMeta(p))
+                                    .toSet();
+                                final addedPerms = after.difference(before);
+                                final removedPerms = before.difference(after);
+                                final scope = DelegationRecord.composeScope(
+                                  selectedType,
+                                  selectedSubScopes,
+                                );
+                                final oldTargets = {
+                                  for (final p in old.permissions)
+                                    if (p.startsWith(
+                                      DelegationRecord.targetPrefix,
+                                    ))
+                                      p,
+                                };
+                                final newTargets = {
+                                  for (final t in selectedTargets)
+                                    if (selectedSubScopes.contains(t.sub))
+                                      t.encode(),
+                                };
+                                final parts = <String>[
+                                  if (addedPerms.isNotEmpty)
+                                    'أُضيفت صلاحية: ${addedPerms.join('، ')}',
+                                  if (removedPerms.isNotEmpty)
+                                    'أُزيلت صلاحية: ${removedPerms.join('، ')}',
+                                  if (!DateUtils.isSameDay(
+                                        old.startDate,
+                                        startDate,
+                                      ) ||
+                                      !DateUtils.isSameDay(
+                                        old.endDate,
+                                        endDate,
+                                      ))
+                                    'المدة: ${_formatDate(startDate)} - '
+                                        '${_formatDate(endDate)}',
+                                  if (old.delegationType != scope)
+                                    'النطاق: $scope',
+                                  if (oldTargets.length != newTargets.length ||
+                                      !oldTargets.containsAll(newTargets))
+                                    'تغيّرت العناصر المفوَّض بها',
+                                  if (old.delegateName.trim() != name)
+                                    'المفوَّض: $name',
+                                ];
+                                return parts.isEmpty
+                                    ? 'تعديل التفويض'
+                                    : 'تعديل التفويض — ${parts.join(' · ')}';
+                              }()),
                               startDate: startDate,
                               endDate: endDate,
                               active: existing?.active ?? true,
@@ -4578,7 +7188,7 @@ class _DelegationsHubPageState extends State<_DelegationsHubPage> {
                             );
                           },
                           style: FilledButton.styleFrom(
-                            backgroundColor: const Color(0xFF087F6A),
+                            backgroundColor: const Color(0xFF0E7161),
                             foregroundColor: Colors.white,
                             padding: const EdgeInsets.symmetric(vertical: 14),
                             shape: RoundedRectangleBorder(
@@ -4601,6 +7211,490 @@ class _DelegationsHubPageState extends State<_DelegationsHubPage> {
       },
     );
     delegateController.dispose();
+    delegateIdController.dispose();
+    limitController.dispose();
+    notesController.dispose();
+  }
+
+  /// ملخص العناصر المحددة داخل قسم فرعي: «كل العهد» أو عدد المحدد مع
+  /// رقائق قابلة للإزالة، وزر لتعديل الاختيار.
+  Widget _delegationTargetsTile({
+    required String sub,
+    required List<DelegationTarget> targets,
+    required VoidCallback onChange,
+    required void Function(DelegationTarget target) onRemove,
+  }) {
+    final plural = DelegationTargets.pluralOf(sub);
+    return Container(
+      margin: const EdgeInsets.only(top: 8),
+      padding: const EdgeInsets.fromLTRB(12, 8, 6, 10),
+      decoration: BoxDecoration(
+        color: const Color(0xFFF4F8F7),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: const Color(0xFFE4EAE8)),
+      ),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Row(
+            children: [
+              Container(
+                width: 32,
+                height: 32,
+                decoration: BoxDecoration(
+                  color: const Color(0xFF0E7161).withValues(alpha: 0.12),
+                  borderRadius: BorderRadius.circular(10),
+                ),
+                child: Icon(
+                  _delegationTargetIcon(sub),
+                  size: 18,
+                  color: const Color(0xFF0E7161),
+                ),
+              ),
+              const SizedBox(width: 8),
+              Expanded(
+                child: Column(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    Text(
+                      sub,
+                      style: const TextStyle(
+                        fontSize: 12,
+                        fontWeight: FontWeight.w900,
+                        color: Color(0xFF1C2C29),
+                      ),
+                    ),
+                    Text(
+                      targets.isEmpty
+                          ? '${AppTr.tr('التفويض على كل')} ${AppTr.tr(plural)}'
+                          : '${targets.length} ${AppTr.tr('عنصر محدد فقط')}',
+                      style: const TextStyle(
+                        fontSize: 10.5,
+                        fontWeight: FontWeight.w700,
+                        color: Color(0xFF76837F),
+                      ),
+                    ),
+                  ],
+                ),
+              ),
+              TextButton.icon(
+                onPressed: onChange,
+                icon: const Icon(Icons.manage_search_rounded, size: 18),
+                label: Text(
+                  targets.isEmpty ? 'تحديد عناصر' : 'تعديل',
+                  style: const TextStyle(
+                    fontSize: 11.5,
+                    fontWeight: FontWeight.w900,
+                  ),
+                ),
+                style: TextButton.styleFrom(
+                  foregroundColor: const Color(0xFF0E7161),
+                ),
+              ),
+            ],
+          ),
+          if (targets.isNotEmpty) ...[
+            const SizedBox(height: 6),
+            Wrap(
+              spacing: 6,
+              runSpacing: 6,
+              children: [
+                for (final target in targets)
+                  InputChip(
+                    visualDensity: VisualDensity.compact,
+                    backgroundColor: Colors.white,
+                    side: const BorderSide(color: Color(0xFFDDE5E3)),
+                    label: Text(
+                      target.label,
+                      style: const TextStyle(
+                        fontSize: 11,
+                        fontWeight: FontWeight.w800,
+                        color: Color(0xFF1C2C29),
+                      ),
+                    ),
+                    deleteIconColor: const Color(0xFF76837F),
+                    onDeleted: () => onRemove(target),
+                  ),
+              ],
+            ),
+          ],
+        ],
+      ),
+    );
+  }
+
+  IconData _delegationTargetIcon(String sub) => switch (sub) {
+    'عهدة مالية' => Icons.inventory_2_outlined,
+    'مالية' => Icons.account_balance_wallet_outlined,
+    'مستند' => Icons.description_outlined,
+    'المتابعة والتخطيط' => Icons.task_alt_outlined,
+    'أدوية وبيانات وكلمات سر' => Icons.medication_outlined,
+    'نمط الحياة' => Icons.celebration_outlined,
+    'مواقع وأماكن' => Icons.location_on_outlined,
+    'مشاركات مشتركة' => Icons.diversity_3_rounded,
+    'الرحلة / السفر' => Icons.flight_takeoff_rounded,
+    'جمعية مالية' => Icons.savings_outlined,
+    'الأفراد' => Icons.person_outline_rounded,
+    'الجهات والشركات' => Icons.apartment_outlined,
+    'العقارات' => Icons.apartment_rounded,
+    'الأنشطة التجارية' => Icons.storefront_outlined,
+    'المركبات ووسائل النقل' => Icons.directions_car_outlined,
+    _ => Icons.checklist_rounded,
+  };
+
+  /// قائمة عناصر القسم الفرعي (كل العهد، كل العقارات...) مع بحث واختيار
+  /// متعدد. تُعيد: null = إلغاء، مجموعة فارغة = «الكل»، أو العناصر المحددة.
+  Future<Set<DelegationTarget>?> _pickDelegationTargets(
+    String main,
+    String sub,
+    Set<DelegationTarget> current,
+  ) async {
+    List<DelegationTarget> items;
+    try {
+      items = await DelegationTargets.load(main, sub);
+    } catch (_) {
+      _notify('تعذّر تحميل العناصر. تحقّق من الاتصال وحاول مجددًا.');
+      return null;
+    }
+    if (!mounted) return null;
+    final plural = DelegationTargets.pluralOf(sub);
+    final icon = _delegationTargetIcon(sub);
+    final chosen = <String>{for (final t in current) t.key};
+    var query = '';
+    return showModalBottomSheet<Set<DelegationTarget>>(
+      context: context,
+      isScrollControlled: true,
+      backgroundColor: Colors.white,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(
+          top: Radius.circular(AppTheme.rCard),
+        ),
+      ),
+      builder: (sheetContext) => StatefulBuilder(
+        builder: (sheetContext, setSheet) {
+          final q = query.trim();
+          final shown = items
+              .where(
+                (t) =>
+                    q.isEmpty ||
+                    t.label.contains(q) ||
+                    t.subtitle.contains(q),
+              )
+              .toList(growable: false);
+          final allChosen =
+              items.isNotEmpty && items.every((t) => chosen.contains(t.key));
+          return Directionality(
+            textDirection: AppTr.uiDir,
+            child: SafeArea(
+              top: false,
+              child: SizedBox(
+                height: MediaQuery.sizeOf(sheetContext).height * 0.86,
+                child: Padding(
+                  padding: EdgeInsets.fromLTRB(
+                    16,
+                    10,
+                    16,
+                    12 + MediaQuery.of(sheetContext).viewInsets.bottom,
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      Center(
+                        child: Container(
+                          width: 40,
+                          height: 4,
+                          decoration: BoxDecoration(
+                            color: const Color(0xFFDDE5E3),
+                            borderRadius: BorderRadius.circular(99),
+                          ),
+                        ),
+                      ),
+                      const SizedBox(height: 12),
+                      Row(
+                        children: [
+                          Container(
+                            width: 42,
+                            height: 42,
+                            decoration: BoxDecoration(
+                              color: const Color(
+                                0xFF0E7161,
+                              ).withValues(alpha: 0.12),
+                              borderRadius: BorderRadius.circular(13),
+                            ),
+                            child: Icon(
+                              icon,
+                              color: const Color(0xFF0E7161),
+                            ),
+                          ),
+                          const SizedBox(width: 10),
+                          Expanded(
+                            child: Column(
+                              crossAxisAlignment: CrossAxisAlignment.start,
+                              children: [
+                                Text(
+                                  '${AppTr.tr('التفويض على')} ${AppTr.tr(plural)}',
+                                  style: const TextStyle(
+                                    fontSize: 15,
+                                    fontWeight: FontWeight.w900,
+                                    color: Color(0xFF1C2C29),
+                                  ),
+                                ),
+                                const SizedBox(height: 2),
+                                const Text(
+                                  'اختر عنصرًا أو أكثر ليقتصر التفويض عليه، '
+                                  'أو فوّض على الكل.',
+                                  style: TextStyle(
+                                    fontSize: 10.5,
+                                    fontWeight: FontWeight.w600,
+                                    color: Color(0xFF76837F),
+                                  ),
+                                ),
+                              ],
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 12),
+                      TextField(
+                        textDirection: AppTr.uiDir,
+                        onChanged: (value) => setSheet(() => query = value),
+                        decoration: InputDecoration(
+                          isDense: true,
+                          hintText: AppTr.tr('ابحث بالاسم أو التفاصيل'),
+                          prefixIcon: const Icon(
+                            Icons.search_rounded,
+                            size: 20,
+                          ),
+                          filled: true,
+                          fillColor: AppTheme.field,
+                          border: OutlineInputBorder(
+                            borderRadius: BorderRadius.circular(
+                              AppTheme.rField,
+                            ),
+                            borderSide: BorderSide.none,
+                          ),
+                        ),
+                      ),
+                      const SizedBox(height: 6),
+                      Row(
+                        children: [
+                          Expanded(
+                            child: Text(
+                              '${items.length} ${AppTr.tr('عنصر')} • '
+                              '${chosen.length} ${AppTr.tr('محدد')}',
+                              style: const TextStyle(
+                                fontSize: 11,
+                                fontWeight: FontWeight.w800,
+                                color: Color(0xFF5C6B68),
+                              ),
+                            ),
+                          ),
+                          if (items.isNotEmpty)
+                            TextButton(
+                              onPressed: () => setSheet(() {
+                                if (allChosen) {
+                                  chosen.clear();
+                                } else {
+                                  chosen.addAll(items.map((t) => t.key));
+                                }
+                              }),
+                              child: Text(
+                                allChosen ? 'إلغاء التحديد' : 'تحديد الكل',
+                                style: const TextStyle(
+                                  fontSize: 11.5,
+                                  fontWeight: FontWeight.w900,
+                                ),
+                              ),
+                            ),
+                        ],
+                      ),
+                      Expanded(
+                        child: shown.isEmpty
+                            ? Center(
+                                child: Text(
+                                  items.isEmpty
+                                      ? '${AppTr.tr('لا توجد عناصر في')} '
+                                            '${AppTr.tr(plural)} '
+                                            '${AppTr.tr('بعد — سيشمل التفويض ما يُضاف لاحقًا.')}'
+                                      : AppTr.tr('لا يوجد ما يطابق البحث.'),
+                                  textAlign: TextAlign.center,
+                                  style: const TextStyle(
+                                    fontSize: 12,
+                                    fontWeight: FontWeight.w700,
+                                    color: Color(0xFF8C9A97),
+                                  ),
+                                ),
+                              )
+                            : ListView.separated(
+                                itemCount: shown.length,
+                                separatorBuilder: (_, __) =>
+                                    const SizedBox(height: 8),
+                                itemBuilder: (context, index) {
+                                  final item = shown[index];
+                                  final on = chosen.contains(item.key);
+                                  return InkWell(
+                                    borderRadius: BorderRadius.circular(14),
+                                    onTap: () => setSheet(() {
+                                      if (on) {
+                                        chosen.remove(item.key);
+                                      } else {
+                                        chosen.add(item.key);
+                                      }
+                                    }),
+                                    child: AnimatedContainer(
+                                      duration: const Duration(
+                                        milliseconds: 160,
+                                      ),
+                                      padding: const EdgeInsets.fromLTRB(
+                                        12,
+                                        10,
+                                        10,
+                                        10,
+                                      ),
+                                      decoration: BoxDecoration(
+                                        color: on
+                                            ? const Color(0xFFE9F4F1)
+                                            : const Color(0xFFF7FAF9),
+                                        borderRadius: BorderRadius.circular(
+                                          14,
+                                        ),
+                                        border: Border.all(
+                                          color: on
+                                              ? const Color(0xFF0E7161)
+                                              : const Color(0xFFE4EAE8),
+                                          width: on ? 1.4 : 1,
+                                        ),
+                                      ),
+                                      child: Row(
+                                        children: [
+                                          Container(
+                                            width: 38,
+                                            height: 38,
+                                            decoration: BoxDecoration(
+                                              color: Colors.white,
+                                              borderRadius:
+                                                  BorderRadius.circular(11),
+                                            ),
+                                            child: Icon(
+                                              item.kind == 'unit'
+                                                  ? Icons.meeting_room_outlined
+                                                  : icon,
+                                              size: 20,
+                                              color: const Color(0xFF0E7161),
+                                            ),
+                                          ),
+                                          const SizedBox(width: 10),
+                                          Expanded(
+                                            child: Column(
+                                              crossAxisAlignment:
+                                                  CrossAxisAlignment.start,
+                                              children: [
+                                                FittedBox(fit: BoxFit.scaleDown, alignment: AlignmentDirectional.centerStart, child: Text(
+                                                  item.label,
+                                                  maxLines: 1,
+                                                  style: const TextStyle(
+                                                    fontSize: 13,
+                                                    fontWeight:
+                                                        FontWeight.w900,
+                                                    color: Color(0xFF1C2C29),
+                                                  ),
+                                                )),
+                                                if (item.subtitle.isNotEmpty)
+                                                  FittedBox(fit: BoxFit.scaleDown, alignment: AlignmentDirectional.centerStart, child: Text(
+                                                    item.subtitle,
+                                                    maxLines: 1,
+                                                    style: const TextStyle(
+                                                      fontSize: 10.5,
+                                                      fontWeight:
+                                                          FontWeight.w600,
+                                                      color: Color(
+                                                        0xFF76837F,
+                                                      ),
+                                                    ),
+                                                  )),
+                                              ],
+                                            ),
+                                          ),
+                                          Icon(
+                                            on
+                                                ? Icons.check_circle_rounded
+                                                : Icons
+                                                      .radio_button_unchecked_rounded,
+                                            color: on
+                                                ? const Color(0xFF0E7161)
+                                                : const Color(0xFFB4BFBC),
+                                          ),
+                                        ],
+                                      ),
+                                    ),
+                                  );
+                                },
+                              ),
+                      ),
+                      const SizedBox(height: 10),
+                      Row(
+                        children: [
+                          Expanded(
+                            child: OutlinedButton(
+                              onPressed: () => Navigator.pop(
+                                sheetContext,
+                                <DelegationTarget>{},
+                              ),
+                              style: OutlinedButton.styleFrom(
+                                foregroundColor: const Color(0xFF0E7161),
+                                minimumSize: const Size.fromHeight(46),
+                                side: const BorderSide(
+                                  color: Color(0xFFB9DFD6),
+                                ),
+                                shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(12),
+                                ),
+                              ),
+                              child: FittedBox(fit: BoxFit.scaleDown, alignment: AlignmentDirectional.centerStart, child: Text(
+                                '${AppTr.tr('كل')} ${AppTr.tr(plural)}',
+                                maxLines: 1,
+                                style: const TextStyle(
+                                  fontWeight: FontWeight.w900,
+                                ),
+                              )),
+                            ),
+                          ),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: FilledButton(
+                              onPressed: chosen.isEmpty
+                                  ? null
+                                  : () => Navigator.pop(sheetContext, {
+                                      for (final t in items)
+                                        if (chosen.contains(t.key)) t,
+                                    }),
+                              style: FilledButton.styleFrom(
+                                backgroundColor: const Color(0xFF0E7161),
+                                foregroundColor: Colors.white,
+                                minimumSize: const Size.fromHeight(46),
+                                shape: RoundedRectangleBorder(
+                                  borderRadius: BorderRadius.circular(12),
+                                ),
+                              ),
+                              child: Text(
+                                '${AppTr.tr('تأكيد')} (${chosen.length})',
+                                style: const TextStyle(
+                                  fontWeight: FontWeight.w900,
+                                ),
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ],
+                  ),
+                ),
+              ),
+            ),
+          );
+        },
+      ),
+    );
   }
 
   @override
@@ -4632,24 +7726,24 @@ class _DelegationsHubPageState extends State<_DelegationsHubPage> {
                 padding: const EdgeInsets.all(12),
                 margin: const EdgeInsets.only(bottom: 12),
                 decoration: BoxDecoration(
-                  color: const Color(0xFFFEF2F2),
+                  color: const Color(0xFFFDF4F2),
                   borderRadius: BorderRadius.circular(12),
-                  border: Border.all(color: const Color(0xFFFECACA)),
+                  border: Border.all(color: const Color(0xFFF4C2BC)),
                 ),
                 child: Row(
                   children: [
                     const Icon(
                       Icons.error_outline_rounded,
-                      color: Color(0xFFB42318),
+                      color: Color(0xFFA82F26),
                     ),
                     const SizedBox(width: 8),
                     Expanded(
                       child: Text(
                         _loadError!,
                         style: const TextStyle(
-                          fontSize: 11.5,
+                          fontSize: 11,
                           fontWeight: FontWeight.w700,
-                          color: Color(0xFFB42318),
+                          color: Color(0xFFA82F26),
                         ),
                       ),
                     ),
@@ -4665,9 +7759,9 @@ class _DelegationsHubPageState extends State<_DelegationsHubPage> {
               key: const ValueKey('delegations-overview'),
               padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
               decoration: BoxDecoration(
-                color: const Color(0xFFE7F3F0),
+                color: const Color(0xFFF2F6F5),
                 borderRadius: BorderRadius.circular(16),
-                border: Border.all(color: const Color(0xFFCBE3DD)),
+                border: Border.all(color: const Color(0xFFD5DEDB)),
               ),
               child: Row(
                 crossAxisAlignment: CrossAxisAlignment.start,
@@ -4676,8 +7770,8 @@ class _DelegationsHubPageState extends State<_DelegationsHubPage> {
                     width: 34,
                     height: 34,
                     decoration: BoxDecoration(
-                      color: const Color(0xFF087F6A),
-                      borderRadius: BorderRadius.circular(10),
+                      color: const Color(0xFF0E7161),
+                      borderRadius: BorderRadius.circular(12),
                     ),
                     child: const Icon(
                       Icons.admin_panel_settings_outlined,
@@ -4695,26 +7789,25 @@ class _DelegationsHubPageState extends State<_DelegationsHubPage> {
                           style: TextStyle(
                             fontSize: 13,
                             fontWeight: FontWeight.w900,
-                            color: Color(0xFF173B35),
+                            color: Color(0xFF04413B),
                           ),
                         ),
                         const SizedBox(height: 2),
                         const Text(
                           'المفوَّض ونطاقه وصلاحياته ومدته.',
-                          maxLines: 1,
-                          overflow: TextOverflow.ellipsis,
+                          maxLines: 3,
                           style: TextStyle(
-                            fontSize: 10.5,
-                            color: Color(0xFF52716B),
+                            fontSize: 10,
+                            color: Color(0xFF5C6B68),
                           ),
                         ),
                         const SizedBox(height: 5),
                         Text(
                           '${_delegations.length} تفويضات مسجلة',
                           style: const TextStyle(
-                            fontSize: 10.5,
+                            fontSize: 10,
                             fontWeight: FontWeight.w800,
-                            color: Color(0xFF087F6A),
+                            color: Color(0xFF0E7161),
                           ),
                         ),
                       ],
@@ -4728,7 +7821,7 @@ class _DelegationsHubPageState extends State<_DelegationsHubPage> {
               key: const ValueKey('create-delegation'),
               onPressed: _openCreateSheet,
               style: FilledButton.styleFrom(
-                backgroundColor: const Color(0xFF087F6A),
+                backgroundColor: const Color(0xFF0E7161),
                 foregroundColor: Colors.white,
                 minimumSize: const Size.fromHeight(50),
                 shape: RoundedRectangleBorder(
@@ -4738,7 +7831,7 @@ class _DelegationsHubPageState extends State<_DelegationsHubPage> {
               icon: const Icon(Icons.add_rounded),
               label: const Text(
                 'إنشاء تفويض جديد',
-                style: TextStyle(fontSize: 13.5, fontWeight: FontWeight.w900),
+                style: TextStyle(fontSize: 13, fontWeight: FontWeight.w900),
               ),
             ),
             const SizedBox(height: 12),
@@ -4791,9 +7884,9 @@ class _DelegationsHubPageState extends State<_DelegationsHubPage> {
                     const Text(
                       'التفويضات المسجلة',
                       style: TextStyle(
-                        fontSize: 13.5,
+                        fontSize: 13,
                         fontWeight: FontWeight.w900,
-                        color: Color(0xFF24332F),
+                        color: Color(0xFF1C2C29),
                       ),
                     ),
                     const SizedBox(width: 6),
@@ -4802,14 +7895,14 @@ class _DelegationsHubPageState extends State<_DelegationsHubPage> {
                       style: const TextStyle(
                         fontSize: 12,
                         fontWeight: FontWeight.w700,
-                        color: Color(0xFF087F6A),
+                        color: Color(0xFF0E7161),
                       ),
                     ),
                     const SizedBox(width: 2),
                     const Icon(
                       Icons.keyboard_arrow_down_rounded,
                       size: 19,
-                      color: Color(0xFF087F6A),
+                      color: Color(0xFF0E7161),
                     ),
                     const Spacer(),
                     Text(
@@ -4817,7 +7910,7 @@ class _DelegationsHubPageState extends State<_DelegationsHubPage> {
                       style: const TextStyle(
                         fontSize: 12,
                         fontWeight: FontWeight.w800,
-                        color: Color(0xFF71807C),
+                        color: Color(0xFF76837F),
                       ),
                     ),
                   ],
@@ -4832,21 +7925,42 @@ class _DelegationsHubPageState extends State<_DelegationsHubPage> {
                 final item = entry.value;
                 final sourceIndex = _delegations.indexOf(item);
                 final status = _statusOf(item);
+                // تفويض وصلني: يظهر باسم من فوّضني.
+                final owner = DelegationRecord.ownerNameOf(item.permissions);
                 return _DelegationCard(
                   key: ValueKey('delegation-${item.id ?? item.delegateName}'),
-                  record: item,
+                  record: item.isIncoming && owner.isNotEmpty
+                      ? item.copyWith(delegateName: owner)
+                      : item,
                   statusLabel: status.label,
                   statusColor: status.color,
                   statusIcon: status.icon,
                   periodSummary: _periodSummary(item),
                   formattedPeriod:
                       '${_formatDate(item.startDate)} - ${_formatDate(item.endDate)}',
-                  onTap: () => Navigator.of(context).push(
-                    MaterialPageRoute(
-                      builder: (_) => _DelegationDetailsPage(record: item),
-                    ),
-                  ),
+                  incoming: item.isIncoming,
+                  onTap: item.isIncoming
+                      ? () => showIncomingDelegation(
+                          context,
+                          item.source!,
+                          onChanged: _load,
+                        )
+                      : () => Navigator.of(context).push(
+                          MaterialPageRoute(
+                            builder: (_) =>
+                                _DelegationDetailsPage(record: item),
+                          ),
+                        ),
                   onAction: (action) async {
+                    // تفويض وصلني من حساب آخر: الاطلاع والرد فقط.
+                    if (item.isIncoming) {
+                      await showIncomingDelegation(
+                        context,
+                        item.source!,
+                        onChanged: _load,
+                      );
+                      return;
+                    }
                     if (action == 'view') {
                       Navigator.of(context).push(
                         MaterialPageRoute(
@@ -4859,9 +7973,54 @@ class _DelegationsHubPageState extends State<_DelegationsHubPage> {
                       _openCreateSheet(existing: item, index: sourceIndex);
                       return;
                     }
+                    if (action == 'revoke') {
+                      // إلغاء فوري: ينتهي اليوم، ويبقى في «المنتهية» مع سجله.
+                      final today = DateUtils.dateOnly(DateTime.now());
+                      await _persist(
+                        item.copyWith(
+                          active: true,
+                          startDate: item.startDate.isAfter(today)
+                              ? today
+                              : null,
+                          endDate: today,
+                          permissions: DelegationRecord.withLog(
+                            item.permissions,
+                            'إلغاء فوري للتفويض',
+                          ),
+                        ),
+                        notice: 'تم إلغاء التفويض فورًا',
+                      );
+                      return;
+                    }
+                    if (action == 'extend') {
+                      final today = DateUtils.dateOnly(DateTime.now());
+                      final base = item.endDate.isAfter(today)
+                          ? item.endDate
+                          : today;
+                      final newEnd = base.add(const Duration(days: 30));
+                      await _persist(
+                        item.copyWith(
+                          endDate: newEnd,
+                          permissions: DelegationRecord.withLog(
+                            item.permissions,
+                            'تمديد التفويض حتى ${_formatDate(newEnd)}',
+                          ),
+                        ),
+                        notice: 'تم تمديد التفويض شهرًا',
+                      );
+                      return;
+                    }
                     if (action == 'toggle') {
                       await _persist(
-                        item.copyWith(active: !item.active),
+                        item.copyWith(
+                          active: !item.active,
+                          permissions: DelegationRecord.withLog(
+                            item.permissions,
+                            item.active
+                                ? 'إيقاف التفويض مؤقتًا'
+                                : 'إعادة تفعيل التفويض',
+                          ),
+                        ),
                         notice: item.active
                             ? 'تم إيقاف التفويض'
                             : 'تم تفعيل التفويض',
@@ -4874,7 +8033,7 @@ class _DelegationsHubPageState extends State<_DelegationsHubPage> {
                       try {
                         await _repository.deleteDelegation(id);
                         await _load();
-                        _notify('تم حذف التفويض');
+                        _notify('تم حذف التفويض بنجاح');
                       } catch (_) {
                         _notify('تعذّر حذف التفويض');
                       }
@@ -4893,6 +8052,7 @@ class _DelegationsHubPageState extends State<_DelegationsHubPage> {
 class _DelegationRecord {
   const _DelegationRecord({
     this.id,
+    this.source,
     this.delegateRef,
     required this.delegateName,
     required this.delegationType,
@@ -4918,7 +8078,14 @@ class _DelegationRecord {
   /// بادئة تُميّز التفويضات الواردة إليّ داخل [delegateRef].
   static const receivedMarker = 'dir:received';
 
-  bool get isReceived => (delegateRef ?? '').startsWith(receivedMarker);
+  /// السجل كما جاء من قاعدة البيانات (لتفويض وصلني من حساب آخر).
+  final DelegationRecord? source;
+
+  /// تفويض وصلني من حساب آخر بالرقم التعريفي.
+  bool get isIncoming => source?.isIncoming ?? false;
+
+  bool get isReceived =>
+      isIncoming || (delegateRef ?? '').startsWith(receivedMarker);
   final String delegateName;
   final String delegationType;
   final List<String> permissions;
@@ -4930,6 +8097,7 @@ class _DelegationRecord {
   /// تحويل من/إلى سجل قاعدة البيانات.
   factory _DelegationRecord.fromRecord(DelegationRecord r) => _DelegationRecord(
     id: r.id,
+    source: r,
     delegateRef: r.delegateRef,
     delegateName: r.delegateName,
     delegationType: r.scope,
@@ -4965,6 +8133,7 @@ class _DelegationRecord {
   }) {
     return _DelegationRecord(
       id: id ?? this.id,
+      source: source,
       delegateRef: delegateRef ?? this.delegateRef,
       delegateName: delegateName ?? this.delegateName,
       delegationType: delegationType ?? this.delegationType,
@@ -4975,6 +8144,86 @@ class _DelegationRecord {
       notes: notes ?? this.notes,
     );
   }
+}
+
+/// النطاق مع عدد العناصر المحددة: «الالتزامات الشخصية — عهدة مالية • 2».
+String _delegationScopeLabel(_DelegationRecord record) {
+  final count = DelegationRecord.targetCountOf(record.permissions);
+  if (count == 0) return record.delegationType;
+  return '${record.delegationType} • $count ${AppTr.tr('عنصر محدد')}';
+}
+
+/// في تفاصيل التفويض: العناصر المحددة، وسقف المبلغ، والغرض.
+List<Widget> _delegationExtraDetails(_DelegationRecord record) {
+  final targets = [
+    for (final p in record.permissions)
+      if (DelegationTarget.decode(p) case final target?) target,
+  ];
+  final limit = DelegationRecord.limitOf(record.permissions);
+  final notes = (record.notes ?? '').trim();
+  final log = DelegationRecord.logOf(record.permissions);
+  String two(int v) => v.toString().padLeft(2, '0');
+  Widget title(String text) => Padding(
+    padding: const EdgeInsets.only(top: 12, bottom: 8),
+    child: Text(
+      text,
+      style: const TextStyle(
+        fontSize: 13,
+        fontWeight: FontWeight.w900,
+        color: Color(0xFF022E2A),
+      ),
+    ),
+  );
+  Widget line(IconData icon, String text) => Padding(
+    padding: const EdgeInsets.only(bottom: 6),
+    child: Row(
+      children: [
+        Icon(icon, size: 17, color: const Color(0xFF34A894)),
+        const SizedBox(width: 7),
+        Expanded(
+          child: Text(
+            text,
+            textAlign: TextAlign.right,
+            style: const TextStyle(
+              fontSize: 13,
+              fontWeight: FontWeight.w700,
+              color: Color(0xFF2C3B38),
+            ),
+          ),
+        ),
+      ],
+    ),
+  );
+  return [
+    if (targets.isNotEmpty) ...[
+      title('العناصر المحددة'),
+      for (final target in targets)
+        line(Icons.push_pin_outlined, '${target.label} — ${target.sub}'),
+    ],
+    if (limit != null) ...[
+      title('سقف المبلغ للعملية الواحدة'),
+      line(
+        Icons.payments_outlined,
+        AppSettings.maskAmount('$limit ${AppSettings.currencySuffix}'),
+      ),
+    ],
+    if (notes.isNotEmpty) ...[
+      title('الغرض من التفويض'),
+      line(Icons.notes_rounded, notes),
+    ],
+    title('سجل التفويض'),
+    if (log.isEmpty)
+      line(Icons.history_rounded, 'لا توجد أحداث مسجلة بعد')
+    else
+      // أحداث المفوَّض يكتبها الخادم بتوقيت UTC: تُعرض بالتوقيت المحلي.
+      for (final (stamp, what) in log)
+        if (stamp.toLocal() case final at)
+          line(
+            Icons.history_rounded,
+            '${AppTr.tr(what)} — ${two(at.day)}/${two(at.month)}/'
+            '${at.year} ${two(at.hour)}:${two(at.minute)}',
+          ),
+  ];
 }
 
 class _DelegationCard extends StatelessWidget {
@@ -4988,7 +8237,12 @@ class _DelegationCard extends StatelessWidget {
     required this.formattedPeriod,
     required this.onTap,
     required this.onAction,
+    this.incoming = false,
   });
+
+  /// تفويض وصلني: الاطلاع فقط — التعديل والإيقاف والتمديد والإنهاء لمن
+  /// فوّضني وحده.
+  final bool incoming;
 
   final _DelegationRecord record;
   final String statusLabel;
@@ -5012,7 +8266,7 @@ class _DelegationCard extends StatelessWidget {
         color: Colors.transparent,
         child: InkWell(
           onTap: onTap,
-          borderRadius: BorderRadius.circular(14),
+          borderRadius: BorderRadius.circular(12),
           child: Padding(
             padding: const EdgeInsets.fromLTRB(13, 12, 10, 12),
             child: Column(
@@ -5024,12 +8278,12 @@ class _DelegationCard extends StatelessWidget {
                       width: 40,
                       height: 40,
                       decoration: BoxDecoration(
-                        color: const Color(0xFFE7F3F0),
-                        borderRadius: BorderRadius.circular(11),
+                        color: const Color(0xFFF2F6F5),
+                        borderRadius: BorderRadius.circular(12),
                       ),
                       child: const Icon(
                         Icons.person_outline_rounded,
-                        color: Color(0xFF087F6A),
+                        color: Color(0xFF0E7161),
                         size: 21,
                       ),
                     ),
@@ -5038,50 +8292,60 @@ class _DelegationCard extends StatelessWidget {
                       child: Column(
                         crossAxisAlignment: CrossAxisAlignment.start,
                         children: [
-                          Text(
-                            record.delegateName,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
-                            style: const TextStyle(
-                              fontSize: 14.5,
-                              fontWeight: FontWeight.w900,
-                              color: Color(0xFF1F2D29),
-                            ),
+                          // الاسم والحالة في سطر واحد.
+                          Row(
+                            children: [
+                              Expanded(
+                                child: Text(
+                                  record.delegateName,
+                                  maxLines: 3,
+                                  style: const TextStyle(
+                                    fontSize: 15,
+                                    fontWeight: FontWeight.w900,
+                                    color: Color(0xFF1C2C29),
+                                  ),
+                                ),
+                              ),
+                              const SizedBox(width: 6),
+                              Container(
+                                padding: const EdgeInsets.symmetric(
+                                  horizontal: 8,
+                                  vertical: 4,
+                                ),
+                                decoration: BoxDecoration(
+                                  color: statusColor.withValues(alpha: 0.10),
+                                  borderRadius: BorderRadius.circular(20),
+                                ),
+                                child: Row(
+                                  mainAxisSize: MainAxisSize.min,
+                                  children: [
+                                    Icon(
+                                      statusIcon,
+                                      size: 13,
+                                      color: statusColor,
+                                    ),
+                                    const SizedBox(width: 4),
+                                    Text(
+                                      statusLabel,
+                                      style: TextStyle(
+                                        fontSize: 10,
+                                        fontWeight: FontWeight.w900,
+                                        color: statusColor,
+                                      ),
+                                    ),
+                                  ],
+                                ),
+                              ),
+                            ],
                           ),
                           const SizedBox(height: 3),
                           Text(
-                            record.delegationType,
-                            maxLines: 1,
-                            overflow: TextOverflow.ellipsis,
+                            _delegationScopeLabel(record),
+                            maxLines: 3,
                             style: const TextStyle(
-                              fontSize: 11.5,
+                              fontSize: 11,
                               fontWeight: FontWeight.w700,
-                              color: Color(0xFF71807C),
-                            ),
-                          ),
-                        ],
-                      ),
-                    ),
-                    Container(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 8,
-                        vertical: 5,
-                      ),
-                      decoration: BoxDecoration(
-                        color: statusColor.withValues(alpha: 0.10),
-                        borderRadius: BorderRadius.circular(20),
-                      ),
-                      child: Row(
-                        mainAxisSize: MainAxisSize.min,
-                        children: [
-                          Icon(statusIcon, size: 13, color: statusColor),
-                          const SizedBox(width: 4),
-                          Text(
-                            statusLabel,
-                            style: TextStyle(
-                              fontSize: 9.5,
-                              fontWeight: FontWeight.w900,
-                              color: statusColor,
+                              color: Color(0xFF76837F),
                             ),
                           ),
                         ],
@@ -5089,36 +8353,59 @@ class _DelegationCard extends StatelessWidget {
                     ),
                     PopupMenuButton<String>(
                       tooltip: AppTr.tr('خيارات التفويض'),
-                      onSelected: onAction,
+                      onSelected: (action) => _confirmAndRun(context, action),
                       itemBuilder: (context) => [
                         const PopupMenuItem(
                           value: 'view',
                           child: Text('عرض التفاصيل'),
                         ),
-                        const PopupMenuItem(
-                          value: 'edit',
-                          child: Text('تعديل التفويض'),
-                        ),
-                        PopupMenuItem(
-                          value: 'toggle',
-                          child: Text(
-                            record.active ? 'إيقاف مؤقت' : 'إعادة التفعيل',
+                        // ما عدا العرض لمن فوّض وحده.
+                        if (!incoming) ...[
+                          const PopupMenuItem(
+                            value: 'edit',
+                            child: Text('تعديل التفويض'),
                           ),
-                        ),
-                        const PopupMenuItem(
-                          value: 'delete',
-                          child: Text('حذف التفويض'),
-                        ),
+                          PopupMenuItem(
+                            value: 'toggle',
+                            child: Text(
+                              record.active ? 'إيقاف مؤقت' : 'إعادة التفعيل',
+                            ),
+                          ),
+                          const PopupMenuItem(
+                            value: 'extend',
+                            child: Text('تمديد شهر'),
+                          ),
+                          // واحد منهما فقط: الساري يُنهى (ويبقى سجله في
+                          // «المنتهية»)، والمنتهي يُحذف.
+                          if (statusLabel != 'منتهي')
+                            const PopupMenuItem(
+                              value: 'revoke',
+                              child: Text('إلغاء فوري'),
+                            )
+                          else
+                            const PopupMenuItem(
+                              value: 'delete',
+                              child: Text('حذف التفويض'),
+                            ),
+                        ],
                       ],
                       icon: const Icon(
                         Icons.more_vert_rounded,
                         size: 20,
-                        color: Color(0xFF84918D),
+                        color: Color(0xFF8C9A97),
                       ),
                     ),
                   ],
                 ),
                 const SizedBox(height: 11),
+                // ١. العناصر والفئات المفوَّض بها.
+                _delegationBlock(
+                  Icons.push_pin_outlined,
+                  'العناصر والفئات المفوَّض بها:',
+                  _delegationItemsOf(record),
+                ),
+                const SizedBox(height: 8),
+                // ٢. مدة التفويض: من، إلى، الباقي.
                 Container(
                   padding: const EdgeInsets.symmetric(
                     horizontal: 10,
@@ -5128,61 +8415,89 @@ class _DelegationCard extends StatelessWidget {
                     color: AppTheme.surfaceInner,
                     borderRadius: BorderRadius.circular(AppTheme.rInner),
                   ),
-                  child: Row(
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
                     children: [
-                      const Icon(
-                        Icons.calendar_month_outlined,
-                        size: 16,
-                        color: Color(0xFF64748B),
-                      ),
-                      const SizedBox(width: 6),
-                      Expanded(
-                        child: Text(
-                          formattedPeriod,
-                          style: const TextStyle(
-                            fontSize: 10.5,
-                            fontWeight: FontWeight.w700,
-                            color: Color(0xFF475569),
+                      Row(
+                        children: [
+                          const Icon(
+                            Icons.calendar_month_outlined,
+                            size: 16,
+                            color: Color(0xFF5C6B68),
                           ),
-                        ),
+                          const SizedBox(width: 6),
+                          const Text(
+                            'مدة التفويض:',
+                            style: TextStyle(
+                              fontSize: 11,
+                              fontWeight: FontWeight.w900,
+                              color: Color(0xFF1C2C29),
+                            ),
+                          ),
+                          const Spacer(),
+                          Text(
+                            periodSummary,
+                            style: TextStyle(
+                              fontSize: 10.5,
+                              fontWeight: FontWeight.w900,
+                              color: statusColor,
+                            ),
+                          ),
+                        ],
                       ),
+                      const SizedBox(height: 4),
                       Text(
-                        periodSummary,
-                        style: TextStyle(
-                          fontSize: 10,
-                          fontWeight: FontWeight.w900,
-                          color: statusColor,
+                        '${AppTr.tr('من')} ${formattedPeriod.split(' - ').first}'
+                        '   ${AppTr.tr('إلى')} ${formattedPeriod.split(' - ').last}',
+                        style: const TextStyle(
+                          fontSize: 10.5,
+                          fontWeight: FontWeight.w800,
+                          color: Color(0xFF46534F),
                         ),
                       ),
                     ],
                   ),
                 ),
-                const SizedBox(height: 9),
-                Row(
-                  children: [
-                    const Icon(
-                      Icons.key_outlined,
-                      size: 16,
-                      color: Color(0xFF71807C),
+                const SizedBox(height: 8),
+                // ٣. الصلاحيات: سطر بسهم يفتح نافذة فيها كلها.
+                InkWell(
+                  onTap: () => _showPermissions(
+                    context,
+                    DelegationRecord.plainPermissions(record.permissions),
+                  ),
+                  borderRadius: BorderRadius.circular(AppTheme.rInner),
+                  child: Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 10,
+                      vertical: 9,
                     ),
-                    const SizedBox(width: 6),
-                    Expanded(
-                      child: Text(
-                        record.permissions.join(' • '),
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(
-                          fontSize: 10.5,
-                          color: Color(0xFF64748B),
+                    decoration: BoxDecoration(
+                      color: AppTheme.surfaceInner,
+                      borderRadius: BorderRadius.circular(AppTheme.rInner),
+                    ),
+                    child: Row(
+                      children: [
+                        const Icon(
+                          Icons.key_outlined,
+                          size: 16,
+                          color: Color(0xFF76837F),
                         ),
-                      ),
+                        const SizedBox(width: 6),
+                        Expanded(
+                          child: Text(
+                            '${AppTr.tr('الصلاحيات')} '
+                            '(${DelegationRecord.plainPermissions(record.permissions).length})',
+                            style: const TextStyle(
+                              fontSize: 11,
+                              fontWeight: FontWeight.w900,
+                              color: Color(0xFF1C2C29),
+                            ),
+                          ),
+                        ),
+                        const AppChevron(size: 20),
+                      ],
                     ),
-                    const Icon(
-                      Icons.arrow_forward_ios_rounded,
-                      size: 13,
-                      color: Color(0xFFB3BEBA),
-                    ),
-                  ],
+                  ),
                 ),
               ],
             ),
@@ -5190,6 +8505,168 @@ class _DelegationCard extends StatelessWidget {
         ),
       ),
     );
+  }
+
+  /// نافذة الصلاحيات مرقّمة، وعلامة × لإغلاقها.
+  Future<void> _showPermissions(BuildContext context, List<String> items) {
+    return showDialog<void>(
+      context: context,
+      builder: (dialogContext) => Directionality(
+        textDirection: AppTr.uiDir,
+        child: Dialog(
+          backgroundColor: AppTheme.page,
+          shape: RoundedRectangleBorder(
+            borderRadius: BorderRadius.circular(AppTheme.rCard),
+          ),
+          child: Padding(
+            padding: const EdgeInsets.fromLTRB(16, 6, 6, 16),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Row(
+                  children: [
+                    const Expanded(
+                      child: Text(
+                        'الصلاحيات',
+                        style: TextStyle(
+                          fontSize: 14,
+                          fontWeight: FontWeight.w900,
+                          color: Color(0xFF1C2C29),
+                        ),
+                      ),
+                    ),
+                    IconButton(
+                      tooltip: AppTr.tr('إغلاق'),
+                      onPressed: () => Navigator.of(dialogContext).pop(),
+                      icon: const Icon(Icons.close_rounded),
+                    ),
+                  ],
+                ),
+                if (items.isEmpty)
+                  const Text('—')
+                else
+                  for (var i = 0; i < items.length; i++)
+                    Padding(
+                      padding: const EdgeInsetsDirectional.only(
+                        end: 10,
+                        top: 5,
+                      ),
+                      child: Text(
+                        '${i + 1}. ${AppTr.tr(items[i])}',
+                        style: const TextStyle(
+                          fontSize: 12.5,
+                          height: 1.4,
+                          fontWeight: FontWeight.w700,
+                          color: Color(0xFF46534F),
+                        ),
+                      ),
+                    ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+  }
+
+  /// عنوان وتحته عناصر مرقّمة: ١. ٢. ٣.
+  Widget _delegationBlock(IconData icon, String title, List<String> items) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Row(
+          children: [
+            Icon(icon, size: 16, color: const Color(0xFF76837F)),
+            const SizedBox(width: 6),
+            Text(
+              title,
+              style: const TextStyle(
+                fontSize: 11,
+                fontWeight: FontWeight.w900,
+                color: Color(0xFF1C2C29),
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 3),
+        if (items.isEmpty)
+          const Padding(
+            padding: EdgeInsetsDirectional.only(start: 22),
+            child: Text(
+              '—',
+              style: TextStyle(fontSize: 10.5, color: Color(0xFF5C6B68)),
+            ),
+          )
+        else
+          for (var i = 0; i < items.length; i++)
+            Padding(
+              padding: const EdgeInsetsDirectional.only(start: 22, top: 2),
+              child: Text(
+                '${i + 1}. ${AppTr.tr(items[i])}',
+                style: const TextStyle(
+                  fontSize: 10.5,
+                  height: 1.4,
+                  fontWeight: FontWeight.w700,
+                  color: Color(0xFF46534F),
+                ),
+              ),
+            ),
+      ],
+    );
+  }
+
+  /// ما فُوِّض به: العناصر المحددة، وإلا الفئات، وإلا القسم كاملًا.
+  static List<String> _delegationItemsOf(_DelegationRecord record) {
+    final targets = [
+      for (final p in record.permissions)
+        if (DelegationTarget.decode(p) case final target?) target,
+    ];
+    if (targets.isNotEmpty) {
+      return [for (final t in targets) '${t.label} (${t.sub})'];
+    }
+    final parts = record.delegationType.split(' — ');
+    final subs = parts.length > 1
+        ? [
+            for (final s in parts[1].split('،'))
+              if (s.trim().isNotEmpty) s.trim(),
+          ]
+        : const <String>[];
+    return subs.isNotEmpty ? subs : [parts.first.trim()];
+  }
+
+  /// تأكيد قبل أي إجراء على التفويض ثم تنفيذه.
+  Future<void> _confirmAndRun(BuildContext context, String action) async {
+    final danger = action == 'delete' || action == 'revoke';
+    final ok = await confirmAction(
+      context,
+      title: switch (action) {
+        'view' => 'عرض التفاصيل',
+        'edit' => 'تعديل التفويض',
+        'toggle' => record.active
+            ? 'إيقاف التفويض مؤقتًا'
+            : 'إعادة تفعيل التفويض',
+        'extend' => 'تمديد التفويض شهرًا',
+        'revoke' => 'إلغاء التفويض فورًا',
+        _ => 'حذف التفويض',
+      },
+      message: switch (action) {
+        'delete' => 'سيُحذف التفويض نهائيًا ولا يمكن التراجع. هل تريد الحذف؟',
+        'revoke' =>
+          'سينتهي تفويض «${record.delegateName}» اليوم ويُنقل إلى المنتهية '
+              'مع بقاء سجله. هل تريد الإلغاء؟',
+        'extend' => 'ستُضاف 30 يومًا إلى تاريخ نهاية التفويض.',
+        _ => 'هل تريد تنفيذ هذا الإجراء على التفويض؟',
+      },
+      confirmLabel: switch (action) {
+        'delete' => 'حذف',
+        'revoke' => 'إلغاء التفويض',
+        _ => 'تأكيد',
+      },
+      danger: danger,
+    );
+    if (!ok || !context.mounted) return;
+    onAction(action);
   }
 }
 
@@ -5209,7 +8686,7 @@ class _DelegationsEmptyState extends StatelessWidget {
           Icon(
             Icons.manage_accounts_outlined,
             size: 32,
-            color: Color(0xFF94A3B8),
+            color: Color(0xFF8C9A97),
           ),
           SizedBox(height: 9),
           Text(
@@ -5218,14 +8695,14 @@ class _DelegationsEmptyState extends StatelessWidget {
             style: TextStyle(
               fontSize: 13,
               fontWeight: FontWeight.w900,
-              color: Color(0xFF334155),
+              color: Color(0xFF2C3B38),
             ),
           ),
           SizedBox(height: 3),
           Text(
             'اختر حالة أخرى أو أنشئ تفويضًا جديدًا.',
             textAlign: TextAlign.center,
-            style: TextStyle(fontSize: 11, color: Color(0xFF718096)),
+            style: TextStyle(fontSize: 11, color: Color(0xFF76837F)),
           ),
         ],
       ),
@@ -5254,7 +8731,7 @@ class _DelegationDirectionButton extends StatelessWidget {
 
   @override
   Widget build(BuildContext context) {
-    const accent = Color(0xFF087F6A);
+    const accent = Color(0xFF0E7161);
     return Material(
       color: selected ? accent : Colors.white,
       borderRadius: BorderRadius.circular(AppTheme.rField),
@@ -5268,7 +8745,7 @@ class _DelegationDirectionButton extends StatelessWidget {
           decoration: BoxDecoration(
             borderRadius: BorderRadius.circular(AppTheme.rField),
             border: Border.all(
-              color: selected ? accent : const Color(0xFFDDE5E2),
+              color: selected ? accent : const Color(0xFFE4EAE8),
             ),
           ),
           padding: const EdgeInsets.symmetric(horizontal: 10, vertical: 11),
@@ -5284,12 +8761,11 @@ class _DelegationDirectionButton extends StatelessWidget {
               Flexible(
                 child: Text(
                   label,
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
+                  maxLines: 3,
                   style: TextStyle(
-                    fontSize: 11.5,
+                    fontSize: 11,
                     fontWeight: FontWeight.w800,
-                    color: selected ? Colors.white : const Color(0xFF24332F),
+                    color: selected ? Colors.white : const Color(0xFF1C2C29),
                   ),
                 ),
               ),
@@ -5303,13 +8779,13 @@ class _DelegationDirectionButton extends StatelessWidget {
                   decoration: BoxDecoration(
                     color: selected
                         ? Colors.white.withValues(alpha: 0.22)
-                        : const Color(0xFFEFF4F3),
+                        : const Color(0xFFF2F6F5),
                     borderRadius: BorderRadius.circular(20),
                   ),
                   child: Text(
                     '$count',
                     style: TextStyle(
-                      fontSize: 10.5,
+                      fontSize: 10,
                       fontWeight: FontWeight.w900,
                       color: selected ? Colors.white : accent,
                     ),
@@ -5344,7 +8820,7 @@ class _DateFieldTile extends StatelessWidget {
           label,
           style: const TextStyle(
             fontWeight: FontWeight.w700,
-            color: Color(0xFF334155),
+            color: Color(0xFF2C3B38),
           ),
         ),
         const SizedBox(height: 6),
@@ -5399,30 +8875,30 @@ class _DelegationDetailsPage extends StatelessWidget {
     final status = ended
         ? (
             label: 'منتهي',
-            color: const Color(0xFF64748B),
+            color: const Color(0xFF5C6B68),
             icon: Icons.event_busy_outlined,
           )
         : !record.active
         ? (
             label: 'موقوف',
-            color: const Color(0xFFDC2626),
+            color: const Color(0xFFC4392E),
             icon: Icons.pause_circle_outline_rounded,
           )
         : scheduled
         ? (
             label: 'مجدول',
-            color: const Color(0xFF2563EB),
+            color: const Color(0xFF0A5A50),
             icon: Icons.schedule_rounded,
           )
         : expiring
         ? (
             label: 'ينتهي قريبًا',
-            color: const Color(0xFFD97706),
+            color: const Color(0xFFCE8422),
             icon: Icons.timer_outlined,
           )
         : (
             label: 'نشط',
-            color: const Color(0xFF07835C),
+            color: const Color(0xFF178F7B),
             icon: Icons.check_circle_outline_rounded,
           );
     return Scaffold(
@@ -5443,9 +8919,9 @@ class _DelegationDetailsPage extends StatelessWidget {
             Container(
               padding: const EdgeInsets.all(15),
               decoration: BoxDecoration(
-                color: const Color(0xFFE7F3F0),
-                borderRadius: BorderRadius.circular(14),
-                border: Border.all(color: const Color(0xFFCBE3DD)),
+                color: const Color(0xFFF2F6F5),
+                borderRadius: BorderRadius.circular(12),
+                border: Border.all(color: const Color(0xFFD5DEDB)),
               ),
               child: Row(
                 children: [
@@ -5453,12 +8929,12 @@ class _DelegationDetailsPage extends StatelessWidget {
                     width: 44,
                     height: 44,
                     decoration: BoxDecoration(
-                      color: const Color(0xFFE8EBFF),
+                      color: const Color(0xFFB9DFD6),
                       borderRadius: BorderRadius.circular(12),
                     ),
                     child: const Icon(
                       Icons.person_outline_rounded,
-                      color: Color(0xFF087F6A),
+                      color: Color(0xFF0E7161),
                     ),
                   ),
                   const SizedBox(width: 10),
@@ -5469,9 +8945,9 @@ class _DelegationDetailsPage extends StatelessWidget {
                         Text(
                           record.delegateName,
                           style: const TextStyle(
-                            fontSize: 18,
+                            fontSize: 17,
                             fontWeight: FontWeight.w900,
-                            color: Color(0xFF0F172A),
+                            color: Color(0xFF022E2A),
                           ),
                         ),
                         const SizedBox(height: 3),
@@ -5480,7 +8956,7 @@ class _DelegationDetailsPage extends StatelessWidget {
                           style: const TextStyle(
                             fontSize: 13,
                             fontWeight: FontWeight.w700,
-                            color: Color(0xFF64748B),
+                            color: Color(0xFF5C6B68),
                           ),
                         ),
                       ],
@@ -5527,9 +9003,9 @@ class _DelegationDetailsPage extends StatelessWidget {
                   const Text(
                     'فترة التفويض',
                     style: TextStyle(
-                      fontSize: 14,
+                      fontSize: 13,
                       fontWeight: FontWeight.w900,
-                      color: Color(0xFF0F172A),
+                      color: Color(0xFF022E2A),
                     ),
                   ),
                   const SizedBox(height: 8),
@@ -5556,13 +9032,13 @@ class _DelegationDetailsPage extends StatelessWidget {
                   const Text(
                     'الصلاحيات',
                     style: TextStyle(
-                      fontSize: 14,
+                      fontSize: 13,
                       fontWeight: FontWeight.w900,
-                      color: Color(0xFF0F172A),
+                      color: Color(0xFF022E2A),
                     ),
                   ),
                   const SizedBox(height: 8),
-                  ...record.permissions.map(
+                  ...DelegationRecord.plainPermissions(record.permissions).map(
                     (permission) => Padding(
                       padding: const EdgeInsets.only(bottom: 6),
                       child: Row(
@@ -5570,7 +9046,7 @@ class _DelegationDetailsPage extends StatelessWidget {
                           const Icon(
                             Icons.check_circle_rounded,
                             size: 17,
-                            color: Color(0xFF10B981),
+                            color: Color(0xFF34A894),
                           ),
                           const SizedBox(width: 7),
                           Expanded(
@@ -5580,7 +9056,7 @@ class _DelegationDetailsPage extends StatelessWidget {
                               style: const TextStyle(
                                 fontSize: 13,
                                 fontWeight: FontWeight.w700,
-                                color: Color(0xFF334155),
+                                color: Color(0xFF2C3B38),
                               ),
                             ),
                           ),
@@ -5588,6 +9064,7 @@ class _DelegationDetailsPage extends StatelessWidget {
                       ),
                     ),
                   ),
+                  ..._delegationExtraDetails(record),
                 ],
               ),
             ),
@@ -5623,11 +9100,11 @@ class _DelegationDetailValue extends StatelessWidget {
         children: [
           Row(
             children: [
-              Icon(icon, size: 15, color: const Color(0xFF71807C)),
+              Icon(icon, size: 15, color: const Color(0xFF76837F)),
               const SizedBox(width: 5),
               Text(
                 label,
-                style: const TextStyle(fontSize: 10, color: Color(0xFF71807C)),
+                style: const TextStyle(fontSize: 10, color: Color(0xFF76837F)),
               ),
             ],
           ),
@@ -5635,9 +9112,9 @@ class _DelegationDetailValue extends StatelessWidget {
           Text(
             value,
             style: const TextStyle(
-              fontSize: 11.5,
+              fontSize: 11,
               fontWeight: FontWeight.w900,
-              color: Color(0xFF334155),
+              color: Color(0xFF2C3B38),
             ),
           ),
         ],
@@ -5645,1688 +9122,3 @@ class _DelegationDetailValue extends StatelessWidget {
     );
   }
 }
-
-class _WalletsHubPage extends StatefulWidget {
-  const _WalletsHubPage();
-
-  @override
-  State<_WalletsHubPage> createState() => _WalletsHubPageState();
-}
-
-class _WalletsHubPageState extends State<_WalletsHubPage> {
-  static const _accent = Color(0xFF0F172A);
-  static const _incomeColor = Color(0xFF10B981);
-  static const _expenseColor = Color(0xFFEF4444);
-  static const _transferColor = Color(0xFF0EA5E9);
-  static const _hideBalancesKey = 'wallets_hide_balances_v1';
-
-  final WalletsRepository _repository = SupabaseWalletsRepository();
-
-  List<WalletRecord> _wallets = const [];
-  List<WalletTransactionRecord> _transactions = const [];
-  bool _loading = true;
-  String? _error;
-
-  /// إخفاء المبالغ بنقرة واحدة — سلوك قياسي في التطبيقات المالية عند فتح
-  /// التطبيق أمام الآخرين. يُحفظ الاختيار محليًا لأنه تفضيل عرض لا بيانات.
-  bool _hideBalances = false;
-
-  /// null = كل المحافظ.
-  String? _selectedWalletId;
-
-  @override
-  void initState() {
-    super.initState();
-    _restorePreference();
-    _load();
-  }
-
-  Future<void> _restorePreference() async {
-    try {
-      final prefs = await SharedPreferences.getInstance();
-      if (!mounted) return;
-      setState(
-        () => _hideBalances = prefs.getBool(_hideBalancesKey) ?? false,
-      );
-    } catch (_) {
-      // تفضيل عرض فقط — تجاهله بأمان.
-    }
-  }
-
-  Future<void> _toggleHideBalances() async {
-    final next = !_hideBalances;
-    setState(() => _hideBalances = next);
-    try {
-      final prefs = await SharedPreferences.getInstance();
-      await prefs.setBool(_hideBalancesKey, next);
-    } catch (_) {
-      // لا يمنع تغيير العرض.
-    }
-  }
-
-  Future<void> _load() async {
-    if (!mounted) return;
-    setState(() {
-      _loading = true;
-      _error = null;
-    });
-    try {
-      final wallets = await _repository.fetchWallets();
-      final transactions = await _repository.fetchTransactions();
-      if (!mounted) return;
-      setState(() {
-        _wallets = wallets;
-        _transactions = transactions;
-        // محفظة مختارة حُذفت: يعود العرض إلى الكل بدل قائمة فارغة أبدية.
-        if (_selectedWalletId != null &&
-            !wallets.any((w) => w.id == _selectedWalletId)) {
-          _selectedWalletId = null;
-        }
-        _loading = false;
-      });
-    } catch (error) {
-      if (!mounted) return;
-      setState(() {
-        _loading = false;
-        _error = 'تعذّر تحميل المحافظ. تحقّق من الاتصال وحاول مرة أخرى.';
-      });
-    }
-  }
-
-  // ===== حسابات حقيقية =====
-
-  List<WalletRecord> get _activeWallets =>
-      _wallets.where((w) => !w.isArchived).toList(growable: false);
-
-  /// رصيد محفظة = الرصيد الافتتاحي + كل الحركات الموقَّعة عليها.
-  double _balanceOf(WalletRecord wallet) {
-    final moves = _transactions
-        .where((t) => t.walletId == wallet.id)
-        .fold<double>(0, (sum, t) => sum + t.signedAmount);
-    return wallet.openingBalance + moves;
-  }
-
-  double get _totalBalance =>
-      _activeWallets.fold<double>(0, (sum, w) => sum + _balanceOf(w));
-
-  List<WalletTransactionRecord> get _visibleTransactions {
-    final id = _selectedWalletId;
-    final list = id == null
-        ? _transactions
-        : _transactions.where((t) => t.walletId == id).toList();
-    return list;
-  }
-
-  /// إجماليات الشهر الحالي — تُحسب من الحركات الفعلية. التحويلات الداخلية
-  /// مستبعدة عمدًا: نقل المال بين محفظتين ليس دخلًا ولا مصروفًا، واحتسابه
-  /// يضخّم الرقمين معًا ويعطي صورة مالية خاطئة.
-  (double income, double expense) get _monthTotals {
-    final now = DateTime.now();
-    var income = 0.0;
-    var expense = 0.0;
-    for (final t in _visibleTransactions) {
-      final date = t.occurredOn;
-      if (date == null || date.year != now.year || date.month != now.month) {
-        continue;
-      }
-      if (t.kind == WalletTransactionRecord.kindIncome) income += t.amount;
-      if (t.kind == WalletTransactionRecord.kindExpense) expense += t.amount;
-    }
-    return (income, expense);
-  }
-
-  String _money(double value) {
-    if (_hideBalances) return '•••••';
-    if (!value.isFinite) return '—';
-    final negative = value < 0;
-    final text = value.abs().toStringAsFixed(2);
-    final parts = text.split('.');
-    final buffer = StringBuffer();
-    for (var i = 0; i < parts[0].length; i++) {
-      if (i > 0 && (parts[0].length - i) % 3 == 0) buffer.write(',');
-      buffer.write(parts[0][i]);
-    }
-    return '${negative ? '-' : ''}$buffer.${parts[1]}';
-  }
-
-  String _fmtDate(DateTime? date) {
-    if (date == null) return 'بدون تاريخ';
-    return '${date.year}/${date.month.toString().padLeft(2, '0')}'
-        '/${date.day.toString().padLeft(2, '0')}';
-  }
-
-  String get _currency => _activeWallets.isEmpty
-      ? AppSettings.currencySuffix
-      : _activeWallets.first.currencyLabel;
-
-  void _toast(String message) {
-    ScaffoldMessenger.of(context).showSnackBar(
-      SnackBar(content: Text(message), behavior: SnackBarBehavior.floating),
-    );
-  }
-
-  Color _walletColor(WalletRecord wallet) =>
-      wallet.color == null ? _accent : Color(wallet.color!);
-
-  IconData _walletIcon(String kind) => switch (kind) {
-    WalletRecord.kindBank => Icons.account_balance_rounded,
-    WalletRecord.kindCard => Icons.credit_card_rounded,
-    WalletRecord.kindDigital => Icons.account_balance_wallet_rounded,
-    _ => Icons.payments_rounded,
-  };
-
-  // ===== نماذج =====
-
-  InputDecoration _field(String label) => InputDecoration(
-    labelText: label,
-    filled: true,
-    fillColor: AppTheme.field,
-    border: OutlineInputBorder(
-      borderRadius: BorderRadius.circular(AppTheme.rField),
-      borderSide: BorderSide.none,
-    ),
-    focusedBorder: OutlineInputBorder(
-      borderRadius: BorderRadius.circular(AppTheme.rField),
-      borderSide: const BorderSide(color: Color(0xFF0EA5E9), width: 1.4),
-    ),
-  );
-
-  Future<void> _openWalletForm({WalletRecord? existing}) async {
-    final nameCtrl = TextEditingController(text: existing?.name ?? '');
-    final issuerCtrl = TextEditingController(text: existing?.issuer ?? '');
-    final last4Ctrl = TextEditingController(text: existing?.last4 ?? '');
-    final openingCtrl = TextEditingController(
-      text: existing == null || existing.openingBalance == 0
-          ? ''
-          : existing.openingBalance.toStringAsFixed(2),
-    );
-    final notesCtrl = TextEditingController(text: existing?.notes ?? '');
-    var kind = existing?.kind ?? WalletRecord.kindCash;
-    var color = existing?.color ?? 0xFF0F172A;
-
-    const palette = [
-      0xFF0F172A,
-      0xFF0EA5E9,
-      0xFF10B981,
-      0xFF7C3AED,
-      0xFFF59E0B,
-      0xFFEF4444,
-    ];
-
-    final saved = await showModalBottomSheet<bool>(
-      context: context,
-      isScrollControlled: true,
-      backgroundColor: Colors.white,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(AppTheme.rCard)),
-      ),
-      builder: (sheetContext) => Directionality(
-        textDirection: AppTr.uiDir,
-        child: StatefulBuilder(
-          builder: (sheetContext, setSheetState) => Padding(
-            padding: EdgeInsets.fromLTRB(
-              18,
-              16,
-              18,
-              MediaQuery.of(sheetContext).viewInsets.bottom + 18,
-            ),
-            child: SingleChildScrollView(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Text(
-                    existing == null ? 'إضافة محفظة' : 'تعديل المحفظة',
-                    style: const TextStyle(
-                      fontSize: 16,
-                      fontWeight: FontWeight.w900,
-                      color: Color(0xFF0F172A),
-                    ),
-                  ),
-                  const SizedBox(height: 14),
-                  Row(
-                    children: [
-                      for (final k in WalletRecord.kinds) ...[
-                        Expanded(
-                          child: InkWell(
-                            onTap: () => setSheetState(() => kind = k),
-                            borderRadius: BorderRadius.circular(
-                              AppTheme.rIcon,
-                            ),
-                            child: Container(
-                              padding: const EdgeInsets.symmetric(
-                                vertical: 10,
-                                horizontal: 4,
-                              ),
-                              // بلا حدود؛ المحدَّد يتلوّن كبقية الشرائح.
-                              decoration: BoxDecoration(
-                                color: kind == k
-                                    ? const Color(
-                                        0xFF0EA5E9,
-                                      ).withValues(alpha: 0.13)
-                                    : AppTheme.field,
-                                borderRadius: BorderRadius.circular(
-                                  AppTheme.rIcon,
-                                ),
-                              ),
-                              child: Column(
-                                mainAxisSize: MainAxisSize.min,
-                                children: [
-                                  Icon(
-                                    _walletIcon(k),
-                                    size: 19,
-                                    color: kind == k
-                                        ? const Color(0xFF0EA5E9)
-                                        : const Color(0xFF94A3B8),
-                                  ),
-                                  const SizedBox(height: 4),
-                                  Text(
-                                    WalletRecord.kindLabel(k),
-                                    maxLines: 1,
-                                    overflow: TextOverflow.ellipsis,
-                                    style: TextStyle(
-                                      fontSize: 10.5,
-                                      fontWeight: kind == k
-                                          ? FontWeight.w900
-                                          : FontWeight.w700,
-                                      color: kind == k
-                                          ? const Color(0xFF0EA5E9)
-                                          : const Color(0xFF64748B),
-                                    ),
-                                  ),
-                                ],
-                              ),
-                            ),
-                          ),
-                        ),
-                        if (k != WalletRecord.kinds.last)
-                          const SizedBox(width: 7),
-                      ],
-                    ],
-                  ),
-                  const SizedBox(height: 12),
-                  TextField(
-                    controller: nameCtrl,
-                    textAlign: AppTr.alignEnd,
-                    decoration: _field('اسم المحفظة'),
-                  ),
-                  if (kind != WalletRecord.kindCash) ...[
-                    const SizedBox(height: 10),
-                    TextField(
-                      controller: issuerCtrl,
-                      textAlign: AppTr.alignEnd,
-                      decoration: _field(
-                        kind == WalletRecord.kindDigital
-                            ? 'المزوّد'
-                            : 'اسم البنك',
-                      ),
-                    ),
-                  ],
-                  if (kind == WalletRecord.kindCard) ...[
-                    const SizedBox(height: 10),
-                    TextField(
-                      controller: last4Ctrl,
-                      textAlign: AppTr.alignEnd,
-                      keyboardType: TextInputType.number,
-                      maxLength: 4,
-                      decoration: _field('آخر 4 أرقام'),
-                    ),
-                  ],
-                  const SizedBox(height: 10),
-                  TextField(
-                    controller: openingCtrl,
-                    textAlign: AppTr.alignEnd,
-                    keyboardType: const TextInputType.numberWithOptions(
-                      decimal: true,
-                      signed: true,
-                    ),
-                    decoration: _field('الرصيد الافتتاحي'),
-                  ),
-                  const SizedBox(height: 12),
-                  const Align(
-                    alignment: Alignment.centerRight,
-                    child: Text(
-                      'لون البطاقة',
-                      style: TextStyle(
-                        fontSize: 12,
-                        fontWeight: FontWeight.w800,
-                        color: Color(0xFF334155),
-                      ),
-                    ),
-                  ),
-                  const SizedBox(height: 8),
-                  Row(
-                    children: [
-                      for (final c in palette) ...[
-                        InkWell(
-                          onTap: () => setSheetState(() => color = c),
-                          borderRadius: BorderRadius.circular(99),
-                          child: Container(
-                            width: 32,
-                            height: 32,
-                            decoration: BoxDecoration(
-                              color: Color(c),
-                              shape: BoxShape.circle,
-                              border: Border.all(
-                                color: color == c
-                                    ? const Color(0xFF0F172A)
-                                    : Colors.transparent,
-                                width: 2.5,
-                              ),
-                            ),
-                          ),
-                        ),
-                        const SizedBox(width: 8),
-                      ],
-                    ],
-                  ),
-                  const SizedBox(height: 12),
-                  TextField(
-                    controller: notesCtrl,
-                    textAlign: AppTr.alignEnd,
-                    maxLines: 2,
-                    decoration: _field('ملاحظات (اختياري)'),
-                  ),
-                  const SizedBox(height: 16),
-                  FilledButton(
-                    style: FilledButton.styleFrom(
-                      backgroundColor: _accent,
-                      minimumSize: const Size.fromHeight(48),
-                      shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(AppTheme.rField),
-        ),
-                    ),
-                    onPressed: () async {
-                      final name = nameCtrl.text.trim();
-                      if (name.isEmpty) {
-                        ScaffoldMessenger.of(sheetContext).showSnackBar(
-                          const SnackBar(
-                            content: Text('أدخل اسم المحفظة أولاً'),
-                          ),
-                        );
-                        return;
-                      }
-                      final record = WalletRecord(
-                        id: existing?.id,
-                        name: name,
-                        kind: kind,
-                        issuer: issuerCtrl.text.trim().isEmpty
-                            ? null
-                            : issuerCtrl.text.trim(),
-                        last4: last4Ctrl.text.trim().isEmpty
-                            ? null
-                            : last4Ctrl.text.trim(),
-                        openingBalance:
-                            double.tryParse(openingCtrl.text.trim()) ?? 0,
-                        // المحافظ الجديدة تتبع عملة الإعدادات ولا تُثبَّت
-                        // على عملة مكتوبة في الشيفرة.
-                        currency: existing?.currency ?? '',
-                        color: color,
-                        isArchived: existing?.isArchived ?? false,
-                        isDefault: existing?.isDefault ?? false,
-                        notes: notesCtrl.text.trim().isEmpty
-                            ? null
-                            : notesCtrl.text.trim(),
-                      );
-                      try {
-                        await _repository.upsertWallet(record);
-                        if (!sheetContext.mounted) return;
-                        Navigator.of(sheetContext).pop(true);
-                      } catch (_) {
-                        if (!sheetContext.mounted) return;
-                        ScaffoldMessenger.of(sheetContext).showSnackBar(
-                          const SnackBar(content: Text('تعذّر حفظ المحفظة')),
-                        );
-                      }
-                    },
-                    child: Text(existing == null ? 'إضافة' : 'حفظ التعديل'),
-                  ),
-                ],
-              ),
-            ),
-          ),
-        ),
-      ),
-    );
-    if (saved == true) {
-      await _load();
-      if (mounted) {
-        _toast(existing == null ? 'تمت إضافة المحفظة' : 'تم حفظ التعديل');
-      }
-    }
-  }
-
-  Future<void> _openTransactionForm({
-    required String kind,
-    WalletTransactionRecord? existing,
-  }) async {
-    if (_activeWallets.isEmpty) {
-      _toast('أضف محفظة أولاً قبل تسجيل أي حركة');
-      return;
-    }
-    final income = kind == WalletTransactionRecord.kindIncome;
-    final amountCtrl = TextEditingController(
-      text: existing == null || existing.amount == 0
-          ? ''
-          : existing.amount.toStringAsFixed(2),
-    );
-    final categoryCtrl = TextEditingController(text: existing?.category ?? '');
-    final noteCtrl = TextEditingController(text: existing?.note ?? '');
-    // قائمة محافظ النموذج = المحافظ النشطة، مضافًا إليها محفظة الحركة
-    // الحالية إن كانت مؤرشفة. بدون ذلك تكون قيمة القائمة المنسدلة خارج
-    // عناصرها فيسقط التطبيق بتأكيد (assert) عند تعديل حركة على محفظة
-    // مؤرشفة، أو عند اختيار محفظة مؤرشفة من شريط التصفية ثم تسجيل حركة.
-    final preferredId =
-        existing?.walletId ?? _selectedWalletId ?? _activeWallets.first.id!;
-    final formWallets = <WalletRecord>[
-      ..._activeWallets,
-      ..._wallets.where(
-        (w) => w.id == preferredId && !_activeWallets.any((a) => a.id == w.id),
-      ),
-    ];
-    var walletId = formWallets.any((w) => w.id == preferredId)
-        ? preferredId
-        : formWallets.first.id!;
-    DateTime date = existing?.occurredOn ?? DateTime.now();
-    final accent = income ? _incomeColor : _expenseColor;
-    final suggestions = income
-        ? const ['راتب', 'إيجار', 'مبيعات', 'هدية', 'دخل آخر']
-        : const ['طعام', 'مواصلات', 'فواتير', 'تسوّق', 'صيانة', 'مصروف آخر'];
-
-    final saved = await showModalBottomSheet<bool>(
-      context: context,
-      isScrollControlled: true,
-      backgroundColor: Colors.white,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(AppTheme.rCard)),
-      ),
-      builder: (sheetContext) => Directionality(
-        textDirection: AppTr.uiDir,
-        child: StatefulBuilder(
-          builder: (sheetContext, setSheetState) => Padding(
-            padding: EdgeInsets.fromLTRB(
-              18,
-              16,
-              18,
-              MediaQuery.of(sheetContext).viewInsets.bottom + 18,
-            ),
-            child: SingleChildScrollView(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  Row(
-                    children: [
-                      Icon(
-                        income
-                            ? Icons.trending_up_rounded
-                            : Icons.trending_down_rounded,
-                        color: accent,
-                        size: 20,
-                      ),
-                      const SizedBox(width: 8),
-                      Text(
-                        existing == null
-                            ? (income ? 'إضافة دخل' : 'إضافة مصروف')
-                            : (income ? 'تعديل الدخل' : 'تعديل المصروف'),
-                        style: const TextStyle(
-                          fontSize: 16,
-                          fontWeight: FontWeight.w900,
-                          color: Color(0xFF0F172A),
-                        ),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 14),
-                  TextField(
-                    controller: amountCtrl,
-                    textAlign: AppTr.alignEnd,
-                    keyboardType: const TextInputType.numberWithOptions(
-                      decimal: true,
-                    ),
-                    decoration: _field('المبلغ'),
-                  ),
-                  const SizedBox(height: 10),
-                  DropdownButtonFormField<String>(
-                    initialValue: walletId,
-                    isExpanded: true,
-                    decoration: _field('المحفظة'),
-                    items: formWallets
-                        .map(
-                          (w) => DropdownMenuItem(
-                            value: w.id,
-                            child: Text(
-                              w.name,
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                            ),
-                          ),
-                        )
-                        .toList(growable: false),
-                    onChanged: (value) {
-                      if (value == null) return;
-                      setSheetState(() => walletId = value);
-                    },
-                  ),
-                  const SizedBox(height: 10),
-                  OutlinedButton.icon(
-                    onPressed: () async {
-                      final picked = await showDatePicker(
-                        context: sheetContext,
-                        initialDate: date,
-                        firstDate: DateTime(2015),
-                        lastDate: DateTime(2060),
-                        builder: (pickerContext, child) => Directionality(
-                          textDirection: AppTr.uiDir,
-                          child: child!,
-                        ),
-                      );
-                      if (picked != null && sheetContext.mounted) {
-                        setSheetState(() => date = picked);
-                      }
-                    },
-                    icon: const Icon(Icons.event_outlined, size: 18),
-                    label: Text(_fmtDate(date)),
-                  ),
-                  const SizedBox(height: 10),
-                  TextField(
-                    controller: categoryCtrl,
-                    textAlign: AppTr.alignEnd,
-                    decoration: _field('التصنيف'),
-                  ),
-                  const SizedBox(height: 8),
-                  Wrap(
-                    spacing: 6,
-                    runSpacing: 6,
-                    children: [
-                      for (final s in suggestions)
-                        ActionChip(
-                          label: Text(s, style: const TextStyle(fontSize: 11)),
-                          onPressed: () =>
-                              setSheetState(() => categoryCtrl.text = s),
-                        ),
-                    ],
-                  ),
-                  const SizedBox(height: 10),
-                  TextField(
-                    controller: noteCtrl,
-                    textAlign: AppTr.alignEnd,
-                    maxLines: 2,
-                    decoration: _field('ملاحظات (اختياري)'),
-                  ),
-                  const SizedBox(height: 16),
-                  FilledButton(
-                    style: FilledButton.styleFrom(
-                      backgroundColor: accent,
-                      minimumSize: const Size.fromHeight(48),
-                      shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(AppTheme.rField),
-        ),
-                    ),
-                    onPressed: () async {
-                      final amount =
-                          double.tryParse(amountCtrl.text.trim()) ?? 0;
-                      if (amount <= 0) {
-                        ScaffoldMessenger.of(sheetContext).showSnackBar(
-                          const SnackBar(
-                            content: Text('أدخل مبلغًا صحيحًا أكبر من صفر'),
-                          ),
-                        );
-                        return;
-                      }
-                      try {
-                        await _repository.upsertTransaction(
-                          WalletTransactionRecord(
-                            id: existing?.id,
-                            walletId: walletId,
-                            kind: kind,
-                            amount: amount,
-                            occurredOn: date,
-                            category: categoryCtrl.text.trim().isEmpty
-                                ? null
-                                : categoryCtrl.text.trim(),
-                            note: noteCtrl.text.trim().isEmpty
-                                ? null
-                                : noteCtrl.text.trim(),
-                          ),
-                        );
-                        if (!sheetContext.mounted) return;
-                        Navigator.of(sheetContext).pop(true);
-                      } catch (_) {
-                        if (!sheetContext.mounted) return;
-                        ScaffoldMessenger.of(sheetContext).showSnackBar(
-                          const SnackBar(content: Text('تعذّر حفظ الحركة')),
-                        );
-                      }
-                    },
-                    child: Text(existing == null ? 'حفظ' : 'حفظ التعديل'),
-                  ),
-                ],
-              ),
-            ),
-          ),
-        ),
-      ),
-    );
-    if (saved == true) await _load();
-  }
-
-  Future<void> _openTransferForm() async {
-    // التحويل يتطلّب محفظتين على الأقل — بدون هذا الشرط يظهر النموذج ثم
-    // يفشل عند الحفظ، أو يسمح بالتحويل من محفظة إلى نفسها بلا أي معنى.
-    if (_activeWallets.length < 2) {
-      _toast('التحويل يحتاج محفظتين على الأقل');
-      return;
-    }
-    final amountCtrl = TextEditingController();
-    final noteCtrl = TextEditingController();
-    var fromId = _activeWallets.first.id!;
-    var toId = _activeWallets[1].id!;
-    DateTime date = DateTime.now();
-
-    final saved = await showModalBottomSheet<bool>(
-      context: context,
-      isScrollControlled: true,
-      backgroundColor: Colors.white,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(AppTheme.rCard)),
-      ),
-      builder: (sheetContext) => Directionality(
-        textDirection: AppTr.uiDir,
-        child: StatefulBuilder(
-          builder: (sheetContext, setSheetState) => Padding(
-            padding: EdgeInsets.fromLTRB(
-              18,
-              16,
-              18,
-              MediaQuery.of(sheetContext).viewInsets.bottom + 18,
-            ),
-            child: SingleChildScrollView(
-              child: Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
-                mainAxisSize: MainAxisSize.min,
-                children: [
-                  const Row(
-                    children: [
-                      Icon(
-                        Icons.swap_horiz_rounded,
-                        color: _transferColor,
-                        size: 20,
-                      ),
-                      SizedBox(width: 8),
-                      Text(
-                        'تحويل بين المحافظ',
-                        style: TextStyle(
-                          fontSize: 16,
-                          fontWeight: FontWeight.w900,
-                          color: Color(0xFF0F172A),
-                        ),
-                      ),
-                    ],
-                  ),
-                  const SizedBox(height: 14),
-                  DropdownButtonFormField<String>(
-                    initialValue: fromId,
-                    isExpanded: true,
-                    decoration: _field('من محفظة'),
-                    items: _activeWallets
-                        .map(
-                          (w) => DropdownMenuItem(
-                            value: w.id,
-                            child: Text(
-                              w.name,
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                            ),
-                          ),
-                        )
-                        .toList(growable: false),
-                    onChanged: (value) {
-                      if (value == null) return;
-                      setSheetState(() {
-                        fromId = value;
-                        // منع التحويل إلى نفس المحفظة تلقائيًا.
-                        if (toId == fromId) {
-                          toId = _activeWallets
-                              .firstWhere((w) => w.id != fromId)
-                              .id!;
-                        }
-                      });
-                    },
-                  ),
-                  const SizedBox(height: 10),
-                  DropdownButtonFormField<String>(
-                    initialValue: toId,
-                    isExpanded: true,
-                    decoration: _field('إلى محفظة'),
-                    items: _activeWallets
-                        .where((w) => w.id != fromId)
-                        .map(
-                          (w) => DropdownMenuItem(
-                            value: w.id,
-                            child: Text(
-                              w.name,
-                              maxLines: 1,
-                              overflow: TextOverflow.ellipsis,
-                            ),
-                          ),
-                        )
-                        .toList(growable: false),
-                    onChanged: (value) {
-                      if (value == null) return;
-                      setSheetState(() => toId = value);
-                    },
-                  ),
-                  const SizedBox(height: 10),
-                  TextField(
-                    controller: amountCtrl,
-                    textAlign: AppTr.alignEnd,
-                    keyboardType: const TextInputType.numberWithOptions(
-                      decimal: true,
-                    ),
-                    decoration: _field('المبلغ'),
-                  ),
-                  const SizedBox(height: 10),
-                  OutlinedButton.icon(
-                    onPressed: () async {
-                      final picked = await showDatePicker(
-                        context: sheetContext,
-                        initialDate: date,
-                        firstDate: DateTime(2015),
-                        lastDate: DateTime(2060),
-                        builder: (pickerContext, child) => Directionality(
-                          textDirection: AppTr.uiDir,
-                          child: child!,
-                        ),
-                      );
-                      if (picked != null && sheetContext.mounted) {
-                        setSheetState(() => date = picked);
-                      }
-                    },
-                    icon: const Icon(Icons.event_outlined, size: 18),
-                    label: Text(_fmtDate(date)),
-                  ),
-                  const SizedBox(height: 10),
-                  TextField(
-                    controller: noteCtrl,
-                    textAlign: AppTr.alignEnd,
-                    decoration: _field('ملاحظات (اختياري)'),
-                  ),
-                  const SizedBox(height: 16),
-                  FilledButton(
-                    style: FilledButton.styleFrom(
-                      backgroundColor: _transferColor,
-                      minimumSize: const Size.fromHeight(48),
-                      shape: RoundedRectangleBorder(
-          borderRadius: BorderRadius.circular(AppTheme.rField),
-        ),
-                    ),
-                    onPressed: () async {
-                      final amount =
-                          double.tryParse(amountCtrl.text.trim()) ?? 0;
-                      if (amount <= 0) {
-                        ScaffoldMessenger.of(sheetContext).showSnackBar(
-                          const SnackBar(
-                            content: Text('أدخل مبلغًا صحيحًا أكبر من صفر'),
-                          ),
-                        );
-                        return;
-                      }
-                      if (fromId == toId) {
-                        ScaffoldMessenger.of(sheetContext).showSnackBar(
-                          const SnackBar(
-                            content: Text('اختر محفظتين مختلفتين'),
-                          ),
-                        );
-                        return;
-                      }
-                      try {
-                        await _repository.transfer(
-                          fromWalletId: fromId,
-                          toWalletId: toId,
-                          amount: amount,
-                          occurredOn: date,
-                          note: noteCtrl.text.trim().isEmpty
-                              ? null
-                              : noteCtrl.text.trim(),
-                        );
-                        if (!sheetContext.mounted) return;
-                        Navigator.of(sheetContext).pop(true);
-                      } catch (_) {
-                        if (!sheetContext.mounted) return;
-                        ScaffoldMessenger.of(sheetContext).showSnackBar(
-                          const SnackBar(content: Text('تعذّر تنفيذ التحويل')),
-                        );
-                      }
-                    },
-                    child: const Text('تنفيذ التحويل'),
-                  ),
-                ],
-              ),
-            ),
-          ),
-        ),
-      ),
-    );
-    if (saved == true) {
-      await _load();
-      if (mounted) _toast('تم تنفيذ التحويل');
-    }
-  }
-
-  Future<void> _walletMenu(WalletRecord wallet) async {
-    final action = await showModalBottomSheet<String>(
-      context: context,
-      backgroundColor: Colors.white,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(AppTheme.rCard)),
-      ),
-      builder: (sheetContext) => Directionality(
-        textDirection: AppTr.uiDir,
-        child: SafeArea(
-          top: false,
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              ListTile(
-                leading: const Icon(Icons.edit_outlined),
-                title: const Text('تعديل المحفظة'),
-                onTap: () => Navigator.of(sheetContext).pop('edit'),
-              ),
-              ListTile(
-                leading: Icon(
-                  wallet.isArchived
-                      ? Icons.unarchive_outlined
-                      : Icons.archive_outlined,
-                ),
-                title: Text(
-                  wallet.isArchived ? 'إلغاء الأرشفة' : 'أرشفة المحفظة',
-                ),
-                onTap: () => Navigator.of(sheetContext).pop('archive'),
-              ),
-              ListTile(
-                leading: const Icon(
-                  Icons.delete_outline_rounded,
-                  color: Color(0xFFEF4444),
-                ),
-                title: const Text(
-                  'حذف المحفظة',
-                  style: TextStyle(color: Color(0xFFEF4444)),
-                ),
-                onTap: () => Navigator.of(sheetContext).pop('delete'),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-    if (action == null || !mounted) return;
-
-    if (action == 'edit') {
-      await _openWalletForm(existing: wallet);
-      return;
-    }
-    if (action == 'archive') {
-      try {
-        await _repository.upsertWallet(
-          wallet.copyWith(isArchived: !wallet.isArchived),
-        );
-        // إلغاء تصفية القائمة إن كانت على المحفظة التي أُرشفت للتو.
-        if (!wallet.isArchived && _selectedWalletId == wallet.id) {
-          _selectedWalletId = null;
-        }
-        await _load();
-        if (mounted) {
-          _toast(
-            wallet.isArchived ? 'تم إخراجها من الأرشيف' : 'تمت أرشفة المحفظة',
-          );
-        }
-      } catch (_) {
-        if (mounted) _toast('تعذّر تنفيذ العملية');
-      }
-      return;
-    }
-
-    final own = _transactions.where((t) => t.walletId == wallet.id).toList();
-    final count = own.length;
-    // حذف المحفظة يحذف أيضًا الطرف المقابل لكل تحويل يخصّها من المحفظة
-    // الأخرى، وإلا بقي خصمٌ بلا إيداع مقابل. يجب أن يعرف المستخدم ذلك.
-    final transfers = own.where((t) => t.isTransfer).length;
-    final confirmed = await showDialog<bool>(
-      context: context,
-      builder: (dialogContext) => Directionality(
-        textDirection: AppTr.uiDir,
-        child: AlertDialog(
-          title: const Text('حذف المحفظة'),
-          // تحذير صريح بعدد الحركات التي ستُحذف معها — الحذف يُسقط كل
-          // حركاتها عبر cascade في قاعدة البيانات.
-          content: Text(
-            [
-              count == 0
-                  ? 'سيتم حذف "${wallet.name}" نهائيًا.'
-                  : 'سيتم حذف "${wallet.name}" و $count حركة مسجّلة عليها نهائيًا.',
-              if (transfers > 0)
-                'ومن بينها $transfers تحويلًا سيُحذف طرفه المقابل من المحفظة الأخرى أيضًا، فيتغيّر رصيدها.',
-            ].join('\n'),
-          ),
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.of(dialogContext).pop(false),
-              child: const Text('إلغاء'),
-            ),
-            TextButton(
-              onPressed: () => Navigator.of(dialogContext).pop(true),
-              child: const Text(
-                'حذف',
-                style: TextStyle(color: Color(0xFFEF4444)),
-              ),
-            ),
-          ],
-        ),
-      ),
-    );
-    if (confirmed != true || !mounted) return;
-    try {
-      await _repository.deleteWallet(wallet.id!);
-      await _load();
-      if (mounted) _toast('تم حذف المحفظة');
-    } catch (_) {
-      if (mounted) _toast('تعذّر حذف المحفظة');
-    }
-  }
-
-  Future<void> _transactionMenu(WalletTransactionRecord t) async {
-    final action = await showModalBottomSheet<String>(
-      context: context,
-      backgroundColor: Colors.white,
-      shape: const RoundedRectangleBorder(
-        borderRadius: BorderRadius.vertical(top: Radius.circular(AppTheme.rCard)),
-      ),
-      builder: (sheetContext) => Directionality(
-        textDirection: AppTr.uiDir,
-        child: SafeArea(
-          top: false,
-          child: Column(
-            mainAxisSize: MainAxisSize.min,
-            children: [
-              // التحويل لا يُعدَّل طرفًا واحدًا: تعديل جهة أو مبلغ طرف دون
-              // الآخر يترك المحفظتين بأرصدة غير متطابقة. يُحذف ويُعاد.
-              if (!t.isTransfer)
-                ListTile(
-                  leading: const Icon(Icons.edit_outlined),
-                  title: const Text('تعديل الحركة'),
-                  onTap: () => Navigator.of(sheetContext).pop('edit'),
-                ),
-              ListTile(
-                leading: const Icon(
-                  Icons.delete_outline_rounded,
-                  color: Color(0xFFEF4444),
-                ),
-                title: Text(
-                  t.isTransfer ? 'حذف التحويل (الطرفين)' : 'حذف الحركة',
-                  style: const TextStyle(color: Color(0xFFEF4444)),
-                ),
-                onTap: () => Navigator.of(sheetContext).pop('delete'),
-              ),
-            ],
-          ),
-        ),
-      ),
-    );
-    if (action == null || !mounted) return;
-    if (action == 'edit') {
-      await _openTransactionForm(kind: t.kind, existing: t);
-      return;
-    }
-    try {
-      await _repository.deleteTransaction(t);
-      await _load();
-      if (mounted) _toast('تم الحذف');
-    } catch (_) {
-      if (mounted) _toast('تعذّر الحذف');
-    }
-  }
-
-  // ===== الواجهة =====
-
-  @override
-  Widget build(BuildContext context) {
-    final totals = _monthTotals;
-    return Directionality(
-      textDirection: AppTr.uiDir,
-      child: Scaffold(
-        backgroundColor: AppTheme.page,
-        appBar: AppBar(
-          title: const Text(
-            'المحافظ',
-            style: TextStyle(fontWeight: FontWeight.w900),
-          ),
-          centerTitle: true,
-          backgroundColor: AppTheme.page,
-          surfaceTintColor: Colors.transparent,
-          foregroundColor: AppTheme.title,
-          elevation: 0,
-          scrolledUnderElevation: 0,
-          actions: [
-            IconButton(
-              tooltip: _hideBalances ? 'إظهار المبالغ' : 'إخفاء المبالغ',
-              onPressed: _toggleHideBalances,
-              icon: Icon(
-                _hideBalances
-                    ? Icons.visibility_off_rounded
-                    : Icons.visibility_rounded,
-              ),
-            ),
-            IconButton(
-              tooltip: AppTr.tr('تحديث'),
-              onPressed: _load,
-              icon: const Icon(Icons.refresh_rounded),
-            ),
-          ],
-        ),
-        floatingActionButton: FloatingActionButton.extended(
-          onPressed: () => _openWalletForm(),
-          backgroundColor: _accent,
-          foregroundColor: Colors.white,
-          icon: const Icon(Icons.add_rounded),
-          label: const Text('محفظة'),
-        ),
-        body: _loading
-            ? const Center(child: CircularProgressIndicator())
-            : RefreshIndicator(
-                onRefresh: _load,
-                child: ListView(
-                  padding: const EdgeInsets.fromLTRB(16, 14, 16, 90),
-                  children: [
-                    if (_error != null) ...[
-                      _errorBanner(),
-                      const SizedBox(height: 12),
-                    ],
-                    _totalCard(totals.$1, totals.$2),
-                    const SizedBox(height: 14),
-                    _quickActions(),
-                    const SizedBox(height: 18),
-                    _sectionTitle(
-                      'محافظي',
-                      trailing: _activeWallets.isEmpty
-                          ? null
-                          : '${_activeWallets.length}',
-                    ),
-                    if (_wallets.isEmpty)
-                      _emptyCard(
-                        Icons.account_balance_wallet_outlined,
-                        'لا توجد محافظ بعد.\nأضف محفظتك الأولى من زر "+ محفظة".',
-                      )
-                    else
-                      SizedBox(
-                        height: 152,
-                        child: ListView.separated(
-                          scrollDirection: Axis.horizontal,
-                          itemCount: _wallets.length,
-                          separatorBuilder: (_, __) =>
-                              const SizedBox(width: 10),
-                          itemBuilder: (context, index) =>
-                              _walletCard(_wallets[index]),
-                        ),
-                      ),
-                    const SizedBox(height: 18),
-                    _sectionTitle(
-                      _selectedWalletId == null
-                          ? 'آخر الحركات'
-                          : 'حركات المحفظة المحددة',
-                      trailing: _visibleTransactions.isEmpty
-                          ? null
-                          // القائمة تعرض 60 حركة كحدّ أقصى، فيُظهر العنوان
-                          // العدد المعروض فعلًا لا العدد الكلي.
-                          : _visibleTransactions.length > 60
-                          ? '60 من ${_visibleTransactions.length}'
-                          : '${_visibleTransactions.length}',
-                    ),
-                    if (_wallets.isNotEmpty) _walletFilterChips(),
-                    if (_visibleTransactions.isEmpty)
-                      _emptyCard(
-                        Icons.receipt_long_outlined,
-                        'لا توجد حركات مسجّلة بعد.\nاستخدم أزرار الدخل والمصروف والتحويل أعلاه.',
-                      )
-                    else
-                      for (final t in _visibleTransactions.take(60))
-                        _transactionTile(t),
-                  ],
-                ),
-              ),
-      ),
-    );
-  }
-
-  Widget _errorBanner() => Container(
-    padding: const EdgeInsets.all(12),
-    decoration: BoxDecoration(
-      color: const Color(0xFFFEF2F2),
-      borderRadius: BorderRadius.circular(12),
-      border: Border.all(color: const Color(0xFFFECACA)),
-    ),
-    child: Row(
-      children: [
-        const Icon(Icons.error_outline_rounded, color: Color(0xFFB42318)),
-        const SizedBox(width: 8),
-        Expanded(
-          child: Text(
-            _error!,
-            style: const TextStyle(
-              fontSize: 11.5,
-              fontWeight: FontWeight.w700,
-              color: Color(0xFFB42318),
-            ),
-          ),
-        ),
-        TextButton(onPressed: _load, child: const Text('إعادة المحاولة')),
-      ],
-    ),
-  );
-
-  Widget _totalCard(double income, double expense) {
-    final cards = _activeWallets
-        .where((w) => w.kind == WalletRecord.kindCard)
-        .length;
-    return Container(
-      padding: const EdgeInsets.all(16),
-      decoration: BoxDecoration(
-        gradient: const LinearGradient(
-          colors: [Color(0xFF0F172A), Color(0xFF1E293B)],
-          begin: Alignment.topRight,
-          end: Alignment.bottomLeft,
-        ),
-        borderRadius: BorderRadius.circular(18),
-        boxShadow: const [
-          BoxShadow(
-            color: Color(0x330F172A),
-            blurRadius: 18,
-            offset: Offset(0, 8),
-          ),
-        ],
-      ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          Row(
-            children: [
-              const Text(
-                'الرصيد الكلي',
-                style: TextStyle(
-                  fontSize: 12,
-                  fontWeight: FontWeight.w700,
-                  color: Color(0xFFCBD5E1),
-                ),
-              ),
-              const Spacer(),
-              if (_activeWallets.isNotEmpty)
-                Text(
-                  '${_activeWallets.length} محفظة'
-                  '${cards > 0 ? ' · $cards بطاقة' : ''}',
-                  style: const TextStyle(
-                    fontSize: 11,
-                    fontWeight: FontWeight.w700,
-                    color: Color(0xFF93C5FD),
-                  ),
-                ),
-            ],
-          ),
-          const SizedBox(height: 6),
-          Text(
-            '${_money(_totalBalance)} $_currency',
-            style: const TextStyle(
-              fontSize: 26,
-              fontWeight: FontWeight.w900,
-              color: Colors.white,
-            ),
-          ),
-          const SizedBox(height: 14),
-          Row(
-            children: [
-              Expanded(
-                child: _totalMini(
-                  'دخل هذا الشهر',
-                  income,
-                  Icons.arrow_downward_rounded,
-                  const Color(0xFF6EE7B7),
-                ),
-              ),
-              Container(width: 1, height: 30, color: const Color(0x33FFFFFF)),
-              Expanded(
-                child: _totalMini(
-                  'مصروف هذا الشهر',
-                  expense,
-                  Icons.arrow_upward_rounded,
-                  const Color(0xFFFCA5A5),
-                ),
-              ),
-            ],
-          ),
-        ],
-      ),
-    );
-  }
-
-  Widget _totalMini(String label, double value, IconData icon, Color color) =>
-      Column(
-        children: [
-          Row(
-            mainAxisAlignment: MainAxisAlignment.center,
-            children: [
-              Icon(icon, size: 14, color: color),
-              const SizedBox(width: 4),
-              Flexible(
-                child: Text(
-                  _money(value),
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: TextStyle(
-                    fontSize: 14,
-                    fontWeight: FontWeight.w900,
-                    color: color,
-                  ),
-                ),
-              ),
-            ],
-          ),
-          const SizedBox(height: 2),
-          Text(
-            label,
-            maxLines: 1,
-            overflow: TextOverflow.ellipsis,
-            style: const TextStyle(
-              fontSize: 10,
-              fontWeight: FontWeight.w700,
-              color: Color(0xFF94A3B8),
-            ),
-          ),
-        ],
-      );
-
-  Widget _quickActions() => Row(
-    children: [
-      Expanded(
-        child: _actionButton(
-          'دخل',
-          Icons.add_circle_outline_rounded,
-          _incomeColor,
-          () => _openTransactionForm(
-            kind: WalletTransactionRecord.kindIncome,
-          ),
-        ),
-      ),
-      const SizedBox(width: 9),
-      Expanded(
-        child: _actionButton(
-          'مصروف',
-          Icons.remove_circle_outline_rounded,
-          _expenseColor,
-          () => _openTransactionForm(
-            kind: WalletTransactionRecord.kindExpense,
-          ),
-        ),
-      ),
-      const SizedBox(width: 9),
-      Expanded(
-        child: _actionButton(
-          'تحويل',
-          Icons.swap_horiz_rounded,
-          _transferColor,
-          _openTransferForm,
-        ),
-      ),
-    ],
-  );
-
-  Widget _actionButton(
-    String label,
-    IconData icon,
-    Color color,
-    VoidCallback onTap,
-  ) => Material(
-    color: AppTheme.surface,
-    borderRadius: BorderRadius.circular(AppTheme.rField),
-    clipBehavior: Clip.antiAlias,
-    child: InkWell(
-      onTap: onTap,
-      child: Padding(
-        padding: const EdgeInsets.symmetric(vertical: 14),
-        child: Column(
-          children: [
-            Icon(icon, color: color, size: 21),
-            const SizedBox(height: 5),
-            Text(
-              label,
-              style: TextStyle(
-                fontSize: 12,
-                fontWeight: FontWeight.w900,
-                color: color,
-              ),
-            ),
-          ],
-        ),
-      ),
-    ),
-  );
-
-  Widget _sectionTitle(String text, {String? trailing}) => Padding(
-    padding: const EdgeInsets.only(bottom: 10),
-    child: Row(
-      children: [
-        Container(
-          width: 4,
-          height: 17,
-          decoration: BoxDecoration(
-            color: _accent,
-            borderRadius: BorderRadius.circular(99),
-          ),
-        ),
-        const SizedBox(width: 8),
-        Expanded(
-          child: Text(
-            text,
-            style: const TextStyle(
-              fontSize: 14.5,
-              fontWeight: FontWeight.w900,
-              color: Color(0xFF0F172A),
-            ),
-          ),
-        ),
-        if (trailing != null)
-          Text(
-            trailing,
-            style: const TextStyle(
-              fontSize: 11.5,
-              fontWeight: FontWeight.w700,
-              color: Color(0xFF94A3B8),
-            ),
-          ),
-      ],
-    ),
-  );
-
-  Widget _emptyCard(IconData icon, String message) => Container(
-    width: double.infinity,
-    padding: const EdgeInsets.symmetric(vertical: 26, horizontal: 16),
-    decoration: BoxDecoration(
-            color: AppTheme.surface,
-            borderRadius: BorderRadius.circular(AppTheme.rField),
-          ),
-    child: Column(
-      children: [
-        Icon(icon, size: 30, color: const Color(0xFFCBD5E1)),
-        const SizedBox(height: 10),
-        Text(
-          message,
-          textAlign: TextAlign.center,
-          style: const TextStyle(
-            fontSize: 12.5,
-            fontWeight: FontWeight.w700,
-            color: Color(0xFF94A3B8),
-          ),
-        ),
-      ],
-    ),
-  );
-
-  Widget _walletCard(WalletRecord wallet) {
-    final color = _walletColor(wallet);
-    final selected = _selectedWalletId == wallet.id;
-    return SizedBox(
-      width: 210,
-      child: Material(
-        color: Colors.transparent,
-        borderRadius: BorderRadius.circular(16),
-        child: InkWell(
-          borderRadius: BorderRadius.circular(16),
-          // الضغط يصفّي قائمة الحركات على هذه المحفظة، والضغط مجددًا يلغي
-          // التصفية — ربط مباشر بين البطاقة والقائمة أسفلها.
-          onTap: () => setState(
-            () => _selectedWalletId = selected ? null : wallet.id,
-          ),
-          onLongPress: () => _walletMenu(wallet),
-          child: Container(
-            padding: const EdgeInsets.all(14),
-            decoration: BoxDecoration(
-              gradient: LinearGradient(
-                colors: [color, Color.lerp(color, Colors.black, 0.35)!],
-                begin: Alignment.topRight,
-                end: Alignment.bottomLeft,
-              ),
-              borderRadius: BorderRadius.circular(16),
-              border: Border.all(
-                color: selected ? Colors.white : Colors.transparent,
-                width: 2,
-              ),
-              boxShadow: [
-                BoxShadow(
-                  color: color.withValues(alpha: 0.30),
-                  blurRadius: 12,
-                  offset: const Offset(0, 5),
-                ),
-              ],
-            ),
-            child: Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Row(
-                  children: [
-                    Icon(
-                      _walletIcon(wallet.kind),
-                      color: Colors.white,
-                      size: 20,
-                    ),
-                    const SizedBox(width: 7),
-                    Expanded(
-                      child: Text(
-                        wallet.name,
-                        maxLines: 1,
-                        overflow: TextOverflow.ellipsis,
-                        style: const TextStyle(
-                          fontSize: 13.5,
-                          fontWeight: FontWeight.w900,
-                          color: Colors.white,
-                        ),
-                      ),
-                    ),
-                    InkWell(
-                      onTap: () => _walletMenu(wallet),
-                      borderRadius: BorderRadius.circular(99),
-                      child: const Padding(
-                        padding: EdgeInsets.all(2),
-                        child: Icon(
-                          Icons.more_horiz_rounded,
-                          color: Colors.white70,
-                          size: 19,
-                        ),
-                      ),
-                    ),
-                  ],
-                ),
-                const Spacer(),
-                Text(
-                  _money(_balanceOf(wallet)),
-                  maxLines: 1,
-                  overflow: TextOverflow.ellipsis,
-                  style: const TextStyle(
-                    fontSize: 20,
-                    fontWeight: FontWeight.w900,
-                    color: Colors.white,
-                  ),
-                ),
-                const SizedBox(height: 2),
-                Text(
-                  wallet.currencyLabel,
-                  style: const TextStyle(
-                    fontSize: 10.5,
-                    fontWeight: FontWeight.w700,
-                    color: Colors.white70,
-                  ),
-                ),
-                const SizedBox(height: 8),
-                Row(
-                  children: [
-                    Text(
-                      wallet.kind == WalletRecord.kindCard &&
-                              (wallet.last4 ?? '').isNotEmpty
-                          ? '•••• ${wallet.last4}'
-                          : WalletRecord.kindLabel(wallet.kind),
-                      style: const TextStyle(
-                        fontSize: 10.5,
-                        fontWeight: FontWeight.w700,
-                        color: Colors.white70,
-                      ),
-                    ),
-                    const Spacer(),
-                    if (wallet.isArchived)
-                      Container(
-                        padding: const EdgeInsets.symmetric(
-                          horizontal: 7,
-                          vertical: 2,
-                        ),
-                        decoration: BoxDecoration(
-                          color: Colors.white24,
-                          borderRadius: BorderRadius.circular(99),
-                        ),
-                        child: const Text(
-                          'مؤرشفة',
-                          style: TextStyle(
-                            fontSize: 9.5,
-                            fontWeight: FontWeight.w800,
-                            color: Colors.white,
-                          ),
-                        ),
-                      ),
-                  ],
-                ),
-              ],
-            ),
-          ),
-        ),
-      ),
-    );
-  }
-
-  Widget _walletFilterChips() => Padding(
-    padding: const EdgeInsets.only(bottom: 10),
-    child: SizedBox(
-      height: 32,
-      child: ListView(
-        scrollDirection: Axis.horizontal,
-        children: [
-          ChoiceChip(
-            label: const Text('الكل', style: TextStyle(fontSize: 11)),
-            selected: _selectedWalletId == null,
-            onSelected: (_) => setState(() => _selectedWalletId = null),
-          ),
-          for (final w in _wallets) ...[
-            const SizedBox(width: 6),
-            ChoiceChip(
-              label: Text(w.name, style: const TextStyle(fontSize: 11)),
-              selected: _selectedWalletId == w.id,
-              onSelected: (_) => setState(() => _selectedWalletId = w.id),
-            ),
-          ],
-        ],
-      ),
-    ),
-  );
-
-  Widget _transactionTile(WalletTransactionRecord t) {
-    final wallet = _wallets.where((w) => w.id == t.walletId).toList();
-    final walletName = wallet.isEmpty ? '' : wallet.first.name;
-    final color = t.isTransfer
-        ? _transferColor
-        : (t.isCredit ? _incomeColor : _expenseColor);
-    final icon = t.isTransfer
-        ? (t.kind == WalletTransactionRecord.kindTransferIn
-              ? Icons.call_received_rounded
-              : Icons.call_made_rounded)
-        : (t.isCredit
-              ? Icons.arrow_downward_rounded
-              : Icons.arrow_upward_rounded);
-    final title = (t.category ?? '').trim().isNotEmpty
-        ? t.category!.trim()
-        : (t.isTransfer
-              ? 'تحويل'
-              : (t.isCredit ? 'دخل' : 'مصروف'));
-
-    return Container(
-      margin: const EdgeInsets.only(bottom: 8),
-      decoration: BoxDecoration(
-            color: AppTheme.surface,
-            borderRadius: BorderRadius.circular(AppTheme.rField),
-          ),
-      clipBehavior: Clip.antiAlias,
-      // Material شفافة بين الحاوية وInkWell حتى يظهر أثر اللمس فوق
-      // خلفية البطاقة بدل أن يُرسم خلفها فلا يُرى.
-      child: Material(
-        color: Colors.transparent,
-        child: InkWell(
-        onTap: () => _transactionMenu(t),
-        child: Padding(
-          padding: const EdgeInsets.all(12),
-          child: Row(
-            children: [
-              Container(
-                width: 34,
-                height: 34,
-                decoration: BoxDecoration(
-                  color: color.withValues(alpha: 0.12),
-                  shape: BoxShape.circle,
-                ),
-                child: Icon(icon, size: 18, color: color),
-              ),
-              const SizedBox(width: 10),
-              Expanded(
-                child: Column(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    Text(
-                      title,
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
-                        fontSize: 12.5,
-                        fontWeight: FontWeight.w800,
-                        color: Color(0xFF0F172A),
-                      ),
-                    ),
-                    const SizedBox(height: 2),
-                    Text(
-                      [
-                        _fmtDate(t.occurredOn),
-                        if (walletName.isNotEmpty) walletName,
-                        if ((t.note ?? '').trim().isNotEmpty) t.note!.trim(),
-                      ].join(' · '),
-                      maxLines: 1,
-                      overflow: TextOverflow.ellipsis,
-                      style: const TextStyle(
-                        fontSize: 11,
-                        fontWeight: FontWeight.w600,
-                        color: Color(0xFF64748B),
-                      ),
-                    ),
-                  ],
-                ),
-              ),
-              const SizedBox(width: 8),
-              Text(
-                _hideBalances
-                    ? _money(t.amount)
-                    : '${t.isCredit ? '+' : '-'}${_money(t.amount)}',
-                style: TextStyle(
-                  fontSize: 12.5,
-                  fontWeight: FontWeight.w900,
-                  color: color,
-                ),
-              ),
-            ],
-          ),
-        ),
-      ),
-      ),
-    );
-  }
-}
-

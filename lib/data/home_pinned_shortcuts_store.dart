@@ -8,11 +8,16 @@ class HomePinnedShortcut {
   final String moduleId;
   final String subtitle;
 
+  /// التبويب الفرعي داخل الوحدة (مالية، مستند، الرحلة / السفر،
+  /// العقارات...) — يُبنى عند التحميل لفلترة نافذة التثبيت.
+  final String group;
+
   const HomePinnedShortcut({
     required this.id,
     required this.title,
     this.moduleId = '',
     this.subtitle = '',
+    this.group = '',
   });
 
   Map<String, dynamic> toJson() => {
@@ -20,6 +25,7 @@ class HomePinnedShortcut {
     'title': title,
     'moduleId': moduleId,
     'subtitle': subtitle,
+    'group': group,
   };
 
   factory HomePinnedShortcut.fromJson(Map<String, dynamic> json) {
@@ -31,6 +37,12 @@ class HomePinnedShortcut {
           ? json['moduleId'].toString()
           : _legacyModuleId(id),
       subtitle: json['subtitle']?.toString() ?? '',
+      // الاسم القديم للمجموعة («الآليات والمعدات») صار «المركبات ووسائل
+      // النقل» — تُنقل المثبّتات القديمة إليها.
+      group: switch (json['group']?.toString() ?? '') {
+        'الآليات والمعدات' => 'المركبات ووسائل النقل',
+        final group => group,
+      },
     );
   }
 

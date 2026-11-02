@@ -37,8 +37,24 @@ dependencies:
   shared_preferences: ^2.5.5
   supabase_flutter: ^2.17.2
   share_plus: ^12.0.2
+  # التقارير والأرشيف: تحويلها إلى ملف PDF ومعاينتها وطباعتها ومشاركتها.
+  printing: ^5.13.0
+  pdf: ^3.11.0
+  barcode: ^2.2.9
   image_picker: ^1.2.2
   url_launcher: ^6.3.1
+  # رفع المستندات وفتحها: اختيار الملف، حفظه داخل مساحة التطبيق، ثم فتحه.
+  file_picker: ^10.1.2
+  path_provider: ^2.1.5
+  open_filex: ^4.7.0
+  # جلب الموقع الجغرافي من الجوال بعد إذن المستخدم.
+  geolocator: ^13.0.2
+  # إشعارات الجوال بصوت للتذكيرات والمواعيد (الإصدار 19 يناسب Flutter 3.35).
+  flutter_local_notifications: ^19.0.0
+  # إشعارات تصل والتطبيق مغلق (Firebase Cloud Messaging).
+  firebase_core: ^4.0.0
+  firebase_messaging: ^16.0.4
+  timezone: ^0.10.0
 
 dev_dependencies:
   flutter_test:
@@ -66,6 +82,29 @@ flutter:
   assets:
     - assets/
     - assets/images/
+    - assets/fonts/
+
+  # خط الهوية: Cairo بكل أوزانه — يُحمَّل مع التطبيق فيظهر بنفس الشكل
+  # على كل جهاز بدل خط النظام الذي يختلف من جوال لآخر.
+  fonts:
+    - family: Cairo
+      fonts:
+        - asset: assets/fonts/CairoExtraLight.ttf
+          weight: 200
+        - asset: assets/fonts/CairoLight.ttf
+          weight: 300
+        - asset: assets/fonts/CairoRegular.ttf
+          weight: 400
+        - asset: assets/fonts/CairoMedium.ttf
+          weight: 500
+        - asset: assets/fonts/CairoSemiBold.ttf
+          weight: 600
+        - asset: assets/fonts/CairoBold.ttf
+          weight: 700
+        - asset: assets/fonts/CairoExtraBold.ttf
+          weight: 800
+        - asset: assets/fonts/CairoBlack.ttf
+          weight: 900
 
   # An image asset can refer to one or more resolution-specific "variants", see
   # https://flutter.dev/to/resolution-aware-images

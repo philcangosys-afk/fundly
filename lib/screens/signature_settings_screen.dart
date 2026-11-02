@@ -7,6 +7,8 @@ import 'package:image_picker/image_picker.dart';
 
 import '../data/user_signature_store.dart';
 import '../data/user_stamp_store.dart';
+import '../data/user_logo_store.dart';
+import '../widgets/shared/app_design.dart';
 
 class SignatureSettingsScreen extends StatefulWidget {
   const SignatureSettingsScreen({super.key});
@@ -20,10 +22,18 @@ class _SignatureSettingsScreenState extends State<SignatureSettingsScreen> {
   final List<List<Offset>> _strokes = [];
   bool _isLoading = true;
 
+  /// أثناء الرسم تتوقف الصفحة عن التمرير: كان سحب الإصبع داخل المساحة
+  /// يحرّك الصفحة بدل أن يرسم.
+  bool _drawing = false;
+
   /// صورة الختم المعروضة حاليًا، و_savedStamp هي النسخة المحفوظة فعليًا
   /// على الجهاز — الفرق بينهما هو ما يجعل زر "حفظ الختم" يعمل أو يُعطَّل.
   Uint8List? _stampBytes;
   Uint8List? _savedStamp;
+
+  /// الشعار (لوجو): يظهر في منتصف أعلى الصفحة الأولى من المستندات.
+  Uint8List? _logoBytes;
+  Uint8List? _savedLogo;
 
   @override
   void initState() {
@@ -34,8 +44,11 @@ class _SignatureSettingsScreenState extends State<SignatureSettingsScreen> {
   Future<void> _loadSignature() async {
     final saved = await UserSignatureStore.load();
     final stamp = await UserStampStore.load();
+    final logo = await UserLogoStore.load();
     if (!mounted) return;
     setState(() {
+      _logoBytes = logo;
+      _savedLogo = logo;
       _strokes
         ..clear()
         ..addAll(saved.map((stroke) => List<Offset>.from(stroke)));
@@ -102,6 +115,36 @@ class _SignatureSettingsScreenState extends State<SignatureSettingsScreen> {
     );
   }
 
+  Future<void> _pickLogo() async {
+    try {
+      final image = await ImagePicker().pickImage(
+        source: ImageSource.gallery,
+        imageQuality: 92,
+        maxWidth: 900,
+      );
+      if (image == null) return;
+      final bytes = await image.readAsBytes();
+      if (!mounted) return;
+      setState(() => _logoBytes = bytes);
+    } catch (_) {
+      if (!mounted) return;
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('تعذّر فتح الصور على هذا الجهاز')),
+      );
+    }
+  }
+
+  Future<void> _removeLogo() async {
+    final messenger = ScaffoldMessenger.of(context);
+    await UserLogoStore.clear();
+    if (!mounted) return;
+    setState(() {
+      _logoBytes = null;
+      _savedLogo = null;
+    });
+    messenger.showSnackBar(const SnackBar(content: Text('تم حذف الشعار')));
+  }
+
   Future<void> _saveStamp() async {
     final bytes = _stampBytes;
     if (bytes == null) return;
@@ -144,6 +187,39 @@ class _SignatureSettingsScreenState extends State<SignatureSettingsScreen> {
     messenger.showSnackBar(const SnackBar(content: Text('تم حفظ التوقيع')));
   }
 
+  /// زر «حفظ» الواحد في الأسفل: يحفظ التوقيع والختم معًا.
+  Future<void> _saveAll() async {
+    // تأكيد قبل الحفظ بدل الحفظ الفوري عند لمس الزر.
+    final hasStamp = _stampBytes != null;
+    final ok = await confirmAction(
+      context,
+      title: hasStamp ? 'حفظ التوقيع والختم' : 'حفظ التوقيع',
+      message: hasStamp
+          ? 'سيتم حفظ التوقيع والختم واستعمالهما في المستندات. تأكيد؟'
+          : 'سيتم حفظ التوقيع واستعماله في المستندات. تأكيد؟',
+      confirmLabel: 'تأكيد',
+    );
+    if (!ok || !mounted) return;
+    final messenger = ScaffoldMessenger.of(context);
+    await UserSignatureStore.save(_strokes);
+    final stamp = _stampBytes;
+    if (stamp != null && stamp != _savedStamp) {
+      await UserStampStore.save(stamp);
+    }
+    final logo = _logoBytes;
+    if (logo != null && logo != _savedLogo) {
+      await UserLogoStore.save(logo);
+    }
+    if (!mounted) return;
+    setState(() {
+      _savedStamp = _stampBytes;
+      _savedLogo = _logoBytes;
+    });
+    messenger.showSnackBar(
+      const SnackBar(content: Text('تم حفظ التوقيع والختم')),
+    );
+  }
+
   Future<void> _clear() async {
     setState(_strokes.clear);
     await UserSignatureStore.clear();
@@ -152,22 +228,23 @@ class _SignatureSettingsScreenState extends State<SignatureSettingsScreen> {
   @override
   Widget build(BuildContext context) {
     return Scaffold(
-      backgroundColor: const Color(0xFFF5F8FC),
+      backgroundColor: const Color(0xFFE9F4F1),
       appBar: AppBar(
-        title: const Text('التوقيع الإلكتروني والختم'),
+        title: const Text('التوقيع الإلكتروني والختم الإلكتروني'),
         centerTitle: true,
       ),
       body: Directionality(
         textDirection: AppTr.uiDir,
         child: ListView(
+          physics: _drawing ? const NeverScrollableScrollPhysics() : null,
           padding: const EdgeInsets.all(16),
           children: [
             const Text(
-              'التوقيع الإلكتروني والختم',
+              'التوقيع الإلكتروني',
               style: TextStyle(
-                fontSize: 18,
+                fontSize: 17,
                 fontWeight: FontWeight.w900,
-                color: Color(0xFF0F172A),
+                color: Color(0xFF022E2A),
               ),
             ),
             const SizedBox(height: 6),
@@ -177,7 +254,7 @@ class _SignatureSettingsScreenState extends State<SignatureSettingsScreen> {
                 fontSize: 12,
                 height: 1.5,
                 fontWeight: FontWeight.w600,
-                color: Color(0xFF64748B),
+                color: Color(0xFF5C6B68),
               ),
             ),
             const SizedBox(height: 14),
@@ -186,7 +263,7 @@ class _SignatureSettingsScreenState extends State<SignatureSettingsScreen> {
               decoration: BoxDecoration(
                 color: Colors.white,
                 borderRadius: BorderRadius.circular(12),
-                border: Border.all(color: const Color(0xFFCBD5E1)),
+                border: Border.all(color: const Color(0xFFD5DEDB)),
               ),
               clipBehavior: Clip.antiAlias,
               child: _isLoading
@@ -197,47 +274,67 @@ class _SignatureSettingsScreenState extends State<SignatureSettingsScreen> {
                           constraints.maxWidth,
                           constraints.maxHeight,
                         );
-                        return GestureDetector(
+                        // أحداث اللمس مباشرة (لا تنافسها حركة تمرير الصفحة).
+                        return Listener(
                           behavior: HitTestBehavior.opaque,
-                          onPanStart: (details) =>
-                              _startStroke(details.localPosition, size),
-                          onPanUpdate: (details) =>
-                              _continueStroke(details.localPosition, size),
-                          child: CustomPaint(
-                            painter: UserSignaturePainter(_strokes),
-                            size: Size.infinite,
+                          onPointerDown: (event) {
+                            setState(() => _drawing = true);
+                            _startStroke(event.localPosition, size);
+                          },
+                          onPointerMove: (event) =>
+                              _continueStroke(event.localPosition, size),
+                          onPointerUp: (_) =>
+                              setState(() => _drawing = false),
+                          onPointerCancel: (_) =>
+                              setState(() => _drawing = false),
+                          child: Stack(
+                            fit: StackFit.expand,
+                            children: [
+                              if (_strokes.isEmpty)
+                                const Center(
+                                  child: Row(
+                                    mainAxisSize: MainAxisSize.min,
+                                    children: [
+                                      Icon(
+                                        Icons.draw_outlined,
+                                        size: 20,
+                                        color: Color(0xFFB4C2BE),
+                                      ),
+                                      SizedBox(width: 6),
+                                      Text(
+                                        'ارسم توقيعك هنا بإصبعك',
+                                        style: TextStyle(
+                                          fontSize: 12.5,
+                                          fontWeight: FontWeight.w700,
+                                          color: Color(0xFFB4C2BE),
+                                        ),
+                                      ),
+                                    ],
+                                  ),
+                                ),
+                              CustomPaint(
+                                painter: UserSignaturePainter(_strokes),
+                                size: Size.infinite,
+                              ),
+                            ],
                           ),
                         );
                       },
                     ),
             ),
             const SizedBox(height: 12),
-            Row(
-              children: [
-                Expanded(
-                  child: OutlinedButton.icon(
-                    onPressed: _strokes.isEmpty ? null : _clear,
-                    icon: const Icon(Icons.delete_outline_rounded),
-                    label: const Text('مسح'),
-                  ),
-                ),
-                const SizedBox(width: 10),
-                Expanded(
-                  child: FilledButton.icon(
-                    onPressed: _strokes.isEmpty ? null : _save,
-                    icon: const Icon(Icons.save_outlined),
-                    label: const Text('حفظ التوقيع'),
-                  ),
-                ),
-              ],
+            OutlinedButton.icon(
+              onPressed: _strokes.isEmpty ? null : _clear,
+              icon: const Icon(Icons.delete_outline_rounded),
+              label: const Text('مسح التوقيع'),
             ),
             const SizedBox(height: 22),
             const Text(
-              'الختم',
+              'الختم الإلكتروني',
               style: TextStyle(
-                fontSize: 16,
+                fontSize: 15,
                 fontWeight: FontWeight.w900,
-                color: Color(0xFF0F172A),
+                color: Color(0xFF022E2A),
               ),
             ),
             const SizedBox(height: 6),
@@ -247,7 +344,7 @@ class _SignatureSettingsScreenState extends State<SignatureSettingsScreen> {
                 fontSize: 12,
                 height: 1.5,
                 fontWeight: FontWeight.w600,
-                color: Color(0xFF64748B),
+                color: Color(0xFF5C6B68),
               ),
             ),
             const SizedBox(height: 12),
@@ -260,7 +357,7 @@ class _SignatureSettingsScreenState extends State<SignatureSettingsScreen> {
                 decoration: BoxDecoration(
                   color: Colors.white,
                   borderRadius: BorderRadius.circular(12),
-                  border: Border.all(color: const Color(0xFFCBD5E1)),
+                  border: Border.all(color: const Color(0xFFD5DEDB)),
                 ),
                 clipBehavior: Clip.antiAlias,
                 alignment: Alignment.center,
@@ -272,15 +369,15 @@ class _SignatureSettingsScreenState extends State<SignatureSettingsScreen> {
                           Icon(
                             Icons.approval_outlined,
                             size: 30,
-                            color: Color(0xFF94A3B8),
+                            color: Color(0xFF8C9A97),
                           ),
                           SizedBox(height: 8),
                           Text(
                             'اضغط لإضافة أو رفع صورة الختم',
                             style: TextStyle(
-                              fontSize: 12.5,
+                              fontSize: 12,
                               fontWeight: FontWeight.w700,
-                              color: Color(0xFF64748B),
+                              color: Color(0xFF5C6B68),
                             ),
                           ),
                         ],
@@ -289,31 +386,12 @@ class _SignatureSettingsScreenState extends State<SignatureSettingsScreen> {
               ),
             ),
             const SizedBox(height: 12),
-            Row(
-              children: [
-                Expanded(
-                  child: OutlinedButton.icon(
-                    onPressed: (_stampBytes == null && _savedStamp == null)
-                        ? null
-                        : _removeStamp,
-                    icon: const Icon(Icons.delete_outline_rounded),
-                    label: const Text('حذف الختم'),
-                  ),
-                ),
-                const SizedBox(width: 10),
-                Expanded(
-                  child: FilledButton.icon(
-                    // يُعطَّل حين لا توجد صورة، أو حين تكون الصورة
-                    // المعروضة هي المحفوظة أصلًا فلا شيء جديد ليُحفظ.
-                    onPressed:
-                        (_stampBytes == null || _stampBytes == _savedStamp)
-                        ? null
-                        : _saveStamp,
-                    icon: const Icon(Icons.save_outlined),
-                    label: const Text('حفظ الختم'),
-                  ),
-                ),
-              ],
+            OutlinedButton.icon(
+              onPressed: (_stampBytes == null && _savedStamp == null)
+                  ? null
+                  : _removeStamp,
+              icon: const Icon(Icons.delete_outline_rounded),
+              label: const Text('حذف الختم'),
             ),
             if (_stampBytes != null) ...[
               const SizedBox(height: 10),
@@ -325,6 +403,87 @@ class _SignatureSettingsScreenState extends State<SignatureSettingsScreen> {
                 ),
               ),
             ],
+            const SizedBox(height: 22),
+            // ===== الشعار =====
+            const Text(
+              'الشعار (لوجو)',
+              style: TextStyle(
+                fontSize: 15,
+                fontWeight: FontWeight.w900,
+                color: Color(0xFF022E2A),
+              ),
+            ),
+            const SizedBox(height: 6),
+            const Text(
+              'يظهر في منتصف أعلى الصفحة الأولى من المستندات والتقارير.',
+              style: TextStyle(
+                fontSize: 12,
+                height: 1.5,
+                fontWeight: FontWeight.w600,
+                color: Color(0xFF5C6B68),
+              ),
+            ),
+            const SizedBox(height: 12),
+            GestureDetector(
+              onTap: _pickLogo,
+              child: Container(
+                height: 120,
+                decoration: BoxDecoration(
+                  color: Colors.white,
+                  borderRadius: BorderRadius.circular(12),
+                  border: Border.all(color: const Color(0xFFD5DEDB)),
+                ),
+                clipBehavior: Clip.antiAlias,
+                alignment: Alignment.center,
+                padding: const EdgeInsets.all(10),
+                child: _logoBytes == null
+                    ? const Column(
+                        mainAxisSize: MainAxisSize.min,
+                        children: [
+                          Icon(
+                            Icons.add_photo_alternate_outlined,
+                            size: 30,
+                            color: Color(0xFF8C9A97),
+                          ),
+                          SizedBox(height: 8),
+                          Text(
+                            'اضغط لإضافة الشعار',
+                            style: TextStyle(
+                              fontSize: 12,
+                              fontWeight: FontWeight.w700,
+                              color: Color(0xFF5C6B68),
+                            ),
+                          ),
+                        ],
+                      )
+                    : Image.memory(_logoBytes!, fit: BoxFit.contain),
+              ),
+            ),
+            const SizedBox(height: 12),
+            OutlinedButton.icon(
+              onPressed: (_logoBytes == null && _savedLogo == null)
+                  ? null
+                  : _removeLogo,
+              icon: const Icon(Icons.delete_outline_rounded),
+              label: const Text('حذف الشعار'),
+            ),
+            const SizedBox(height: 22),
+            // حفظ واحد للتوقيع والختم والشعار معًا.
+            FilledButton.icon(
+              onPressed: (_strokes.isEmpty &&
+                      _stampBytes == null &&
+                      _logoBytes == null)
+                  ? null
+                  : _saveAll,
+              icon: const Icon(Icons.save_outlined),
+              label: const Text(
+                'حفظ',
+                style: TextStyle(fontWeight: FontWeight.w900),
+              ),
+              style: FilledButton.styleFrom(
+                minimumSize: const Size.fromHeight(50),
+              ),
+            ),
           ],
         ),
       ),
@@ -335,7 +494,7 @@ class _SignatureSettingsScreenState extends State<SignatureSettingsScreen> {
 class UserSignaturePainter extends CustomPainter {
   const UserSignaturePainter(
     this.strokes, {
-    this.color = const Color(0xFF0F172A),
+    this.color = const Color(0xFF022E2A),
   });
 
   final List<List<Offset>> strokes;

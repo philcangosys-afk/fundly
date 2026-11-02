@@ -1,6 +1,8 @@
+import 'subscription_plans.dart';
 import 'package:supabase_flutter/supabase_flutter.dart';
 
 import 'app_session.dart';
+import 'delegated_assets.dart';
 
 /// Repository for the "Projects & Business Activities" screen.
 ///
@@ -129,6 +131,26 @@ class ProjectAssetRecord {
     );
   }
 
+  /// تاريخ ISO صالح أو `null`.
+  ///
+  /// كان `end_date` يُرسل كما كتبه المستخدم؛ وحقول مثل انتهاء الرخصة أو
+  /// الضمان تأتي بصيغ حرّة («٤٥ يوم»، «غير محدد»، «15/8/2026»). وعمود من
+  /// نوع date يرفض الصف كلّه عند أول قيمة لا يفهمها — فيفشل الحفظ بلا أن
+  /// يفهم المستخدم لماذا.
+  static String? isoDateOrNull(String? raw) {
+    if (raw == null) return null;
+    final text = raw.trim();
+    if (text.isEmpty) return null;
+    final match = RegExp(
+      r'^(\d{4})[-/](\d{1,2})[-/](\d{1,2})$',
+    ).firstMatch(text);
+    if (match == null) return null;
+    final year = match.group(1)!;
+    final month = match.group(2)!.padLeft(2, '0');
+    final day = match.group(3)!.padLeft(2, '0');
+    return '$year-$month-$day';
+  }
+
   Map<String, dynamic> toJson(String userId) => {
     'user_id': userId,
     'title': title,
@@ -141,7 +163,7 @@ class ProjectAssetRecord {
     'owner': owner,
     'tenant': tenant,
     'rent_value': rentValue,
-    'end_date': endDate,
+    'end_date': isoDateOrNull(endDate),
     'annual_yield': annualYield,
     'occupancy_rate': occupancyRate,
     'contract_progress': contractProgress,
@@ -509,6 +531,17 @@ abstract class ProjectAssetsRepository {
   Future<void> deleteEntry(String entryId);
 
   Future<List<PropertyUnitContractRecord>> fetchUnitContracts(String assetId);
+
+  /// كل عقود وحدات المستخدم — لبناء حالة العقارات في القائمة بلا استعلام
+  /// لكل عقار.
+  Future<List<PropertyUnitContractRecord>> fetchAllUnitContracts();
+
+  /// كل دفعات كل العقود — لمركز المتابعة في قائمة العقارات.
+  Future<List<PropertyUnitPaymentRecord>> fetchAllUnitPayments();
+
+  /// كل سجلات الأصول (مستندات، عقود، صيانة...) — لمركز المتابعة.
+  Future<List<ProjectAssetEntryRecord>> fetchAllEntries();
+
   Future<PropertyUnitContractRecord> upsertUnitContract(
     PropertyUnitContractRecord contract,
   );
@@ -545,6 +578,66 @@ class SupabaseProjectAssetsRepository implements ProjectAssetsRepository {
   SupabaseProjectAssetsRepository({SupabaseClient? client})
     : _client = client ?? Supabase.instance.client;
 
+  /// أعمدة رفضها الخادم لأنها غير موجودة في الجدول — تُكتشف عند أول محاولة
+  /// وتُستبعد من كل طلب بعدها، فلا يتكرر الفشل نفسه.
+  static final Map<String, Set<String>> _missingColumns = {};
+
+  /// الحقول التي لم تُحفظ في [table] لعدم وجود أعمدتها. تُعرض للمستخدم حتى
+  /// يعرف ما الذي لم يُسجَّل، بدل أن يظنّ أن كل شيء حُفظ.
+  static List<String> droppedColumns([String table = 'project_assets']) =>
+      (_missingColumns[table] ?? const <String>{}).toList(growable: false);
+
+  /// اسم العمود المرفوض من نصّ الخطأ، أو `null` إن كان الخطأ من نوع آخر.
+  static String? _unknownColumn(Object error) {
+    final text = error.toString();
+    for (final pattern in [
+      RegExp(r"Could not find the '([^']+)' column"),
+      RegExp(r'column "([^"]+)" of relation'),
+      RegExp(r"column ([a-z_]+) does not exist"),
+    ]) {
+      final match = pattern.firstMatch(text);
+      if (match != null) return match.group(1);
+    }
+    return null;
+  }
+
+  Map<String, dynamic> _withoutMissing(
+    String table,
+    Map<String, dynamic> payload,
+  ) {
+    final missing = _missingColumns[table];
+    if (missing == null || missing.isEmpty) return payload;
+    return {
+      for (final entry in payload.entries)
+        if (!missing.contains(entry.key)) entry.key: entry.value,
+    };
+  }
+
+  /// يكتب الصف، وكلما رفض الخادم عمودًا غير موجود استبعده وأعاد المحاولة.
+  ///
+  /// [write] تتلقّى الحمولة بعد التنقية وتنفّذ الإدراج أو التحديث. أي خطأ
+  /// غير «عمود مجهول» يُرفع كما هو: فشل الشبكة أو الصلاحيات ليس شيئًا
+  /// يُداوى بحذف حقل.
+  Future<Map<String, dynamic>> _writeWithColumnFallback(
+    String table,
+    Map<String, dynamic> payload,
+    Future<Map<String, dynamic>> Function(Map<String, dynamic> body) write,
+  ) async {
+    var body = _withoutMissing(table, payload);
+    for (var attempt = 0; attempt < 10; attempt++) {
+      try {
+        return await write(body);
+      } catch (error) {
+        final column = _unknownColumn(error);
+        if (column == null || !body.containsKey(column)) rethrow;
+        _missingColumns.putIfAbsent(table, () => <String>{}).add(column);
+        body = Map<String, dynamic>.from(body)..remove(column);
+        if (body.isEmpty) rethrow;
+      }
+    }
+    throw StateError('تعذّر حفظ السجل بعد استبعاد الأعمدة المرفوضة.');
+  }
+
   /// يدخل بحساب التطبيق الثابت عبر [AppSession]. كان يستدعي
   /// signInAnonymously() فيُنشئ مستخدمًا جديدًا عند كل إعادة تثبيت،
   /// فتصبح كل البيانات السابقة غير مرئية.
@@ -552,45 +645,181 @@ class SupabaseProjectAssetsRepository implements ProjectAssetsRepository {
 
   @override
   Future<List<ProjectAssetRecord>> fetchAssets() async {
-    await _authenticatedUser();
+    // أصولي أنا فقط: المفوَّض بها من غيري تُجلب منفصلة
+    // ([fetchDelegatedAssets]) فلا تدخل في ملخصاتي وتقاريري وتفويضاتي.
+    final user = await _authenticatedUser();
     final rows = await _client
         .from(_assetsTable)
         .select()
+        .eq('user_id', user.id)
         .order('created_at', ascending: false)
         .timeout(_requestTimeout);
-    return rows.map(ProjectAssetRecord.fromJson).toList(growable: false);
+    final assets =
+        rows.map(ProjectAssetRecord.fromJson).toList(growable: false);
+    for (final asset in assets) {
+      PlanAccess.rememberAsset(asset.id, asset.category);
+    }
+    return assets;
+  }
+
+  /// ما فوّضني أصحابه بإدارته (تفويض مقبول وساري): العقارات والمركبات
+  /// والأنشطة، ويُملأ [DelegatedAssets] بمالكيها وصلاحياتي عليها.
+  Future<List<ProjectAssetRecord>> fetchDelegatedAssets() async {
+    final user = await _authenticatedUser();
+    dynamic rows;
+    try {
+      rows = await _client
+          .rpc('fundly_my_delegated_assets')
+          .timeout(_requestTimeout);
+    } catch (_) {
+      // قبل تشغيل ترحيل التفويض في الخادم: لا عناصر مفوَّضة.
+      DelegatedAssets.clear();
+      return const [];
+    }
+    DelegatedAssets.replaceFromRows(rows is List ? rows : const []);
+    final ids = DelegatedAssets.ids;
+    if (ids.isEmpty) return const [];
+    // من الخادم: العقار كاملًا، أو بوحداتي المفوَّضة وحدها.
+    List<Map<String, dynamic>> assets;
+    try {
+      final res = await _client
+          .rpc('fundly_delegated_asset_rows')
+          .timeout(_requestTimeout);
+      assets = [
+        if (res is List)
+          for (final row in res)
+            if (row is Map) Map<String, dynamic>.from(row),
+      ];
+    } catch (_) {
+      // قبل ترحيل «إكمال التفويض»: القراءة المباشرة.
+      assets = await _client
+          .from(_assetsTable)
+          .select()
+          .inFilter('id', ids)
+          .neq('user_id', user.id)
+          .timeout(_requestTimeout);
+    }
+    final list = assets
+        .map(ProjectAssetRecord.fromJson)
+        .where((asset) => asset.status != 'محذوف')
+        .toList(growable: false);
+    for (final asset in list) {
+      PlanAccess.rememberAsset(asset.id, asset.category);
+    }
+    return list;
+  }
+
+  /// عقود أصول بعينها (المفوَّضة) — عقودي أنا من [fetchAllUnitContracts].
+  Future<List<PropertyUnitContractRecord>> fetchContractsOfAssets(
+    List<String> assetIds,
+  ) async {
+    if (assetIds.isEmpty) return const [];
+    await _authenticatedUser();
+    final rows = await _client
+        .from(_unitContractsTable)
+        .select()
+        .inFilter('asset_id', assetIds)
+        .order('created_at', ascending: false)
+        .timeout(_requestTimeout);
+    return _rememberContracts(
+      rows.map(PropertyUnitContractRecord.fromJson).toList(growable: false),
+    );
+  }
+
+  /// دفعات عقود بعينها (عقود الأصول المفوَّضة).
+  Future<List<PropertyUnitPaymentRecord>> fetchPaymentsOfContracts(
+    List<String> contractIds,
+  ) async {
+    if (contractIds.isEmpty) return const [];
+    await _authenticatedUser();
+    final rows = await _client
+        .from(_unitPaymentsTable)
+        .select()
+        .inFilter('contract_id', contractIds)
+        .order('due_date', ascending: true)
+        .timeout(_requestTimeout);
+    return _rememberPayments(
+      rows.map(PropertyUnitPaymentRecord.fromJson).toList(growable: false),
+    );
+  }
+
+  /// سجلات أصول بعينها (المفوَّضة): مستندات، صيانة، متابعة...
+  Future<List<ProjectAssetEntryRecord>> fetchEntriesOfAssets(
+    List<String> assetIds,
+  ) async {
+    if (assetIds.isEmpty) return const [];
+    await _authenticatedUser();
+    final rows = await _client
+        .from(_entriesTable)
+        .select()
+        .inFilter('asset_id', assetIds)
+        .order('created_at', ascending: false)
+        .timeout(_requestTimeout);
+    return _rememberEntries(
+      rows.map(ProjectAssetEntryRecord.fromJson).toList(growable: false),
+    );
   }
 
   @override
   Future<ProjectAssetRecord> createAsset(ProjectAssetRecord asset) async {
+    PlanAccess.ensureEdit(asset.category);
     final user = await _authenticatedUser();
-    final row = await _client
-        .from(_assetsTable)
-        .insert(asset.toJson(user.id))
-        .select()
-        .single()
-        .timeout(_requestTimeout);
-    return ProjectAssetRecord.fromJson(row);
+    final row = await _writeWithColumnFallback(
+      _assetsTable,
+      asset.toJson(user.id),
+      (body) => _client
+          .from(_assetsTable)
+          .insert(body)
+          .select()
+          .single()
+          .timeout(_requestTimeout),
+    );
+    final created = ProjectAssetRecord.fromJson(row);
+    PlanAccess.rememberAsset(created.id, created.category);
+    return created;
   }
 
   @override
   Future<ProjectAssetRecord> updateAsset(ProjectAssetRecord asset) async {
+    // مفوَّض على وحدات بعينها: تُحفظ بيانات وحداته فقط، وبقية العقار
+    // كما هو (الخادم يدمجها ويمنع تغيير غيرها).
+    final delegation = DelegatedAssets.of(asset.id);
+    if (delegation != null && !delegation.wholeAsset) {
+      await _authenticatedUser();
+      await _client
+          .rpc(
+            'fundly_save_delegated_units',
+            params: {'p_asset': asset.id, 'p_units': asset.unitsJson ?? '[]'},
+          )
+          .timeout(_requestTimeout);
+      DelegatedAssets.noteWrite(asset.id);
+      return asset;
+    }
+    if (!DelegatedAssets.isDelegated(asset.id)) {
+      PlanAccess.ensureEdit(asset.category);
+    }
     final user = await _authenticatedUser();
     if (asset.id == null) {
       throw const PostgrestException(message: 'Missing project asset id');
     }
-    final row = await _client
-        .from(_assetsTable)
-        .update(asset.toJson(user.id))
-        .eq('id', asset.id!)
-        .select()
-        .single()
-        .timeout(_requestTimeout);
+    final row = await _writeWithColumnFallback(
+      _assetsTable,
+      asset.toJson(user.id),
+      (body) => _client
+          .from(_assetsTable)
+          .update(body)
+          .eq('id', asset.id!)
+          .select()
+          .single()
+          .timeout(_requestTimeout),
+    );
+    DelegatedAssets.noteWrite(asset.id);
     return ProjectAssetRecord.fromJson(row);
   }
 
   @override
   Future<void> deleteAsset(String assetId) async {
+    PlanAccess.ensureEditAsset(assetId);
     await _authenticatedUser();
     await _client
         .from(_assetsTable)
@@ -608,13 +837,58 @@ class SupabaseProjectAssetsRepository implements ProjectAssetsRepository {
         .eq('asset_id', assetId)
         .order('created_at', ascending: false)
         .timeout(_requestTimeout);
-    return rows.map(ProjectAssetEntryRecord.fromJson).toList(growable: false);
+    return _rememberEntries(
+      rows.map(ProjectAssetEntryRecord.fromJson).toList(growable: false),
+    );
+  }
+
+  /// مالك كل سجل (للتحقق من الباقة عند حذفه بمعرّفه وحده).
+  static List<ProjectAssetEntryRecord> _rememberEntries(
+    List<ProjectAssetEntryRecord> entries,
+  ) {
+    for (final entry in entries) {
+      PlanAccess.rememberOwner(entry.id, entry.assetId);
+    }
+    return entries;
+  }
+
+  static List<PropertyUnitContractRecord> _rememberContracts(
+    List<PropertyUnitContractRecord> contracts,
+  ) {
+    for (final contract in contracts) {
+      PlanAccess.rememberOwner(contract.id, contract.assetId);
+    }
+    return contracts;
+  }
+
+  static List<PropertyUnitPaymentRecord> _rememberPayments(
+    List<PropertyUnitPaymentRecord> payments,
+  ) {
+    for (final payment in payments) {
+      PlanAccess.rememberOwner(
+        payment.id,
+        PlanAccess.assetOf(payment.contractId),
+      );
+    }
+    return payments;
+  }
+
+  static List<PropertyUnitTransactionRecord> _rememberTransactions(
+    List<PropertyUnitTransactionRecord> transactions,
+  ) {
+    for (final transaction in transactions) {
+      PlanAccess.rememberOwner(transaction.id, transaction.assetId);
+    }
+    return transactions;
   }
 
   @override
   Future<ProjectAssetEntryRecord> upsertEntry(
     ProjectAssetEntryRecord entry,
   ) async {
+    if (!DelegatedAssets.isDelegated(entry.assetId)) {
+      PlanAccess.ensureEditAsset(entry.assetId);
+    }
     final user = await _authenticatedUser();
     Map<String, dynamic> row;
     if (entry.id == null) {
@@ -633,11 +907,13 @@ class SupabaseProjectAssetsRepository implements ProjectAssetsRepository {
           .single()
           .timeout(_requestTimeout);
     }
+    DelegatedAssets.noteWrite(entry.assetId);
     return ProjectAssetEntryRecord.fromJson(row);
   }
 
   @override
   Future<void> deleteEntry(String entryId) async {
+    PlanAccess.ensureEditAsset(PlanAccess.assetOf(entryId));
     await _authenticatedUser();
     await _client
         .from(_entriesTable)
@@ -657,15 +933,60 @@ class SupabaseProjectAssetsRepository implements ProjectAssetsRepository {
         .eq('asset_id', assetId)
         .order('created_at', ascending: false)
         .timeout(_requestTimeout);
-    return rows
-        .map(PropertyUnitContractRecord.fromJson)
-        .toList(growable: false);
+    return _rememberContracts(
+      rows.map(PropertyUnitContractRecord.fromJson).toList(growable: false),
+    );
+  }
+
+  @override
+  Future<List<PropertyUnitContractRecord>> fetchAllUnitContracts() async {
+    final user = await _authenticatedUser();
+    final rows = await _client
+        .from(_unitContractsTable)
+        .select()
+        .eq('user_id', user.id)
+        .order('created_at', ascending: false)
+        .timeout(_requestTimeout);
+    return _rememberContracts(
+      rows.map(PropertyUnitContractRecord.fromJson).toList(growable: false),
+    );
+  }
+
+  @override
+  Future<List<PropertyUnitPaymentRecord>> fetchAllUnitPayments() async {
+    final user = await _authenticatedUser();
+    final rows = await _client
+        .from(_unitPaymentsTable)
+        .select()
+        .eq('user_id', user.id)
+        .order('due_date', ascending: true)
+        .timeout(_requestTimeout);
+    return _rememberPayments(
+      rows.map(PropertyUnitPaymentRecord.fromJson).toList(growable: false),
+    );
+  }
+
+  @override
+  Future<List<ProjectAssetEntryRecord>> fetchAllEntries() async {
+    final user = await _authenticatedUser();
+    final rows = await _client
+        .from(_entriesTable)
+        .select()
+        .eq('user_id', user.id)
+        .order('created_at', ascending: false)
+        .timeout(_requestTimeout);
+    return _rememberEntries(
+      rows.map(ProjectAssetEntryRecord.fromJson).toList(growable: false),
+    );
   }
 
   @override
   Future<PropertyUnitContractRecord> upsertUnitContract(
     PropertyUnitContractRecord contract,
   ) async {
+    if (!DelegatedAssets.isDelegated(contract.assetId)) {
+      PlanAccess.ensureEditAsset(contract.assetId);
+    }
     final user = await _authenticatedUser();
     Map<String, dynamic> row;
     if (contract.id == null) {
@@ -684,11 +1005,15 @@ class SupabaseProjectAssetsRepository implements ProjectAssetsRepository {
           .single()
           .timeout(_requestTimeout);
     }
-    return PropertyUnitContractRecord.fromJson(row);
+    final saved = PropertyUnitContractRecord.fromJson(row);
+    PlanAccess.rememberOwner(saved.id, saved.assetId);
+    DelegatedAssets.noteWrite(saved.assetId);
+    return saved;
   }
 
   @override
   Future<void> deleteUnitContract(String contractId) async {
+    PlanAccess.ensureEditAsset(PlanAccess.assetOf(contractId));
     await _authenticatedUser();
     await _client
         .from(_unitContractsTable)
@@ -708,13 +1033,19 @@ class SupabaseProjectAssetsRepository implements ProjectAssetsRepository {
         .eq('contract_id', contractId)
         .order('due_date', ascending: true)
         .timeout(_requestTimeout);
-    return rows.map(PropertyUnitPaymentRecord.fromJson).toList(growable: false);
+    return _rememberPayments(
+      rows.map(PropertyUnitPaymentRecord.fromJson).toList(growable: false),
+    );
   }
 
   @override
   Future<PropertyUnitPaymentRecord> upsertUnitPayment(
     PropertyUnitPaymentRecord payment,
   ) async {
+    final paymentAsset = PlanAccess.assetOf(payment.contractId);
+    if (!DelegatedAssets.isDelegated(paymentAsset)) {
+      PlanAccess.ensureEditAsset(paymentAsset);
+    }
     final user = await _authenticatedUser();
     Map<String, dynamic> row;
     if (payment.id == null) {
@@ -733,11 +1064,13 @@ class SupabaseProjectAssetsRepository implements ProjectAssetsRepository {
           .single()
           .timeout(_requestTimeout);
     }
+    DelegatedAssets.noteWrite(paymentAsset);
     return PropertyUnitPaymentRecord.fromJson(row);
   }
 
   @override
   Future<void> deleteUnitPayment(String paymentId) async {
+    PlanAccess.ensureEditAsset(PlanAccess.assetOf(paymentId));
     await _authenticatedUser();
     await _client
         .from(_unitPaymentsTable)
@@ -759,15 +1092,20 @@ class SupabaseProjectAssetsRepository implements ProjectAssetsRepository {
     final rows = await (unitKey == null ? query : query.eq('unit_key', unitKey))
         .order('occurred_on', ascending: false)
         .timeout(_requestTimeout);
-    return rows
-        .map(PropertyUnitTransactionRecord.fromJson)
-        .toList(growable: false);
+    return _rememberTransactions(
+      rows
+          .map(PropertyUnitTransactionRecord.fromJson)
+          .toList(growable: false),
+    );
   }
 
   @override
   Future<PropertyUnitTransactionRecord> upsertUnitTransaction(
     PropertyUnitTransactionRecord transaction,
   ) async {
+    if (!DelegatedAssets.isDelegated(transaction.assetId)) {
+      PlanAccess.ensureEditAsset(transaction.assetId);
+    }
     final user = await _authenticatedUser();
     Map<String, dynamic> row;
     if (transaction.id == null) {
@@ -786,11 +1124,13 @@ class SupabaseProjectAssetsRepository implements ProjectAssetsRepository {
           .single()
           .timeout(_requestTimeout);
     }
+    DelegatedAssets.noteWrite(transaction.assetId);
     return PropertyUnitTransactionRecord.fromJson(row);
   }
 
   @override
   Future<void> deleteUnitTransaction(String transactionId) async {
+    PlanAccess.ensureEditAsset(PlanAccess.assetOf(transactionId));
     await _authenticatedUser();
     await _client
         .from(_unitTransactionsTable)

@@ -18,7 +18,11 @@ class ReadNotificationsStore extends ChangeNotifier {
 
   static const _prefsKey = 'read_notifications_keys';
 
+  /// تنبيهات مُسحت من القائمة («مسح الكل») — تعود فقط باستحقاق جديد.
+  static const _dismissedKey = 'dismissed_notifications_keys';
+
   Set<String> _readKeys = <String>{};
+  Set<String> _dismissedKeys = <String>{};
   bool _loaded = false;
 
   bool get isLoaded => _loaded;
@@ -33,14 +37,38 @@ class ReadNotificationsStore extends ChangeNotifier {
     if (_loaded) return;
     final prefs = await SharedPreferences.getInstance();
     _readKeys = (prefs.getStringList(_prefsKey) ?? const <String>[]).toSet();
+    _dismissedKeys =
+        (prefs.getStringList(_dismissedKey) ?? const <String>[]).toSet();
     _loaded = true;
     notifyListeners();
   }
 
   bool isRead(HomeCalendarItem item) => _readKeys.contains(keyFor(item));
 
+  bool isDismissed(HomeCalendarItem item) =>
+      _dismissedKeys.contains(keyFor(item));
+
   int unreadCount(Iterable<HomeCalendarItem> items) =>
-      items.where((item) => !isRead(item)).length;
+      items.where((item) => !isRead(item) && !isDismissed(item)).length;
+
+  /// «مسح الكل»: تُخفى التنبيهات الحالية من القائمة وتُعدّ مقروءة.
+  Future<void> dismissAll(Iterable<HomeCalendarItem> items) async {
+    final keys = items.map(keyFor).toList(growable: false);
+    if (keys.isEmpty) return;
+    _dismissedKeys.addAll(keys);
+    _readKeys.addAll(keys);
+    if (_dismissedKeys.length > 500) {
+      _dismissedKeys = _dismissedKeys
+          .skip(_dismissedKeys.length - 500)
+          .toSet();
+    }
+    await _persist();
+    final prefs = await SharedPreferences.getInstance();
+    await prefs.setStringList(
+      _dismissedKey,
+      _dismissedKeys.toList(growable: false),
+    );
+  }
 
   Future<void> markRead(HomeCalendarItem item, {bool read = true}) async {
     final key = keyFor(item);

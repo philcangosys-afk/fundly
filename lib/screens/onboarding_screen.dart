@@ -1,4 +1,5 @@
-import 'package:flutter/material.dart';
+import 'package:flutter/material.dart' hide Text, Align;
+import '../l10n/tr_widgets.dart';
 
 class OnboardingScreen extends StatefulWidget {
   const OnboardingScreen({super.key});
@@ -14,15 +15,15 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
   final List<OnboardingPage> pages = [
     OnboardingPage(
       iconWidget: Image.asset('assets/images/splash_1.png', fit: BoxFit.cover),
-      dotColor: Color(0xFF7C3AED),
+      dotColor: Color(0xFF0E7161),
     ),
     OnboardingPage(
       iconWidget: Image.asset('assets/images/splash_2.png', fit: BoxFit.cover),
-      dotColor: Color(0xFF3B82F6),
+      dotColor: Color(0xFF0E7161),
     ),
     OnboardingPage(
       iconWidget: Image.asset('assets/images/splash_3.png', fit: BoxFit.cover),
-      dotColor: Color(0xFF7C3AED),
+      dotColor: Color(0xFF0E7161),
     ),
   ];
 
@@ -70,10 +71,10 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
                       width: _currentPage == index ? 32 : 12,
                       height: 12,
                       decoration: BoxDecoration(
-                        borderRadius: BorderRadius.circular(6),
+                        borderRadius: BorderRadius.circular(8),
                         color: _currentPage == index
                             ? pages[_currentPage].dotColor
-                            : Colors.grey[300],
+                            : const Color(0xFFE1E9E6),
                       ),
                     ),
                   ),
@@ -98,7 +99,7 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
                         }
                       },
                       style: ElevatedButton.styleFrom(
-                        backgroundColor: Color(0xFF7C3AED),
+                        backgroundColor: Color(0xFF0E7161),
                         shape: RoundedRectangleBorder(
                           borderRadius: BorderRadius.circular(16),
                         ),
@@ -109,7 +110,7 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
                             : 'التالي',
                         textDirection: TextDirection.rtl,
                         style: TextStyle(
-                          fontSize: 16,
+                          fontSize: 15,
                           fontWeight: FontWeight.w600,
                           color: Colors.white,
                         ),
@@ -138,7 +139,7 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
               width: 20,
               height: 20,
               decoration: BoxDecoration(
-                color: Color(0xFF7C3AED),
+                color: Color(0xFF0E7161),
                 shape: BoxShape.circle,
               ),
             ),
@@ -152,11 +153,11 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
                 width: 200,
                 height: 140,
                 decoration: BoxDecoration(
-                  color: Color(0xFF7C3AED),
+                  color: Color(0xFF0E7161),
                   borderRadius: BorderRadius.circular(24),
                   boxShadow: [
                     BoxShadow(
-                      color: Color(0xFF7C3AED).withOpacity(0.3),
+                      color: Color(0xFF0E7161).withOpacity(0.3),
                       blurRadius: 20,
                       offset: Offset(0, 10),
                     ),
@@ -171,11 +172,11 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
                   width: 60,
                   height: 60,
                   decoration: BoxDecoration(
-                    color: Color(0xFFFCD34D),
+                    color: Color(0xFFF7C378),
                     shape: BoxShape.circle,
                     boxShadow: [
                       BoxShadow(
-                        color: Colors.yellow.withOpacity(0.4),
+                        color: const Color(0xFFF2A93F).withOpacity(0.4),
                         blurRadius: 15,
                       ),
                     ],
@@ -194,11 +195,11 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
                   width: 50,
                   height: 50,
                   decoration: BoxDecoration(
-                    color: Color(0xFFFCD34D),
+                    color: Color(0xFFF7C378),
                     shape: BoxShape.circle,
                     boxShadow: [
                       BoxShadow(
-                        color: Colors.yellow.withOpacity(0.4),
+                        color: const Color(0xFFF2A93F).withOpacity(0.4),
                         blurRadius: 15,
                       ),
                     ],
@@ -228,11 +229,11 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
             width: 120,
             height: 120,
             decoration: BoxDecoration(
-              color: Color(0xFFFCD34D),
+              color: Color(0xFFF7C378),
               shape: BoxShape.circle,
               boxShadow: [
                 BoxShadow(
-                  color: Colors.yellow.withOpacity(0.4),
+                  color: const Color(0xFFF2A93F).withOpacity(0.4),
                   blurRadius: 25,
                   offset: Offset(0, 10),
                 ),
@@ -258,20 +259,20 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
                 width: 40,
                 height: 40,
                 decoration: BoxDecoration(
-                  color: Color(0xFF3B82F6).withOpacity(0.2),
+                  color: Color(0xFF0E7161).withOpacity(0.2),
                   shape: BoxShape.circle,
                 ),
-                child: Icon(Icons.person, color: Color(0xFF3B82F6), size: 24),
+                child: Icon(Icons.person, color: Color(0xFF0E7161), size: 24),
               ),
               SizedBox(width: 10),
               Container(
                 width: 40,
                 height: 40,
                 decoration: BoxDecoration(
-                  color: Color(0xFF3B82F6).withOpacity(0.2),
+                  color: Color(0xFF0E7161).withOpacity(0.2),
                   shape: BoxShape.circle,
                 ),
-                child: Icon(Icons.person, color: Color(0xFF3B82F6), size: 24),
+                child: Icon(Icons.person, color: Color(0xFF0E7161), size: 24),
               ),
             ],
           ),
@@ -293,14 +294,14 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
                 width: 140,
                 height: 160,
                 decoration: BoxDecoration(
-                  color: Color(0xFF7C3AED),
+                  color: Color(0xFF0E7161),
                   borderRadius: BorderRadius.vertical(
                     top: Radius.circular(24),
                     bottom: Radius.circular(40),
                   ),
                   boxShadow: [
                     BoxShadow(
-                      color: Color(0xFF7C3AED).withOpacity(0.3),
+                      color: Color(0xFF0E7161).withOpacity(0.3),
                       blurRadius: 20,
                       offset: Offset(0, 10),
                     ),
@@ -311,14 +312,14 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
                 width: 120,
                 height: 140,
                 decoration: BoxDecoration(
-                  color: Color(0xFF6D28D9),
+                  color: Color(0xFF0A5A50),
                   borderRadius: BorderRadius.vertical(
                     top: Radius.circular(20),
                     bottom: Radius.circular(32),
                   ),
                 ),
               ),
-              Icon(Icons.check_circle, size: 80, color: Color(0xFFFCD34D)),
+              Icon(Icons.check_circle, size: 80, color: Color(0xFFF7C378)),
             ],
           ),
           SizedBox(height: 40),
@@ -326,20 +327,20 @@ class _OnboardingScreenState extends State<OnboardingScreen> {
           Container(
             padding: EdgeInsets.symmetric(horizontal: 20, vertical: 12),
             decoration: BoxDecoration(
-              color: Colors.grey[100],
+              color: const Color(0xFFF3F7F6),
               borderRadius: BorderRadius.circular(12),
             ),
             child: Row(
               mainAxisSize: MainAxisSize.min,
               children: [
-                Icon(Icons.trending_up, color: Color(0xFF7C3AED), size: 20),
+                Icon(Icons.trending_up, color: Color(0xFF0E7161), size: 20),
                 SizedBox(width: 8),
                 Text(
                   'نمو الالتزامات +32%',
                   style: TextStyle(
-                    fontSize: 14,
+                    fontSize: 13,
                     fontWeight: FontWeight.w600,
-                    color: Colors.black87,
+                    color: const Color(0xFF0F1F1C),
                   ),
                 ),
               ],
