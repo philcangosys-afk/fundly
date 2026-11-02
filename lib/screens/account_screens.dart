@@ -199,6 +199,19 @@ class _SignUpScreenState extends State<SignUpScreen> {
       setState(() => _error = 'كلمتا المرور غير متطابقتين');
       return;
     }
+    // البريد وكلمة المرور قبل طلب الرمز، فلا يُطلب رمز لبيانات مرفوضة.
+    final mail = _email.text.trim().toLowerCase();
+    if (!mail.contains('@') || !mail.contains('.')) {
+      setState(() => _error = 'صيغة البريد الإلكتروني غير صحيحة');
+      return;
+    }
+    if (_password.text.length < 6) {
+      setState(() => _error = 'كلمة المرور قصيرة — 6 أحرف على الأقل');
+      return;
+    }
+    setState(() => _error = null);
+    // رمز التحقق OTP قبل إنشاء الحساب.
+    if (!await _verifyOtp() || !mounted) return;
     setState(() {
       _busy = true;
       _error = null;
@@ -256,6 +269,148 @@ class _SignUpScreenState extends State<SignUpScreen> {
       ),
     );
     if (mounted) Navigator.of(context).pop(false);
+  }
+
+  /// مرحلة الاختبار: رمز تحقق ثابت يظهر للمستخدم بخط واضح تحت الحقل.
+  static const String _testOtp = '123456';
+
+  Future<bool> _verifyOtp() async {
+    final code = TextEditingController();
+    String? error;
+    final ok = await showDialog<bool>(
+      context: context,
+      barrierDismissible: false,
+      builder: (dialogContext) => Directionality(
+        textDirection: AppTr.uiDir,
+        child: StatefulBuilder(
+          builder: (context, setDialogState) {
+            void confirm() {
+              if (code.text.trim() == _testOtp) {
+                Navigator.pop(dialogContext, true);
+              } else {
+                setDialogState(() => error = 'رمز التحقق غير صحيح');
+              }
+            }
+
+            return AlertDialog(
+              icon: const Icon(Icons.sms_outlined, size: 34, color: _kGreen),
+              title: const Text('رمز التحقق'),
+              content: SingleChildScrollView(
+                child: Column(
+                  mainAxisSize: MainAxisSize.min,
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    const Text(
+                      'أدخل رمز التحقق المكوّن من 6 أرقام لإكمال إنشاء الحساب.',
+                      textAlign: TextAlign.center,
+                      style: TextStyle(fontSize: 13, height: 1.6),
+                    ),
+                    const SizedBox(height: 12),
+                    TextField(
+                      controller: code,
+                      autofocus: true,
+                      keyboardType: TextInputType.number,
+                      textAlign: TextAlign.center,
+                      textDirection: TextDirection.ltr,
+                      maxLength: 6,
+                      onSubmitted: (_) => confirm(),
+                      style: const TextStyle(
+                        fontSize: 22,
+                        fontWeight: FontWeight.w900,
+                        letterSpacing: 6,
+                        color: _kInk,
+                      ),
+                      decoration: InputDecoration(
+                        counterText: '',
+                        hintText: '------',
+                        filled: true,
+                        fillColor: _kField,
+                        border: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(14),
+                          borderSide: const BorderSide(color: _kLine),
+                        ),
+                        enabledBorder: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(14),
+                          borderSide: const BorderSide(color: _kLine),
+                        ),
+                        focusedBorder: OutlineInputBorder(
+                          borderRadius: BorderRadius.circular(14),
+                          borderSide: const BorderSide(
+                            color: _kGreen,
+                            width: 1.4,
+                          ),
+                        ),
+                      ),
+                    ),
+                    const SizedBox(height: 10),
+                    // الرمز ظاهر تحت الحقل بخط واضح (مرحلة الاختبار).
+                    Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 12,
+                        vertical: 10,
+                      ),
+                      decoration: BoxDecoration(
+                        color: const Color(0xFFFFF6E8),
+                        borderRadius: BorderRadius.circular(12),
+                        border: Border.all(color: const Color(0xFFCE8422)),
+                      ),
+                      child: Column(
+                        children: [
+                          Text(
+                            '${AppTr.tr('الرمز الخاص بك')}: $_testOtp',
+                            textAlign: TextAlign.center,
+                            style: const TextStyle(
+                              fontSize: 19,
+                              fontWeight: FontWeight.w900,
+                              color: Color(0xFF6B4A12),
+                            ),
+                          ),
+                          const SizedBox(height: 2),
+                          const Text(
+                            'مرحلة الاختبار',
+                            textAlign: TextAlign.center,
+                            style: TextStyle(
+                              fontSize: 11,
+                              fontWeight: FontWeight.w700,
+                              color: Color(0xFFA6691A),
+                            ),
+                          ),
+                        ],
+                      ),
+                    ),
+                    if (error != null)
+                      Padding(
+                        padding: const EdgeInsets.only(top: 8),
+                        child: Text(
+                          error!,
+                          textAlign: TextAlign.center,
+                          style: const TextStyle(
+                            fontSize: 12,
+                            fontWeight: FontWeight.w800,
+                            color: _kDanger,
+                          ),
+                        ),
+                      ),
+                  ],
+                ),
+              ),
+              actions: [
+                TextButton(
+                  onPressed: () => Navigator.pop(dialogContext, false),
+                  child: const Text('إلغاء'),
+                ),
+                FilledButton(
+                  style: FilledButton.styleFrom(backgroundColor: _kDeep),
+                  onPressed: confirm,
+                  child: const Text('تأكيد'),
+                ),
+              ],
+            );
+          },
+        ),
+      ),
+    );
+    return ok == true;
   }
 
   @override

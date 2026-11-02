@@ -12,6 +12,7 @@ import 'salary_receipts_screen.dart';
 import '../data/salary_receipts.dart';
 import '../widgets/shared/follow_filters.dart';
 import '../data/fundly_account.dart';
+import '../data/fundly_auth.dart';
 import '../data/app_reminders_store.dart';
 import '../data/page_customization_store.dart';
 import '../data/delegations_repository.dart';
@@ -287,7 +288,9 @@ class _PeopleManagementScreenState extends State<PeopleManagementScreen> {
   String _selectedTypeKey = 'all';
   String _selectedSort = 'الأحدث أولاً';
 
-  late final List<_PersonItem> _people = _seedPeople();
+  // الضيف لا يرى أسماء أمثلة كأنها بيانات أحد — القائمة فارغة حتى يسجّل.
+  late final List<_PersonItem> _people =
+      FundlyAuth.isGuest ? <_PersonItem>[] : _seedPeople();
 
   List<_PersonItem> _seedPeople() => [
     _PersonItem(

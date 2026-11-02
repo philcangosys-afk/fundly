@@ -11,6 +11,7 @@ import '../data/app_settings.dart';
 import '../data/fundly_account.dart';
 import '../data/fundly_files.dart';
 import '../data/fundly_auth.dart';
+import 'login_screen.dart';
 import '../data/custody_sharing.dart';
 import '../data/subscription_plans.dart';
 import 'subscriptions_screen.dart';
@@ -2020,7 +2021,13 @@ class SettingsHubPage extends StatelessWidget {
             subtitle: 'الاسم والصورة ووسائل التواصل',
             icon: Icons.person_outline_rounded,
             color: const Color(0xFF0A5A50),
-            onTap: () => _open(context, const ProfileDataSettingsPage()),
+            // الضيف يُطلب منه الدخول أو التسجيل أولًا.
+            onTap: () async {
+              if (!await FundlyAuth.requireLogin(context)) return;
+              if (context.mounted) {
+                _open(context, const ProfileDataSettingsPage());
+              }
+            },
           ),
           _SettingsLinkRow(
             title: 'التنبيهات والتذكير',
@@ -2093,21 +2100,32 @@ class SettingsHubPage extends StatelessWidget {
             color: const Color(0xFF0E7161),
             onTap: () => _open(context, const SyncStatusPage()),
           ),
-          _SettingsLinkRow(
-            title: 'تسجيل الخروج',
-            subtitle: 'الخروج من الحساب على هذا الجهاز',
-            icon: Icons.logout_rounded,
-            color: const Color(0xFFC4392E),
-            onTap: () => _confirmSignOut(context),
-          ),
-          // حذف الحساب مع تسجيل الخروج (كان في سياسة الخصوصية).
-          _SettingsLinkRow(
-            title: 'حذف الحساب',
-            subtitle: 'طلب حذف حسابك وكل بياناته نهائيًا',
-            icon: Icons.delete_forever_outlined,
-            color: AppTheme.danger,
-            onTap: () => _requestAccountDeletion(context),
-          ),
+          // الضيف: الدخول أو إنشاء حساب بدل الخروج وحذف الحساب.
+          if (FundlyAuth.isGuest)
+            _SettingsLinkRow(
+              title: 'تسجيل الدخول أو إنشاء حساب',
+              subtitle: 'أنت تتصفّح كضيف — سجّل الدخول لتضيف وتحفظ بياناتك',
+              icon: Icons.login_rounded,
+              color: const Color(0xFF0E7161),
+              onTap: () => openLoginScreen(context),
+            )
+          else ...[
+            _SettingsLinkRow(
+              title: 'تسجيل الخروج',
+              subtitle: 'الخروج من الحساب على هذا الجهاز',
+              icon: Icons.logout_rounded,
+              color: const Color(0xFFC4392E),
+              onTap: () => _confirmSignOut(context),
+            ),
+            // حذف الحساب مع تسجيل الخروج (كان في سياسة الخصوصية).
+            _SettingsLinkRow(
+              title: 'حذف الحساب',
+              subtitle: 'طلب حذف حسابك وكل بياناته نهائيًا',
+              icon: Icons.delete_forever_outlined,
+              color: AppTheme.danger,
+              onTap: () => _requestAccountDeletion(context),
+            ),
+          ],
         ];
 
         return Scaffold(
@@ -2256,7 +2274,27 @@ Future<void> _confirmSignOut(BuildContext context) async {
     danger: true,
   );
   if (!ok || !context.mounted) return;
-  await FundlyAccount.signOut();
+  final messenger = ScaffoldMessenger.of(context);
+  messenger.showSnackBar(
+    const SnackBar(content: Text('جارٍ رفع آخر التعديلات قبل الخروج...')),
+  );
+  final uploaded = await FundlyAccount.uploadBeforeSignOut();
+  messenger.hideCurrentSnackBar();
+  if (!uploaded) {
+    if (!context.mounted) return;
+    // بيانات الحساب تُمسح من الجوال عند الخروج، فما لم يُرفع يُفقد.
+    final force = await confirmAction(
+      context,
+      title: 'لم تُرفع كل التعديلات',
+      message: 'تعذّر رفع بعض تعديلاتك إلى حسابك — تحقّق من الإنترنت وحاول '
+          'مرة أخرى. إذا خرجت الآن تُحذف التعديلات غير المرفوعة من هذا '
+          'الجوال.',
+      confirmLabel: 'خروج على أي حال',
+      danger: true,
+    );
+    if (!force) return;
+  }
+  await FundlyAccount.signOut(uploaded: true);
 }
 
 /// تغيير كلمة المرور: الحالية ثم الجديدة مرتين.

@@ -164,11 +164,20 @@ class _MyAppState extends State<MyApp> {
         //
         // أما builder هنا فيطبّق حجم النص المختار في الإعدادات على التطبيق
         // كله؛ كان هذا الإعداد يُحفظ ولا يقرأه أحد.
-        builder: (context, child) => MediaQuery.withClampedTextScaling(
-          minScaleFactor: AppSettings.instance.textScale,
-          maxScaleFactor: AppSettings.instance.textScale,
-          child: child ?? const SizedBox.shrink(),
-        ),
+        builder: (context, child) {
+          final scaled = MediaQuery.withClampedTextScaling(
+            minScaleFactor: AppSettings.instance.textScale,
+            maxScaleFactor: AppSettings.instance.textScale,
+            child: child ?? const SizedBox.shrink(),
+          );
+          // الآيفون: لوحة الأرقام بلا زر «تم»، فالضغط خارج الحقل يغلقها.
+          if (defaultTargetPlatform != TargetPlatform.iOS) return scaled;
+          return GestureDetector(
+            behavior: HitTestBehavior.translucent,
+            onTap: () => FocusManager.instance.primaryFocus?.unfocus(),
+            child: scaled,
+          );
+        },
         home: const AppLockGate(child: LoginGate(child: HomePage())),
         routes: {'/home': (context) => const HomePage()},
         debugShowCheckedModeBanner: false,
@@ -1292,6 +1301,7 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
   }
 
   Future<void> _openPinPicker() async {
+    if (!await FundlyAuth.requireLogin(context)) return;
     final itemsFuture = HomePinItemsService().load();
     await showModalBottomSheet<void>(
       context: context,
@@ -4108,6 +4118,7 @@ class _ReportsArchiveHubPageState extends State<_ReportsArchiveHubPage> {
   /// التقرير وكلمة البحث (وسبب الأرشفة)، ثم زر «إنشاء تقرير» / «إنشاء
   /// أرشيف». بعد الإنشاء تُفتح معاينة الملف مباشرة.
   Future<void> _openReportFilter({required bool archive}) async {
+    if (!await FundlyAuth.requireLogin(context)) return;
     if (_loadingItems) {
       _toast('جارٍ تحميل البيانات...');
       return;
@@ -6002,6 +6013,8 @@ class _DelegationsHubPageState extends State<_DelegationsHubPage> {
     String? presetSub,
     DelegationTarget? presetTarget,
   }) async {
+    if (!await FundlyAuth.requireLogin(context)) return;
+    if (!mounted) return;
     final delegateController = TextEditingController(
       text: existing?.delegateName ?? presetDelegate ?? '',
     );

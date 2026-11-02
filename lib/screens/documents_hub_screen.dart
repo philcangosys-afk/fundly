@@ -9,6 +9,7 @@ import 'package:url_launcher/url_launcher.dart';
 
 import '../data/app_reminders_store.dart';
 import '../data/document_store.dart';
+import '../data/fundly_auth.dart';
 import 'note_and_sign_screens.dart';
 import '../data/personal_entries_repository.dart';
 import '../data/project_assets_repository.dart';
@@ -2137,6 +2138,8 @@ class _GeneralDocsGridState extends State<_GeneralDocsGrid> {
 
   /// زر +: مجلد، ملف، استيراد من الصور، التقاط صورة.
   Future<void> _openAddMenu() async {
+    if (!await FundlyAuth.requireLogin(context)) return;
+    if (!mounted) return;
     // داخل مجلد «ملاحظات»: + يفتح صفحة الملاحظة مباشرة بلا خيارات.
     if (widget.parentId == GeneralDocsStore.notesFolderId) {
       await _editNote();
@@ -3183,6 +3186,8 @@ class _ModuleDocumentsScreenState extends State<ModuleDocumentsScreen> {
   /// زر «إضافة مستند»: التقسيم ← العنصر ← بيانات المستند والملف ← حفظ.
   /// داخل تقسيم أو عنصر مفتوح تُختصر الخطوات المعروفة.
   Future<void> _addDocument() async {
+    if (!await FundlyAuth.requireLogin(context)) return;
+    if (!mounted) return;
     if (!PlanGate.canAdd(context, PlanModules.documents, _docs.length)) {
       return;
     }

@@ -32,6 +32,9 @@ class FundlyPush {
 
   /// عند الإقلاع قبل بناء الواجهة.
   static Future<void> init() async {
+    // iOS: لم يُضف ملف GoogleService-Info.plist بعد، فيبقى الفحص الدوري وحده
+    // بلا محاولة تشغيل Firebase.
+    if (!kIsWeb && defaultTargetPlatform == TargetPlatform.iOS) return;
     try {
       await Firebase.initializeApp();
       FirebaseMessaging.onBackgroundMessage(fundlyPushBackground);

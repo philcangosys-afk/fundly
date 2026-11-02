@@ -6,6 +6,8 @@ import '../l10n/app_language.dart';
 import '../data/app_settings.dart';
 import '../data/custody_sharing.dart';
 import '../data/fundly_account.dart';
+import '../data/fundly_auth.dart';
+import 'login_screen.dart';
 import 'birthday_screen.dart';
 import 'trash_screen.dart';
 import '../widgets/shared/app_design.dart';
@@ -19,7 +21,10 @@ class ProfileSettingsScreen extends StatelessWidget {
 
   final Widget? delegationsPage;
 
-  void _open(BuildContext context, Widget page) {
+  /// الضيف يُطلب منه الدخول أو التسجيل قبل فتح أي بند.
+  Future<void> _open(BuildContext context, Widget page) async {
+    if (!await FundlyAuth.requireLogin(context)) return;
+    if (!context.mounted) return;
     Navigator.of(context).push(MaterialPageRoute(builder: (_) => page));
   }
 
@@ -92,7 +97,9 @@ class ProfileSettingsScreen extends StatelessWidget {
                 final photo = settings.photo;
                 return InkWell(
                   key: const ValueKey('settings-profile-header'),
-                  onTap: () => _open(context, const ProfileDataSettingsPage()),
+                  onTap: () => FundlyAuth.isGuest
+                      ? openLoginScreen(context)
+                      : _open(context, const ProfileDataSettingsPage()),
                   borderRadius: BorderRadius.circular(12),
                   child: Padding(
                     padding: const EdgeInsets.symmetric(
@@ -121,7 +128,7 @@ class ProfileSettingsScreen extends StatelessWidget {
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
                               Text(
-                                settings.name,
+                                FundlyAuth.isGuest ? 'زائر' : settings.name,
                                 maxLines: 3,
                                 style: const TextStyle(
                                   fontSize: 17,
@@ -130,8 +137,10 @@ class ProfileSettingsScreen extends StatelessWidget {
                                 ),
                               ),
                               const SizedBox(height: 3),
-                              const Text(
-                                'عرض وتعديل البيانات الشخصية',
+                              Text(
+                                FundlyAuth.isGuest
+                                    ? 'سجّل الدخول أو أنشئ حسابًا'
+                                    : 'عرض وتعديل البيانات الشخصية',
                                 style: AppTheme.rowSubtitle,
                               ),
                             ],
@@ -147,8 +156,11 @@ class ProfileSettingsScreen extends StatelessWidget {
             const SizedBox(height: 8),
             // الرقم التعريفي والاسم: هوية هذا الجهاز في المعاملات
             // المشتركة، وكلاهما قابل للتعديل من داخل البطاقة.
-            const _IdentityCard(),
-            const SizedBox(height: AppTheme.cardGap),
+            // الضيف بلا رقم تعريفي حتى يسجّل.
+            if (!FundlyAuth.isGuest) ...[
+              const _IdentityCard(),
+              const SizedBox(height: AppTheme.cardGap),
+            ],
             // مستطيلات منفصلة بنفس نمط صفحة الإعدادات، بدل صندوق واحد
             // تفصل بنوده خطوط رفيعة.
             for (var index = 0; index < items.length; index++) ...[

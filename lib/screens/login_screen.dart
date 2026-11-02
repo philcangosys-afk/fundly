@@ -7,8 +7,9 @@ import '../data/fundly_account.dart';
 import '../data/fundly_auth.dart';
 import 'account_screens.dart';
 
-/// بوابة الدخول: أول تشغيل تظهر شاشة الدخول، وبعد الدخول (أو التصفّح كضيف)
-/// يفتح التطبيق مباشرة.
+/// بوابة الدخول: أول فتح على الجوال يُسأل عن اللغة فقط، ثم يفتح التطبيق
+/// مباشرة — بالحساب إن كان داخلًا، وإلا يتصفّح كضيف ويُطلب منه الدخول أو
+/// التسجيل عند أول إدخال.
 class LoginGate extends StatefulWidget {
   const LoginGate({super.key, required this.child});
 
@@ -22,13 +23,190 @@ class _LoginGateState extends State<LoginGate> {
   @override
   Widget build(BuildContext context) {
     if (FundlyAuth.isSignedIn) return widget.child;
-    return LoginScreen(
-      onDone: (mode) async {
-        await FundlyAuth.setMode(mode);
-        if (mounted) setState(() {});
-      },
+    if (!FundlyAuth.languageChosen) {
+      return FirstLanguageScreen(
+        onDone: () async {
+          await FundlyAuth.markLanguageChosen();
+          await FundlyAuth.setMode(FundlyAuth.modeGuest);
+          if (mounted) setState(() {});
+        },
+      );
+    }
+    // بلا دخول (ومنه بعد تسجيل الخروج): تصفّح كضيف.
+    if (!FundlyAuth.isGuest) FundlyAuth.setMode(FundlyAuth.modeGuest);
+    return widget.child;
+  }
+}
+
+/// أول فتح للتطبيق على الجوال: اختيار اللغة فقط، ثم يدخل التطبيق.
+class FirstLanguageScreen extends StatefulWidget {
+  const FirstLanguageScreen({super.key, required this.onDone});
+
+  final Future<void> Function() onDone;
+
+  @override
+  State<FirstLanguageScreen> createState() => _FirstLanguageScreenState();
+}
+
+class _FirstLanguageScreenState extends State<FirstLanguageScreen> {
+  bool _busy = false;
+
+  @override
+  Widget build(BuildContext context) {
+    final current = AppSettings.instance.language;
+    return Scaffold(
+      backgroundColor: Colors.white,
+      body: Directionality(
+        textDirection: AppTr.uiDir,
+        child: DecoratedBox(
+          decoration: const BoxDecoration(
+            gradient: LinearGradient(
+              begin: Alignment.topCenter,
+              end: Alignment.bottomCenter,
+              colors: [Color(0xFFE8F3EF), Color(0xFFF8FBFA), Colors.white],
+              stops: [0, 0.45, 1],
+            ),
+          ),
+          child: SafeArea(
+            child: ListView(
+              padding: const EdgeInsets.fromLTRB(20, 28, 20, 24),
+              children: [
+                Center(
+                  child: Container(
+                    width: 84,
+                    height: 84,
+                    padding: const EdgeInsets.all(14),
+                    decoration: BoxDecoration(
+                      color: Colors.white,
+                      borderRadius: BorderRadius.circular(24),
+                      border: Border.all(
+                        color: _kGold.withValues(alpha: 0.35),
+                      ),
+                    ),
+                    child: Image.asset(
+                      'assets/images/logo_mark.png',
+                      fit: BoxFit.contain,
+                    ),
+                  ),
+                ),
+                const SizedBox(height: 18),
+                const Text(
+                  'اختر اللغة',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                    fontSize: 22,
+                    fontWeight: FontWeight.w900,
+                    color: _kInk,
+                  ),
+                ),
+                const SizedBox(height: 4),
+                const Text(
+                  'Choose your language',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                    fontSize: 12.5,
+                    fontWeight: FontWeight.w700,
+                    color: _kMuted,
+                  ),
+                ),
+                const SizedBox(height: 20),
+                for (final language in AppSettings.languages)
+                  Padding(
+                    padding: const EdgeInsets.only(bottom: 10),
+                    child: Material(
+                      color: language == current ? _kField : Colors.white,
+                      shape: RoundedRectangleBorder(
+                        borderRadius: BorderRadius.circular(16),
+                        side: BorderSide(
+                          color: language == current ? _kGreen : _kLine,
+                          width: language == current ? 1.6 : 1,
+                        ),
+                      ),
+                      child: InkWell(
+                        borderRadius: BorderRadius.circular(16),
+                        onTap: _busy
+                            ? null
+                            : () async {
+                                await AppSettings.instance.setLanguage(
+                                  language,
+                                );
+                                if (mounted) setState(() {});
+                              },
+                        child: Padding(
+                          padding: const EdgeInsets.symmetric(
+                            horizontal: 16,
+                            vertical: 15,
+                          ),
+                          child: Row(
+                            children: [
+                              Expanded(
+                                child: Text(
+                                  language,
+                                  style: const TextStyle(
+                                    fontSize: 15,
+                                    fontWeight: FontWeight.w900,
+                                    color: _kInk,
+                                  ),
+                                ),
+                              ),
+                              Icon(
+                                language == current
+                                    ? Icons.check_circle_rounded
+                                    : Icons.circle_outlined,
+                                color: language == current ? _kGreen : _kLine,
+                              ),
+                            ],
+                          ),
+                        ),
+                      ),
+                    ),
+                  ),
+                const SizedBox(height: 14),
+                FilledButton(
+                  style: FilledButton.styleFrom(
+                    backgroundColor: _kDeep,
+                    minimumSize: const Size.fromHeight(52),
+                    shape: RoundedRectangleBorder(
+                      borderRadius: BorderRadius.circular(16),
+                    ),
+                  ),
+                  onPressed: _busy
+                      ? null
+                      : () async {
+                          setState(() => _busy = true);
+                          await widget.onDone();
+                          if (mounted) setState(() => _busy = false);
+                        },
+                  child: const Text(
+                    'متابعة',
+                    style: TextStyle(fontSize: 15, fontWeight: FontWeight.w900),
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
     );
   }
+}
+
+/// شاشة الدخول فوق التطبيق (للضيف). بعد الدخول أو التسجيل يُبنى التطبيق
+/// من جديد ببيانات الحساب. تُعيد true إن دخل.
+Future<bool> openLoginScreen(BuildContext context) async {
+  final mode = await Navigator.of(context).push<String>(
+    MaterialPageRoute(
+      fullscreenDialog: true,
+      builder: (routeContext) => LoginScreen(
+        fromGuest: true,
+        onDone: (mode) => Navigator.of(routeContext).pop(mode),
+      ),
+    ),
+  );
+  if (mode != FundlyAuth.modeUser) return false;
+  await FundlyAuth.setMode(FundlyAuth.modeUser);
+  FundlyAuth.restartApp();
+  return true;
 }
 
 /// للضيف قبل أي عملية: تنبيه ثم شاشة الدخول. تُعيد true إن سجّل الدخول.
@@ -45,7 +223,8 @@ Future<bool> promptGuestLogin(BuildContext context) async {
         ),
         title: const Text('سجّل الدخول للمتابعة'),
         content: const Text(
-          'أنت تتصفّح كضيف. لإضافة أي عملية أو حفظها يلزم تسجيل الدخول.',
+          'أنت تتصفّح كضيف. لإضافة أي عملية أو حفظها سجّل الدخول، أو أنشئ '
+          'حسابًا جديدًا إن لم يكن لديك حساب.',
           textAlign: TextAlign.center,
           style: TextStyle(height: 1.6),
         ),
@@ -64,18 +243,9 @@ Future<bool> promptGuestLogin(BuildContext context) async {
     ),
   );
   if (go != true || !context.mounted) return false;
-  final mode = await Navigator.of(context).push<String>(
-    MaterialPageRoute(
-      fullscreenDialog: true,
-      builder: (routeContext) => LoginScreen(
-        fromGuest: true,
-        onDone: (mode) => Navigator.of(routeContext).pop(mode),
-      ),
-    ),
-  );
-  if (mode != FundlyAuth.modeUser) return false;
-  await FundlyAuth.setMode(FundlyAuth.modeUser);
-  return true;
+  // بعد الدخول يُعاد بناء التطبيق بالحساب، فلا تُكمل العملية القديمة.
+  await openLoginScreen(context);
+  return false;
 }
 
 const Color _kGreen = Color(0xFF0E7161);

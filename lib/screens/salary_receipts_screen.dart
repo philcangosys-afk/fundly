@@ -4,6 +4,7 @@ import 'package:share_plus/share_plus.dart';
 import '../data/app_settings.dart';
 import '../data/custody_sharing.dart';
 import '../data/fundly_account.dart';
+import '../data/fundly_auth.dart';
 import '../data/people_directory_store.dart';
 import '../data/personal_entries_repository.dart';
 import '../data/salary_receipts.dart';
@@ -705,7 +706,10 @@ class _SalaryReceiptsScreenState extends State<SalaryReceiptsScreen> {
           ? FloatingActionButton.extended(
               backgroundColor: AppTheme.gold,
               foregroundColor: const Color(0xFF4A2F09),
-              onPressed: () => _openForm(),
+              onPressed: () async {
+                if (!await FundlyAuth.requireLogin(context)) return;
+                _openForm();
+              },
               icon: const Icon(Icons.add_rounded),
               label: const Text('سند قبض'),
             )

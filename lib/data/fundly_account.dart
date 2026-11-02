@@ -408,13 +408,28 @@ class FundlyAccount {
     }
   }
 
-  /// خروج: تُرفع آخر التعديلات، ثم تُغلق الجلسة ويرجع التطبيق لشاشة الدخول.
-  static Future<void> signOut() async {
+  /// قبل الخروج: رفع آخر التعديلات والملفات. true إن رُفع كل شيء.
+  static Future<bool> uploadBeforeSignOut() async {
     try {
       await pushCloud().timeout(_timeout);
       await FundlyFiles.syncUp().timeout(_timeout);
     } catch (_) {
-      // بلا اتصال: البيانات باقية على الجهاز وتُرفع عند الدخول التالي.
+      return false;
+    }
+    return lastSyncError == null;
+  }
+
+  /// خروج: تُرفع آخر التعديلات (إلا إن رُفعت قبلها [uploaded])، ثم تُغلق
+  /// الجلسة وتُمسح بيانات الحساب من الجوال — من يتصفّح بعده كضيف لا يرى
+  /// شيئًا منها، وتنزل كاملة من السحابة عند الدخول التالي.
+  static Future<void> signOut({bool uploaded = false}) async {
+    if (!uploaded) {
+      try {
+        await pushCloud().timeout(_timeout);
+        await FundlyFiles.syncUp().timeout(_timeout);
+      } catch (_) {
+        // بلا اتصال: يُكمل الخروج.
+      }
     }
     // تذكيرات هذا الحساب لا تصل بعد خروجه.
     await FundlyNotifications.cancelAll();
@@ -422,8 +437,26 @@ class FundlyAccount {
     await FundlyPush.unregister();
     await AppSession.signOut();
     await AppIdentity.clear();
+    await _clearAfterSignOut();
     await FundlyAuth.clearMode();
     FundlyAuth.restartApp();
+  }
+
+  /// بعد إغلاق الجلسة: بيانات الحساب وإعداداته تُمسح من الجوال (اللغة
+  /// وإعدادات الجهاز تبقى).
+  static Future<void> _clearAfterSignOut() async {
+    try {
+      final running = _syncing;
+      if (running != null) await running;
+      final prefs = await SharedPreferences.getInstance();
+      await _clearUserData(prefs);
+      await prefs.remove(_kLastUser);
+      await AppSettings.instance.load();
+      HomeLayoutStore.invalidate();
+      await PageCustomizationStore.load();
+    } catch (_) {
+      // لا يوقف الخروج.
+    }
   }
 
   /// تغيير كلمة المرور بعد التحقق من الحالية.
