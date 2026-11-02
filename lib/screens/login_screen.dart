@@ -32,9 +32,15 @@ class _LoginGateState extends State<LoginGate> {
         },
       );
     }
-    // بلا دخول (ومنه بعد تسجيل الخروج): تصفّح كضيف.
-    if (!FundlyAuth.isGuest) FundlyAuth.setMode(FundlyAuth.modeGuest);
-    return widget.child;
+    if (FundlyAuth.isGuest) return widget.child;
+    // بعد تسجيل الخروج: شاشة الدخول هي أساس التطبيق نفسه — لا صفحة قبلها
+    // يرجع إليها السهم، ومنها «تصفّح كضيف» أو الدخول أو إنشاء حساب.
+    return LoginScreen(
+      onDone: (mode) async {
+        await FundlyAuth.setMode(mode);
+        if (mounted) setState(() {});
+      },
+    );
   }
 }
 
@@ -774,6 +780,28 @@ class _LoginScreenState extends State<LoginScreen> {
               ),
             ],
           ),
+          // شاشة الدخول الأساسية (بعد الخروج): التصفّح بلا حساب.
+          if (!widget.fromGuest) ...[
+            const SizedBox(height: 14),
+            OutlinedButton.icon(
+              onPressed: _busy == null
+                  ? () => widget.onDone(FundlyAuth.modeGuest)
+                  : null,
+              icon: const Icon(Icons.travel_explore_rounded, size: 18),
+              label: const Text(
+                'تصفّح كضيف',
+                style: TextStyle(fontSize: 13, fontWeight: FontWeight.w900),
+              ),
+              style: OutlinedButton.styleFrom(
+                foregroundColor: _kDeep,
+                minimumSize: const Size.fromHeight(46),
+                side: const BorderSide(color: _kLine),
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(14),
+                ),
+              ),
+            ),
+          ],
         ],
       ),
     );

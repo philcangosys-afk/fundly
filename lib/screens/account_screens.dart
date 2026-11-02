@@ -4,6 +4,7 @@ import '../data/app_settings.dart';
 import '../data/fundly_account.dart';
 import '../l10n/app_language.dart';
 import '../l10n/tr_widgets.dart';
+import 'settings_detail_screens.dart' show PrivacyPolicyPage, TermsOfUsePage;
 
 const Color _kGreen = Color(0xFF0E7161);
 const Color _kDeep = Color(0xFF0A5A50);
@@ -177,6 +178,9 @@ class _SignUpScreenState extends State<SignUpScreen> {
   bool _busy = false;
   String? _error;
 
+  /// الموافقة على شروط الاستخدام وسياسة الخصوصية — إلزامية للتسجيل.
+  bool _agreed = false;
+
   @override
   void dispose() {
     _name.dispose();
@@ -207,6 +211,12 @@ class _SignUpScreenState extends State<SignUpScreen> {
     }
     if (_password.text.length < 6) {
       setState(() => _error = 'كلمة المرور قصيرة — 6 أحرف على الأقل');
+      return;
+    }
+    if (!_agreed) {
+      setState(
+        () => _error = 'وافق على شروط الاستخدام وسياسة الخصوصية للمتابعة',
+      );
       return;
     }
     setState(() => _error = null);
@@ -491,6 +501,66 @@ class _SignUpScreenState extends State<SignUpScreen> {
             'تأكيد كلمة المرور',
             Icons.lock_outline_rounded,
           ),
+        ),
+        const SizedBox(height: 10),
+        // الموافقة على الشروط والخصوصية قبل إنشاء الحساب.
+        InkWell(
+          borderRadius: BorderRadius.circular(10),
+          onTap: () => setState(() {
+            _agreed = !_agreed;
+            if (_agreed) _error = null;
+          }),
+          child: Row(
+            children: [
+              Checkbox(
+                value: _agreed,
+                activeColor: _kGreen,
+                onChanged: (value) => setState(() {
+                  _agreed = value ?? false;
+                  if (_agreed) _error = null;
+                }),
+              ),
+              const Expanded(
+                child: Text(
+                  'أوافق على شروط الاستخدام وسياسة الخصوصية',
+                  style: TextStyle(
+                    fontSize: 12.5,
+                    fontWeight: FontWeight.w800,
+                    color: _kInk,
+                  ),
+                ),
+              ),
+            ],
+          ),
+        ),
+        Wrap(
+          spacing: 4,
+          children: [
+            TextButton(
+              style: TextButton.styleFrom(foregroundColor: _kGreen),
+              onPressed: () => Navigator.of(context).push(
+                MaterialPageRoute<void>(
+                  builder: (_) => const TermsOfUsePage(),
+                ),
+              ),
+              child: const Text(
+                'شروط الاستخدام',
+                style: TextStyle(fontSize: 12, fontWeight: FontWeight.w900),
+              ),
+            ),
+            TextButton(
+              style: TextButton.styleFrom(foregroundColor: _kGreen),
+              onPressed: () => Navigator.of(context).push(
+                MaterialPageRoute<void>(
+                  builder: (_) => const PrivacyPolicyPage(),
+                ),
+              ),
+              child: const Text(
+                'سياسة الخصوصية',
+                style: TextStyle(fontSize: 12, fontWeight: FontWeight.w900),
+              ),
+            ),
+          ],
         ),
         _errorText(_error),
         const SizedBox(height: 16),

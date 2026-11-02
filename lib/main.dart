@@ -1772,7 +1772,10 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
                             color: Colors.transparent,
                             child: InkWell(
                               key: const ValueKey('home-account-entry'),
-                              onTap: _openAccountPage,
+                              // الضيف: الدخول أو التسجيل بدل الإعدادات.
+                              onTap: FundlyAuth.isGuest
+                                  ? () => openLoginScreen(context)
+                                  : _openAccountPage,
                               borderRadius: BorderRadius.circular(12),
                               child: Padding(
                                 padding: const EdgeInsets.symmetric(
@@ -1809,7 +1812,13 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
                                             ),
                                             shape: BoxShape.circle,
                                           ),
-                                          child: _profilePhoto == null
+                                          child: FundlyAuth.isGuest
+                                              ? const Icon(
+                                                  Icons.login_rounded,
+                                                  size: 16,
+                                                  color: Colors.white,
+                                                )
+                                              : _profilePhoto == null
                                               ? const Icon(
                                                   Icons.person_rounded,
                                                   size: 17,
@@ -1829,7 +1838,9 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
                                             alignment:
                                                 AlignmentDirectional.centerStart,
                                             child: Text(
-                                              AppSettings.instance.name,
+                                              FundlyAuth.isGuest
+                                                  ? 'تسجيل الدخول / إنشاء حساب'
+                                                  : AppSettings.instance.name,
                                               maxLines: 3,
                                               textAlign: TextAlign.right,
                                               style: const TextStyle(

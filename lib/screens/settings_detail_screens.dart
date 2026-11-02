@@ -2093,6 +2093,8 @@ class SettingsHubPage extends StatelessWidget {
             color: const Color(0xFF0A5A50),
             onTap: () => _open(context, const ContactUsPage()),
           ),
+          // المزامنة تخص صاحب الحساب فقط.
+          if (!FundlyAuth.isGuest)
           _SettingsLinkRow(
             title: 'مزامنة البيانات',
             subtitle: 'نفس بياناتك في كل جوال تدخل منه',

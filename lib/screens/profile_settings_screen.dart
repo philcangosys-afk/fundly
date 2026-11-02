@@ -111,13 +111,15 @@ class ProfileSettingsScreen extends StatelessWidget {
                         CircleAvatar(
                           radius: 25,
                           backgroundColor: AppTheme.field,
-                          backgroundImage: photo == null
+                          backgroundImage: photo == null || FundlyAuth.isGuest
                               ? null
                               : MemoryImage(photo),
-                          child: photo != null
+                          child: photo != null && !FundlyAuth.isGuest
                               ? null
-                              : const Icon(
-                                  Icons.person_rounded,
+                              : Icon(
+                                  FundlyAuth.isGuest
+                                      ? Icons.login_rounded
+                                      : Icons.person_rounded,
                                   color: AppTheme.chevron,
                                   size: 27,
                                 ),
@@ -128,7 +130,9 @@ class ProfileSettingsScreen extends StatelessWidget {
                             crossAxisAlignment: CrossAxisAlignment.start,
                             children: [
                               Text(
-                                FundlyAuth.isGuest ? 'زائر' : settings.name,
+                                FundlyAuth.isGuest
+                                    ? 'تسجيل الدخول / إنشاء حساب'
+                                    : settings.name,
                                 maxLines: 3,
                                 style: const TextStyle(
                                   fontSize: 17,

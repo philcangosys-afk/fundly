@@ -1,3 +1,4 @@
+import 'package:flutter/foundation.dart' show kReleaseMode;
 import 'package:flutter/material.dart';
 
 import '../data/app_settings.dart';
@@ -220,8 +221,50 @@ class AppTr {
     });
   }
 
+  /// علامات الأخطاء التقنية: أسماء الاستثناءات ورموز الخادم وتفاصيله.
+  static final RegExp _technical = RegExp(
+    r'(Exception|statusCode|code: ?null|PGRST|JWT|XMLHttpRequest|'
+    r'Null check|is not a subtype|relation "|Error\()',
+  );
+
+  static final RegExp _exceptionMessage = RegExp(
+    r'(?:message: ?|Exception: ?)([^,()]*[\u0600-\u06FF][^,()]*)',
+  );
+
+  /// النسخة النهائية لا تعرض للمستخدم تفاصيل الأخطاء التقنية (أسماء
+  /// الاستثناءات، statusCode، code: null...) — تبقى في وضع التطوير فقط
+  /// لاكتشاف الأخطاء. السطر التقني يُحذف، ويبقى منه ما قبل «:» إن كان
+  /// مفهومًا، أو الرسالة العربية التي داخل الاستثناء.
+  static String _hideTechnical(String text, {bool force = false}) {
+    if ((!kReleaseMode && !force) || !_technical.hasMatch(text)) return text;
+    final kept = <String>[];
+    for (final line in text.split('\n')) {
+      if (!_technical.hasMatch(line)) {
+        kept.add(line);
+        continue;
+      }
+      final colon = line.indexOf(':');
+      final head = colon > 0 ? line.substring(0, colon).trim() : '';
+      if (head.isNotEmpty && !_technical.hasMatch(head)) {
+        kept.add(head);
+        continue;
+      }
+      final inner = _exceptionMessage.firstMatch(line)?.group(1)?.trim();
+      if (inner != null && inner.isNotEmpty && !_technical.hasMatch(inner)) {
+        kept.add(inner);
+      }
+    }
+    final result = kept.where((l) => l.trim().isNotEmpty).join('\n').trim();
+    return result.isEmpty ? 'حدث خطأ غير متوقع — حاول مرة أخرى' : result;
+  }
+
+  /// للاختبارات: نفس إخفاء النسخة النهائية في أي وضع.
+  static String hideTechnicalForTest(String text) =>
+      _hideTechnical(text, force: true);
+
   static String tr(String text) {
     if (text.isEmpty) return text;
+    text = _hideTechnical(text);
     if (isArabic) return _arWords(_arStatus(_arDisplay[text] ?? text));
     final dict = _dictionaries[language] ?? kArToEn;
     // الاسم الظاهر الجديد أولًا (القيمة المخزّنة قديمة)، ثم ترجمته.

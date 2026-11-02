@@ -12,6 +12,7 @@ import 'package:image_picker/image_picker.dart' show XFile;
 import 'package:pdf/pdf.dart' show PdfPageFormat;
 import '../data/template_print.dart' show buildLeasePdf;
 import '../data/app_session.dart';
+import '../data/fundly_auth.dart';
 import '../data/app_settings.dart';
 import '../data/app_reminders_store.dart';
 import '../data/project_assets_repository.dart';
@@ -140,9 +141,11 @@ class _ProjectsActivitiesScreenState extends State<ProjectsActivitiesScreen> {
       await AppSession.forceSignIn();
     } catch (error) {
       if (!mounted) return;
+      debugPrint('Projects relogin failed: $error');
       setState(() {
         _isLoadingRemote = false;
-        _loadError = 'تعذّر تسجيل الدخول: $error';
+        _loadError =
+            'تعذّر تجديد الدخول — سجّل الخروج ثم ادخل بحسابك من جديد.';
       });
       return;
     }
@@ -215,6 +218,14 @@ class _ProjectsActivitiesScreenState extends State<ProjectsActivitiesScreen> {
   final Map<String, List<PropertyUnitContractRecord>> _contractsByAsset = {};
 
   Future<void> _loadAssetsFromRemote() async {
+    // الضيف بلا حساب: لا طلب للخادم ولا رسالة خطأ — القائمة فارغة.
+    if (FundlyAuth.isGuest) {
+      setState(() {
+        _isLoadingRemote = false;
+        _loadError = '';
+      });
+      return;
+    }
     setState(() {
       _isLoadingRemote = true;
       _loadError = '';
@@ -249,13 +260,10 @@ class _ProjectsActivitiesScreenState extends State<ProjectsActivitiesScreen> {
           ..clear()
           ..addAll(built);
         _isLoadingRemote = false;
+        // تفاصيل الخطأ للمطوّر فقط (debugPrint)، والمستخدم يرى رسالة مفهومة.
         if (skipped.isNotEmpty) {
-          _loadError = 'تعذّر قراءة ${skipped.length} سجلًا: ${skipped.first}';
-        } else if (built.isEmpty) {
-          // صفر صفوف بلا خطأ: هذا ما تردّه سياسات الحماية حين تكون الجلسة
-          // غير معتمَدة. نعلنه بدل تركه يبدو كأن البيانات حُذفت.
-          _loadError =
-              'لم يُرجع الخادم أي سجل.\n${AppSession.describeSession()}';
+          debugPrint('Projects skipped records: $skipped');
+          _loadError = 'تعذّر عرض بعض السجلات.';
         } else {
           _loadError = '';
         }
@@ -265,11 +273,13 @@ class _ProjectsActivitiesScreenState extends State<ProjectsActivitiesScreen> {
     } catch (error) {
       if (!mounted) return;
       // القائمة القديمة تبقى كما هي: خطأ الشبكة لا يمحو ما كان معروضًا.
+      debugPrint(
+        'Projects load failed: $error · ${AppSession.describeSession()}',
+      );
       setState(() {
         _isLoadingRemote = false;
         _loadError =
-            'تعذّر جلب البيانات من الخادم:\n'
-            '$error\n${AppSession.describeSession()}';
+            'تعذّر تحميل البيانات — تحقّق من الإنترنت ثم اضغط «إعادة المحاولة».';
       });
     }
   }
@@ -2813,8 +2823,9 @@ class _ProjectsActivitiesScreenState extends State<ProjectsActivitiesScreen> {
                             padding: EdgeInsets.only(bottom: 10),
                             child: LinearProgressIndicator(minHeight: 2),
                           ),
-                        if (_loadError.isNotEmpty ||
-                            (_items.isEmpty && !_isLoadingRemote))
+                        // خطأ حقيقي فقط (القائمة الفارغة لها رسالتها أدناه)،
+                        // ولا شيء للضيف.
+                        if (_loadError.isNotEmpty && !FundlyAuth.isGuest)
                           Container(
                             margin: const EdgeInsets.only(bottom: 10),
                             padding: const EdgeInsets.all(12),
@@ -2832,10 +2843,7 @@ class _ProjectsActivitiesScreenState extends State<ProjectsActivitiesScreen> {
                                   // فشل التحميل وفشل الحفظ معًا، فبادئة
                                   // «تعذّر جلب البيانات» كانت تكذب على
                                   // نصف الحالات.
-                                  _loadError.isNotEmpty
-                                      ? _loadError
-                                      : 'لم يُرجع الخادم أي سجل.\n'
-                                            '${AppSession.describeSession()}',
+                                  _loadError,
                                   textAlign: TextAlign.right,
                                   style: const TextStyle(
                                     fontSize: 11.5,

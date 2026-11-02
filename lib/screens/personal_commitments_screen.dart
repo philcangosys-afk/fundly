@@ -14,6 +14,7 @@ import '../widgets/shared/fnd_lookup.dart';
 import '../widgets/shared/follow_filters.dart';
 import '../data/app_reminders_store.dart';
 import '../data/personal_entries_repository.dart';
+import '../data/fundly_auth.dart';
 import '../data/document_store.dart';
 import '../data/reminder_lead.dart';
 import '../data/custody_sharing.dart';
@@ -1268,6 +1269,8 @@ class _PersonalCommitmentsScreenState extends State<PersonalCommitmentsScreen> {
   }
 
   Future<void> _loadEntries() async {
+    // الضيف بلا حساب: لا طلب للخادم ولا رسالة خطأ.
+    if (FundlyAuth.isGuest) return;
     try {
       final records = await _repository.fetchAll();
       if (!mounted) return;
@@ -1280,11 +1283,16 @@ class _PersonalCommitmentsScreenState extends State<PersonalCommitmentsScreen> {
       await _notifyCustodyAlerts();
     } catch (error) {
       if (!mounted) return;
+      debugPrint('Personal load failed: $error');
       WidgetsBinding.instance.addPostFrameCallback((_) {
         if (!mounted) return;
-        ScaffoldMessenger.of(
-          context,
-        ).showSnackBar(SnackBar(content: Text(_saveErrorMessage(error))));
+        ScaffoldMessenger.of(context).showSnackBar(
+          const SnackBar(
+            content: Text(
+              'تعذّر تحميل البيانات — تحقّق من الإنترنت وحاول مرة أخرى.',
+            ),
+          ),
+        );
       });
     }
   }
@@ -14111,19 +14119,13 @@ Future<String?> _fetchCurrentLocation(BuildContext context) async {
   }
 }
 
+/// رسالة مفهومة للمستخدم؛ التفاصيل التقنية للمطوّر فقط (debugPrint).
 String _saveErrorMessage(Object error) {
-  final message = error.toString();
-  if (message.contains('anonymous_provider_disabled') ||
-      message.contains('Anonymous sign-ins are disabled')) {
-    return 'الحفظ غير مفعّل: فعّل Anonymous Sign-Ins في Supabase.';
-  }
-  if (message.contains('personal_entries') || message.contains('PGRST205')) {
-    return 'جدول personal_entries غير موجود. شغّل ملف SQL في Supabase.';
-  }
-  if (message.contains('TimeoutException')) {
+  debugPrint('Personal save failed: $error');
+  if (error.toString().contains('TimeoutException')) {
     return 'انتهت مهلة الحفظ. تحقق من الإنترنت ثم حاول مجددًا.';
   }
-  return 'تعذر حفظ البيانات. تحقق من إعداد Supabase ثم حاول مجددًا.';
+  return 'تعذّر الحفظ. تحقّق من الإنترنت ثم حاول مجددًا.';
 }
 
 enum _FinancialFieldKind {

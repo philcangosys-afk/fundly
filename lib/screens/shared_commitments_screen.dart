@@ -5,6 +5,7 @@ import '../l10n/tr_widgets.dart';
 import '../l10n/app_language.dart';
 import '../data/app_settings.dart';
 import '../data/shared_entries_repository.dart';
+import '../data/fundly_auth.dart';
 import '../data/shared_member_state.dart';
 import '../data/fundly_account.dart';
 import '../widgets/management_dashboard_chrome.dart';
@@ -2557,6 +2558,16 @@ class _SharedCommitmentsScreenState extends State<SharedCommitmentsScreen> {
   }
 
   Future<void> _load() async {
+    // الضيف بلا حساب: لا طلب للخادم ولا رسالة خطأ — القائمة فارغة.
+    if (FundlyAuth.isGuest) {
+      setState(() {
+        _items = <_SharedItem>[];
+        _removedItems = <_SharedItem>[];
+        _loading = false;
+        _loadError = null;
+      });
+      return;
+    }
     setState(() {
       _loading = true;
       _loadError = null;
