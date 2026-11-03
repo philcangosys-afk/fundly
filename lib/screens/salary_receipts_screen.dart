@@ -1,5 +1,6 @@
+import 'dart:async';
+
 import 'package:flutter/material.dart' hide Text, Align;
-import 'package:share_plus/share_plus.dart';
 
 import '../data/app_settings.dart';
 import '../data/custody_sharing.dart';
@@ -7,6 +8,8 @@ import '../data/fundly_account.dart';
 import '../data/fundly_auth.dart';
 import '../data/people_directory_store.dart';
 import '../data/personal_entries_repository.dart';
+import '../data/salary_income_sync.dart';
+import '../data/salary_receipt_pdf.dart';
 import '../data/salary_receipts.dart';
 import '../l10n/app_language.dart';
 import '../l10n/tr_widgets.dart';
@@ -79,6 +82,26 @@ Future<String> _syncExpense(SalaryReceipt r) async {
   return saved.id ?? '';
 }
 
+/// السند الذي رفضه المستلم («لم أستلم»): مصروفه المرتبط عند صاحب العمل
+/// يصبح «ملغاة» فلا يُحسب في مصروفاته.
+Future<void> _cancelRejectedExpenses(List<SalaryReceipt> mine) async {
+  final ids = {
+    for (final r in mine)
+      if (r.isRejected && r.expenseId.isNotEmpty) r.expenseId,
+  };
+  if (ids.isEmpty) return;
+  try {
+    final repo = SupabasePersonalEntriesRepository();
+    for (final record in await repo.fetchAll()) {
+      if (!ids.contains(record.id)) continue;
+      if (record.status == 'ملغاة' || record.status == 'محذوف') continue;
+      await repo.update(record.copyWith(status: 'ملغاة'));
+    }
+  } catch (_) {
+    // يُعاد في التحميل التالي.
+  }
+}
+
 /// سندات القبض والرواتب: ما أصدرته، وما وصلني للاعتماد والتوقيع.
 /// مع [employeeFnd]: سجل رواتب موظف واحد وبطاقة سنته شهرًا شهرًا.
 class SalaryReceiptsScreen extends StatefulWidget {
@@ -140,6 +163,7 @@ class _SalaryReceiptsScreenState extends State<SalaryReceiptsScreen> {
         _toMe = toMe;
         _loading = false;
       });
+      unawaited(_cancelRejectedExpenses(mine));
       final openId = widget.openId;
       if (!_openedOnce && openId != null) {
         _openedOnce = true;
@@ -231,37 +255,46 @@ class _SalaryReceiptsScreenState extends State<SalaryReceiptsScreen> {
     }
   }
 
-  Future<void> _share(SalaryReceipt r) async {
-    final lines = [
-      AppTr.tr(r.isSalary ? 'سند قبض راتب' : 'سند قبض'),
-      AppTr.tr(r.title),
-      '${AppTr.tr('المستلم')}: ${r.employeeName}'
-          '${r.employeeFnd.isEmpty ? '' : ' (${r.employeeFnd})'}',
-      '${AppTr.tr('صاحب العمل')}: ${r.ownerName}',
-      if (r.isSalary) ...[
-        '${AppTr.tr('الراتب الأساسي')}: ${_moneyOf(r.basic, r.currency)}',
-        if (r.allowances > 0)
-          '${AppTr.tr('العلاوات')}: ${_moneyOf(r.allowances, r.currency)}',
-        if (r.overtime > 0)
-          '${AppTr.tr('العمل الإضافي')}: ${_moneyOf(r.overtime, r.currency)}',
-        if (r.loan > 0)
-          '${AppTr.tr('السلفة')}: ${_moneyOf(r.loan, r.currency)}',
-        if (r.deductions > 0)
-          '${AppTr.tr('الخصومات')}: ${_moneyOf(r.deductions, r.currency)}',
-        '${AppTr.tr('المجموع')}: ${_moneyOf(r.total, r.currency)}',
-      ],
-      '${AppTr.tr('المبلغ المدفوع')}: ${_moneyOf(r.paid, r.currency)}',
-      '${AppTr.tr('التاريخ')}: ${r.receiptDate}',
-      '${AppTr.tr('الحالة')}: ${AppTr.tr(r.status)}',
-    ];
-    await SharePlus.instance.share(ShareParams(text: lines.join('\n')));
+  /// مشاركة سند أو أكثر كملف PDF (صفحة لكل سند).
+  Future<void> _sharePdf(List<SalaryReceipt> list) async {
+    if (list.isEmpty) return;
+    _notify('جارٍ تجهيز ملف PDF...');
+    try {
+      await shareSalaryReceiptsPdf(list);
+    } catch (error) {
+      debugPrint('Salary PDF failed: $error');
+      _notify('تعذّر تجهيز ملف PDF. حاول مرة أخرى.');
+    }
   }
+
+  // ---------------- التحديد للمشاركة ----------------
+
+  bool _selecting = false;
+  final Set<String> _selected = {};
+
+  void _toggleSelecting() => setState(() {
+    _selecting = !_selecting;
+    _selected.clear();
+  });
+
+  void _toggleOne(SalaryReceipt r) {
+    final id = r.id;
+    if (id == null) return;
+    setState(() {
+      if (!_selected.remove(id)) _selected.add(id);
+    });
+  }
+
+  /// المحدَّد بترتيب السجل (الأحدث أولًا).
+  List<SalaryReceipt> get _selectedReceipts => [
+    for (final r in _source)
+      if (r.id != null && _selected.contains(r.id)) r,
+  ];
 
   /// رد الموظف من داخل السند: موافقة وتوقيع، أو رفض.
   Future<void> _answer(SalaryReceipt r, bool accept) async {
     var signature = '';
     var reason = '';
-    var fullName = '';
     if (accept) {
       final strokes = await showSignaturePad(
         context,
@@ -271,13 +304,8 @@ class _SalaryReceiptsScreenState extends State<SalaryReceiptsScreen> {
             '${_moneyOf(r.paid, r.currency)} — ${AppTr.tr(r.title)}',
       );
       if (strokes == null || strokes.isEmpty || !mounted) return;
+      // الاسم كتبه المرسل ويبقى كما هو — لا يُطلب من الموظف.
       signature = SalaryReceipt.encodeStrokes(strokes);
-      // الراتب: الاسم الثلاثي قبل إكمال الاعتماد.
-      if (r.isSalary) {
-        final typed = await askFullName(context);
-        if (typed == null) return;
-        fullName = typed;
-      }
     } else {
       final value = await _askReason();
       if (value == null) return;
@@ -289,8 +317,9 @@ class _SalaryReceiptsScreenState extends State<SalaryReceiptsScreen> {
         accept,
         signature: signature,
         reason: reason,
-        name: fullName,
       );
+      // المعتمد يظهر عندي في «مالية» كإيراد.
+      if (error == null && accept) await SalaryIncomeSync.syncReceived();
       if (!mounted) return;
       _notify(error ?? (accept ? 'تمت الموافقة والتوقيع' : 'تم رفض السند'));
       await _load();
@@ -342,28 +371,21 @@ class _SalaryReceiptsScreenState extends State<SalaryReceiptsScreen> {
       return '${l.day}/${l.month}/${l.year} ${two(l.hour)}:${two(l.minute)}';
     }
 
-    final rows = <(String, String)>[
-      ('النوع', AppTr.tr(r.isSalary ? 'سند قبض راتب' : 'سند قبض')),
-      (
-        asOwner ? 'المستلم' : 'صاحب العمل',
-        asOwner
-            ? '${r.employeeName}${r.employeeFnd.isEmpty ? '' : ' (${r.employeeFnd})'}'
-            : r.ownerName,
-      ),
-      if (r.isSalary) ('الشهر', AppTr.tr(r.periodLabel)),
-      if (!r.isSalary && r.description.isNotEmpty) ('البيان', r.description),
-      ('التاريخ', r.receiptDate),
+    String money(double v) => _moneyOf(v, r.currency);
+    final breakdown = <(String, String, bool)>[
       if (r.isSalary) ...[
-        ('الراتب الأساسي', _moneyOf(r.basic, r.currency)),
-        if (r.allowances > 0) ('العلاوات', _moneyOf(r.allowances, r.currency)),
-        if (r.overtime > 0) ('العمل الإضافي', _moneyOf(r.overtime, r.currency)),
-        if (r.loan > 0) ('السلفة', '− ${_moneyOf(r.loan, r.currency)}'),
-        if (r.deductions > 0)
-          ('الخصومات', '− ${_moneyOf(r.deductions, r.currency)}'),
-        ('المجموع', _moneyOf(r.total, r.currency)),
-      ],
-      ('المبلغ المدفوع', _moneyOf(r.paid, r.currency)),
-      if (r.notes.isNotEmpty) ('ملاحظات', r.notes),
+        ('الراتب الأساسي', money(r.basic), false),
+        if (r.allowances > 0) ('العلاوات', money(r.allowances), false),
+        if (r.overtime > 0) ('العمل الإضافي', money(r.overtime), false),
+        if (r.loan > 0) ('السلفة', '− ${money(r.loan)}', false),
+        if (r.deductions > 0) ('الخصومات', '− ${money(r.deductions)}', false),
+        ('المجموع', money(r.total), true),
+      ] else
+        ('البيان', r.description.isEmpty ? '—' : r.description, false),
+    ];
+    final info = <(String, String)>[
+      ('رقم السند', salaryReceiptNo(r)),
+      ('التاريخ', r.receiptDate),
       (
         'طريقة التوقيع',
         AppTr.tr(
@@ -374,9 +396,60 @@ class _SalaryReceiptsScreenState extends State<SalaryReceiptsScreen> {
       ),
       if (r.signedAt != null)
         (r.isRejected ? 'وقت الرفض' : 'وقت التوقيع', stamp(r.signedAt!)),
+      if (r.notes.isNotEmpty) ('ملاحظات', r.notes),
       if (r.isRejected && r.rejectReason.isNotEmpty)
         ('سبب الرفض', r.rejectReason),
     ];
+    const deep = Color(0xFF0A5A50);
+
+    Widget card({required Widget child, EdgeInsets? padding}) => Container(
+      margin: const EdgeInsets.only(bottom: 10),
+      padding: padding ?? const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: Colors.white,
+        borderRadius: BorderRadius.circular(AppTheme.rInner),
+        border: Border.all(color: AppTheme.hairline),
+      ),
+      child: child,
+    );
+
+    Widget party(String label, String name, String fnd) => Expanded(
+      child: card(
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text(
+              label,
+              style: const TextStyle(
+                fontSize: 11,
+                fontWeight: FontWeight.w700,
+                color: AppTheme.muted,
+              ),
+            ),
+            const SizedBox(height: 3),
+            Text(
+              name.isEmpty ? '—' : name,
+              style: const TextStyle(
+                fontSize: 13,
+                fontWeight: FontWeight.w900,
+                color: AppTheme.title,
+              ),
+            ),
+            if (fnd.isNotEmpty)
+              Text(
+                fnd,
+                textDirection: TextDirection.ltr,
+                style: const TextStyle(
+                  fontSize: 10.5,
+                  fontWeight: FontWeight.w700,
+                  color: AppTheme.muted,
+                ),
+              ),
+          ],
+        ),
+      ),
+    );
+
     return showModalBottomSheet<void>(
       context: context,
       isScrollControlled: true,
@@ -389,149 +462,352 @@ class _SalaryReceiptsScreenState extends State<SalaryReceiptsScreen> {
         child: SafeArea(
           child: ConstrainedBox(
             constraints: BoxConstraints(
-              maxHeight: MediaQuery.of(sheetContext).size.height * 0.88,
+              maxHeight: MediaQuery.of(sheetContext).size.height * 0.92,
             ),
             child: ListView(
               shrinkWrap: true,
-              padding: const EdgeInsets.fromLTRB(16, 14, 16, 18),
+              padding: const EdgeInsets.fromLTRB(16, 10, 16, 18),
               children: [
-                Row(
-                  children: [
-                    Expanded(
-                      child: Text(
-                        AppTr.tr(r.title),
-                        style: const TextStyle(
-                          fontSize: 15,
-                          fontWeight: FontWeight.w900,
-                          color: AppTheme.title,
-                        ),
-                      ),
+                Center(
+                  child: Container(
+                    width: 42,
+                    height: 4,
+                    margin: const EdgeInsets.only(bottom: 12),
+                    decoration: BoxDecoration(
+                      color: AppTheme.hairline,
+                      borderRadius: BorderRadius.circular(99),
                     ),
-                    _statusPill(r.status),
-                  ],
+                  ),
                 ),
-                const SizedBox(height: 10),
-                for (final (label, value) in rows)
-                  Padding(
-                    padding: const EdgeInsets.symmetric(vertical: 4),
-                    child: Row(
-                      crossAxisAlignment: CrossAxisAlignment.start,
-                      children: [
-                        SizedBox(
-                          width: 118,
-                          child: Text(
-                            label,
-                            style: const TextStyle(
-                              fontSize: 12,
-                              fontWeight: FontWeight.w700,
-                              color: AppTheme.muted,
+                // الرأس: نوع السند وشهره وحالته، والمبلغ المدفوع بارزًا.
+                Container(
+                  margin: const EdgeInsets.only(bottom: 10),
+                  padding: const EdgeInsets.fromLTRB(16, 14, 16, 16),
+                  decoration: BoxDecoration(
+                    borderRadius: BorderRadius.circular(AppTheme.rCard),
+                    gradient: const LinearGradient(
+                      begin: AlignmentDirectional.topStart,
+                      end: AlignmentDirectional.bottomEnd,
+                      colors: [deep, Color(0xFF0E7161)],
+                    ),
+                  ),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.start,
+                    children: [
+                      Row(
+                        children: [
+                          Icon(
+                            r.isSalary
+                                ? Icons.payments_outlined
+                                : Icons.receipt_long_outlined,
+                            color: Colors.white,
+                            size: 20,
+                          ),
+                          const SizedBox(width: 8),
+                          Expanded(
+                            child: Text(
+                              r.isSalary ? 'سند قبض راتب' : 'سند قبض',
+                              style: const TextStyle(
+                                fontSize: 12.5,
+                                fontWeight: FontWeight.w800,
+                                color: Colors.white,
+                              ),
                             ),
                           ),
-                        ),
-                        Expanded(
-                          child: Text(
-                            value,
-                            style: const TextStyle(
-                              fontSize: 12.5,
-                              fontWeight: FontWeight.w800,
-                              color: AppTheme.title,
+                          Container(
+                            padding: const EdgeInsets.symmetric(
+                              horizontal: 10,
+                              vertical: 3,
                             ),
+                            decoration: BoxDecoration(
+                              color: Colors.white,
+                              borderRadius: BorderRadius.circular(
+                                AppTheme.rPill,
+                              ),
+                            ),
+                            child: Text(
+                              r.status,
+                              style: TextStyle(
+                                fontSize: 10.5,
+                                fontWeight: FontWeight.w900,
+                                color: _statusColor(r.status),
+                              ),
+                            ),
+                          ),
+                        ],
+                      ),
+                      const SizedBox(height: 8),
+                      Text(
+                        AppTr.tr(r.title),
+                        style: const TextStyle(
+                          fontSize: 18,
+                          fontWeight: FontWeight.w900,
+                          color: Colors.white,
+                        ),
+                      ),
+                      const SizedBox(height: 12),
+                      Text(
+                        'المبلغ المدفوع',
+                        style: TextStyle(
+                          fontSize: 11,
+                          fontWeight: FontWeight.w700,
+                          color: Colors.white.withValues(alpha: 0.8),
+                        ),
+                      ),
+                      Text(
+                        money(r.paid),
+                        style: const TextStyle(
+                          fontSize: 26,
+                          fontWeight: FontWeight.w900,
+                          color: Colors.white,
+                        ),
+                      ),
+                    ],
+                  ),
+                ),
+                // الطرفان: الاسم كما كتبه المرسل (لا يُعدَّل عند الموظف).
+                Row(
+                  crossAxisAlignment: CrossAxisAlignment.start,
+                  children: [
+                    party('صاحب العمل', r.ownerName, ''),
+                    const SizedBox(width: 8),
+                    party(
+                      r.isSalary ? 'الموظف المستلم' : 'المستلم',
+                      r.employeeName,
+                      r.employeeFnd,
+                    ),
+                  ],
+                ),
+                // تفاصيل الراتب.
+                card(
+                  padding: const EdgeInsets.fromLTRB(12, 10, 12, 4),
+                  child: Column(
+                    crossAxisAlignment: CrossAxisAlignment.stretch,
+                    children: [
+                      Text(
+                        r.isSalary ? 'تفاصيل الراتب' : 'تفاصيل السند',
+                        style: const TextStyle(
+                          fontSize: 12.5,
+                          fontWeight: FontWeight.w900,
+                          color: deep,
+                        ),
+                      ),
+                      const SizedBox(height: 4),
+                      for (var i = 0; i < breakdown.length; i++) ...[
+                        if (i > 0)
+                          const Divider(height: 1, color: AppTheme.hairline),
+                        Padding(
+                          padding: const EdgeInsets.symmetric(vertical: 8),
+                          child: Row(
+                            children: [
+                              Expanded(
+                                child: Text(
+                                  breakdown[i].$1,
+                                  style: TextStyle(
+                                    fontSize: 12,
+                                    fontWeight: breakdown[i].$3
+                                        ? FontWeight.w900
+                                        : FontWeight.w700,
+                                    color: breakdown[i].$3
+                                        ? AppTheme.title
+                                        : AppTheme.muted,
+                                  ),
+                                ),
+                              ),
+                              Text(
+                                breakdown[i].$2,
+                                style: const TextStyle(
+                                  fontSize: 12.5,
+                                  fontWeight: FontWeight.w900,
+                                  color: AppTheme.title,
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                      ],
+                    ],
+                  ),
+                ),
+                // بيانات السند.
+                card(
+                  child: Column(
+                    children: [
+                      for (final (label, value) in info)
+                        Padding(
+                          padding: const EdgeInsets.symmetric(vertical: 4),
+                          child: Row(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              SizedBox(
+                                width: 104,
+                                child: Text(
+                                  label,
+                                  style: const TextStyle(
+                                    fontSize: 11.5,
+                                    fontWeight: FontWeight.w700,
+                                    color: AppTheme.muted,
+                                  ),
+                                ),
+                              ),
+                              Expanded(
+                                child: Text(
+                                  value,
+                                  style: const TextStyle(
+                                    fontSize: 12,
+                                    fontWeight: FontWeight.w800,
+                                    color: AppTheme.title,
+                                  ),
+                                ),
+                              ),
+                            ],
+                          ),
+                        ),
+                    ],
+                  ),
+                ),
+                // التوقيع.
+                if (r.signature.isNotEmpty)
+                  card(
+                    child: Row(
+                      children: [
+                        Container(
+                          decoration: BoxDecoration(
+                            color: AppTheme.field,
+                            borderRadius: BorderRadius.circular(
+                              AppTheme.rInner,
+                            ),
+                          ),
+                          child: SignatureView(strokes: r.strokes, size: 96),
+                        ),
+                        const SizedBox(width: 12),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.start,
+                            children: [
+                              const Text(
+                                'توقيع المستلم',
+                                style: TextStyle(
+                                  fontSize: 11,
+                                  fontWeight: FontWeight.w700,
+                                  color: AppTheme.muted,
+                                ),
+                              ),
+                              const SizedBox(height: 3),
+                              Text(
+                                r.employeeName,
+                                style: const TextStyle(
+                                  fontSize: 13,
+                                  fontWeight: FontWeight.w900,
+                                  color: AppTheme.title,
+                                ),
+                              ),
+                              if (r.signedAt != null)
+                                Text(
+                                  stamp(r.signedAt!),
+                                  style: const TextStyle(
+                                    fontSize: 11,
+                                    fontWeight: FontWeight.w700,
+                                    color: AppTheme.muted,
+                                  ),
+                                ),
+                            ],
                           ),
                         ),
                       ],
                     ),
                   ),
-                if (r.signature.isNotEmpty) ...[
-                  const SizedBox(height: 10),
-                  Text(
-                    '${AppTr.tr('توقيع المستلم')}: ${r.employeeName}',
-                    style: const TextStyle(
-                      fontSize: 12,
-                      fontWeight: FontWeight.w800,
-                      color: AppTheme.title,
-                    ),
-                  ),
-                  const SizedBox(height: 6),
-                  Align(
-                    alignment: AlignmentDirectional.centerStart,
-                    child: SignatureView(strokes: r.strokes, size: 150),
-                  ),
-                ],
-                const SizedBox(height: 14),
+                const SizedBox(height: 4),
                 // الموظف: يوافق ويوقّع أو يرفض ما ينتظر اعتماده.
                 if (!asOwner && r.isPending)
+                  Padding(
+                    padding: const EdgeInsets.only(bottom: 8),
+                    child: Row(
+                      children: [
+                        Expanded(
+                          child: FilledButton.icon(
+                            style: FilledButton.styleFrom(
+                              backgroundColor: AppTheme.brand,
+                              minimumSize: const Size.fromHeight(46),
+                            ),
+                            onPressed: () {
+                              Navigator.pop(sheetContext);
+                              _answer(r, true);
+                            },
+                            icon: const Icon(Icons.draw_outlined, size: 18),
+                            label: const Text('موافقة وتوقيع'),
+                          ),
+                        ),
+                        const SizedBox(width: 8),
+                        Expanded(
+                          child: OutlinedButton(
+                            style: OutlinedButton.styleFrom(
+                              foregroundColor: AppTheme.danger,
+                              side: const BorderSide(color: AppTheme.danger),
+                              minimumSize: const Size.fromHeight(46),
+                            ),
+                            onPressed: () {
+                              Navigator.pop(sheetContext);
+                              _answer(r, false);
+                            },
+                            child: const Text('رفض'),
+                          ),
+                        ),
+                      ],
+                    ),
+                  ),
+                // مشاركة PDF: للمرسل والمستلم.
+                FilledButton.icon(
+                  style: FilledButton.styleFrom(
+                    backgroundColor: deep,
+                    minimumSize: const Size.fromHeight(46),
+                  ),
+                  onPressed: () {
+                    Navigator.pop(sheetContext);
+                    _sharePdf([r]);
+                  },
+                  icon: const Icon(Icons.picture_as_pdf_outlined, size: 19),
+                  label: const Text('مشاركة PDF'),
+                ),
+                if (asOwner) ...[
+                  const SizedBox(height: 8),
                   Row(
                     children: [
-                      Expanded(
-                        child: FilledButton.icon(
-                          style: FilledButton.styleFrom(
-                            backgroundColor: AppTheme.brand,
+                      // غير المعتمد يُعدَّل ويُعاد إرساله أو توقيعه.
+                      if (!r.isApproved) ...[
+                        Expanded(
+                          child: OutlinedButton.icon(
+                            onPressed: () {
+                              Navigator.pop(sheetContext);
+                              _openForm(existing: r);
+                            },
+                            icon: const Icon(Icons.edit_outlined, size: 18),
+                            label: Text(
+                              r.isRejected ? 'تعديل وإعادة الإرسال' : 'تعديل',
+                            ),
                           ),
-                          onPressed: () {
-                            Navigator.pop(sheetContext);
-                            _answer(r, true);
-                          },
-                          icon: const Icon(Icons.draw_outlined, size: 18),
-                          label: const Text('موافقة وتوقيع'),
                         ),
-                      ),
-                      const SizedBox(width: 8),
+                        const SizedBox(width: 8),
+                      ],
                       Expanded(
-                        child: OutlinedButton(
+                        child: OutlinedButton.icon(
                           style: OutlinedButton.styleFrom(
                             foregroundColor: AppTheme.danger,
-                            side: const BorderSide(color: AppTheme.danger),
                           ),
                           onPressed: () {
                             Navigator.pop(sheetContext);
-                            _answer(r, false);
+                            _delete(r);
                           },
-                          child: const Text('رفض'),
+                          icon: const Icon(
+                            Icons.delete_outline_rounded,
+                            size: 18,
+                          ),
+                          label: const Text('حذف'),
                         ),
                       ),
                     ],
                   ),
-                if (asOwner)
-                  Wrap(
-                    spacing: 8,
-                    runSpacing: 8,
-                    children: [
-                      OutlinedButton.icon(
-                        onPressed: () {
-                          Navigator.pop(sheetContext);
-                          _share(r);
-                        },
-                        icon: const Icon(Icons.share_outlined, size: 18),
-                        label: const Text('مشاركة'),
-                      ),
-                      // غير المعتمد يُعدَّل ويُعاد إرساله أو توقيعه.
-                      if (!r.isApproved)
-                        OutlinedButton.icon(
-                          onPressed: () {
-                            Navigator.pop(sheetContext);
-                            _openForm(existing: r);
-                          },
-                          icon: const Icon(Icons.edit_outlined, size: 18),
-                          label: Text(
-                            r.isRejected ? 'تعديل وإعادة الإرسال' : 'تعديل',
-                          ),
-                        ),
-                      OutlinedButton.icon(
-                        style: OutlinedButton.styleFrom(
-                          foregroundColor: AppTheme.danger,
-                        ),
-                        onPressed: () {
-                          Navigator.pop(sheetContext);
-                          _delete(r);
-                        },
-                        icon: const Icon(
-                          Icons.delete_outline_rounded,
-                          size: 18,
-                        ),
-                        label: const Text('حذف'),
-                      ),
-                    ],
-                  ),
+                ],
               ],
             ),
           ),
@@ -552,9 +828,15 @@ class _SalaryReceiptsScreenState extends State<SalaryReceiptsScreen> {
     Widget row(int m) {
       final r = of(m);
       return InkWell(
-        onTap: () => r == null
-            ? _openForm(month: m)
-            : _openDetails(r, asOwner: true),
+        onTap: () {
+          if (r == null) {
+            if (!_selecting) _openForm(month: m);
+          } else if (_selecting) {
+            _toggleOne(r);
+          } else {
+            _openDetails(r, asOwner: true);
+          }
+        },
         child: Padding(
           padding: const EdgeInsets.symmetric(vertical: 7),
           child: Row(
@@ -580,7 +862,15 @@ class _SalaryReceiptsScreenState extends State<SalaryReceiptsScreen> {
                   ),
                 ),
               ),
-              if (r != null)
+              if (r != null && _selecting)
+                Icon(
+                  _selected.contains(r.id)
+                      ? Icons.check_box_rounded
+                      : Icons.check_box_outline_blank_rounded,
+                  size: 20,
+                  color: AppTheme.brand,
+                )
+              else if (r != null)
                 _statusPill(r.status)
               else
                 const Icon(
@@ -620,6 +910,7 @@ class _SalaryReceiptsScreenState extends State<SalaryReceiptsScreen> {
 
   Widget _receiptCard(SalaryReceipt r) {
     final asOwner = _tab == 0;
+    final picked = r.id != null && _selected.contains(r.id);
     return Padding(
       padding: const EdgeInsets.only(bottom: 8),
       child: Material(
@@ -627,11 +918,31 @@ class _SalaryReceiptsScreenState extends State<SalaryReceiptsScreen> {
         borderRadius: BorderRadius.circular(AppTheme.rField),
         clipBehavior: Clip.antiAlias,
         child: InkWell(
-          onTap: () => _openDetails(r, asOwner: asOwner),
+          // وضع التحديد: الضغط يحدد السند، والضغط المطوّل يبدأ التحديد.
+          onTap: () {
+            if (_selecting) {
+              _toggleOne(r);
+            } else {
+              _openDetails(r, asOwner: asOwner);
+            }
+          },
+          onLongPress: _selecting
+              ? null
+              : () {
+                  setState(() => _selecting = true);
+                  _toggleOne(r);
+                },
           child: Padding(
             padding: const EdgeInsets.fromLTRB(12, 10, 12, 10),
             child: Row(
               children: [
+                if (_selecting)
+                  Checkbox(
+                    value: picked,
+                    activeColor: AppTheme.brand,
+                    visualDensity: VisualDensity.compact,
+                    onChanged: (_) => _toggleOne(r),
+                  ),
                 AppIconTile(
                   icon: r.isSalary
                       ? Icons.payments_outlined
@@ -696,13 +1007,68 @@ class _SalaryReceiptsScreenState extends State<SalaryReceiptsScreen> {
       backgroundColor: AppTheme.page,
       appBar: AppBar(
         centerTitle: true,
+        leading: _selecting
+            ? IconButton(
+                tooltip: AppTr.tr('إلغاء التحديد'),
+                icon: const Icon(Icons.close_rounded),
+                onPressed: _toggleSelecting,
+              )
+            : null,
         title: Text(
-          _forEmployee
+          _selecting
+              ? '${AppTr.tr('تم تحديد')} ${_selected.length}'
+              : _forEmployee
               ? '${AppTr.tr('رواتب')} ${widget.employeeName}'
               : 'سندات القبض والرواتب',
         ),
+        actions: [
+          if (_selecting)
+            TextButton(
+              onPressed: () => setState(() {
+                final all = {
+                  for (final r in _source)
+                    if (r.id != null) r.id!,
+                };
+                if (_selected.length == all.length) {
+                  _selected.clear();
+                } else {
+                  _selected
+                    ..clear()
+                    ..addAll(all);
+                }
+              }),
+              child: const Text('تحديد الكل'),
+            )
+          else if (_source.isNotEmpty)
+            IconButton(
+              tooltip: AppTr.tr('تحديد سندات للمشاركة'),
+              icon: const Icon(Icons.checklist_rounded),
+              onPressed: _toggleSelecting,
+            ),
+        ],
       ),
-      floatingActionButton: _tab == 0
+      // وضع التحديد: مشاركة المحدَّد كملف PDF واحد.
+      bottomNavigationBar: _selecting
+          ? SafeArea(
+              child: Padding(
+                padding: const EdgeInsets.fromLTRB(16, 8, 16, 10),
+                child: FilledButton.icon(
+                  style: FilledButton.styleFrom(
+                    backgroundColor: const Color(0xFF0A5A50),
+                    minimumSize: const Size.fromHeight(48),
+                  ),
+                  onPressed: _selected.isEmpty
+                      ? null
+                      : () => _sharePdf(_selectedReceipts),
+                  icon: const Icon(Icons.picture_as_pdf_outlined),
+                  label: Text(
+                    '${AppTr.tr('مشاركة PDF')} (${_selected.length})',
+                  ),
+                ),
+              ),
+            )
+          : null,
+      floatingActionButton: _tab == 0 && !_selecting
           ? FloatingActionButton.extended(
               backgroundColor: AppTheme.gold,
               foregroundColor: const Color(0xFF4A2F09),
@@ -748,8 +1114,10 @@ class _SalaryReceiptsScreenState extends State<SalaryReceiptsScreen> {
                           ),
                         ],
                         selected: {_tab},
-                        onSelectionChanged: (s) =>
-                            setState(() => _tab = s.first),
+                        onSelectionChanged: (s) => setState(() {
+                          _tab = s.first;
+                          _selected.clear();
+                        }),
                       ),
                     const SizedBox(height: 10),
                     // السنة: سجل الرواتب محفوظ لكل سنة.
@@ -947,7 +1315,10 @@ class _SalaryReceiptFormScreenState extends State<SalaryReceiptFormScreen> {
       _checked = id;
       _owner = name;
       _looking = false;
-      if (name != null && _name.text.trim().isEmpty) _name.text = name;
+      // السند العام: اسم صاحب الرقم مقترح. الراتب: يكتب المرسل اسم الموظف.
+      if (name != null && !_isSalary && _name.text.trim().isEmpty) {
+        _name.text = name;
+      }
     });
   }
 
@@ -1094,10 +1465,9 @@ class _SalaryReceiptFormScreenState extends State<SalaryReceiptFormScreen> {
     final fnd = AppIdentity.normalize(_fnd.text);
     final hasFnd = fnd.isNotEmpty;
     final remote = _signMode == SalaryReceipt.signRemote;
-    // الراتب المُرسل للاعتماد: الاسم المرتبط برقمه التعريفي، ويكتب الموظف
-    // اسمه الثلاثي بنفسه عند الموافقة.
-    final name = remote && _isSalary
-        ? (_owner ?? '').trim()
+    // الراتب: الاسم كما كتبه المرسل (اسمين أو أكثر) في الحالتين.
+    final name = _isSalary
+        ? _name.text.trim().replaceAll(RegExp(r'\s+'), ' ')
         : _name.text.trim().isNotEmpty
         ? _name.text.trim()
         : (_owner ?? '').trim();
@@ -1119,7 +1489,7 @@ class _SalaryReceiptFormScreenState extends State<SalaryReceiptFormScreen> {
           : 'لم يُعثر على صاحب هذا الرقم — تأكد منه';
     } else if (name.isEmpty) {
       error = _isSalary ? 'اكتب اسم الموظف الحقيقي' : 'اكتب اسم المستلم';
-    } else if (_isSalary && !remote && nameParts < 2) {
+    } else if (_isSalary && nameParts < 2) {
       error = 'اكتب اسم الموظف الحقيقي من اسمين على الأقل';
     } else if (!_isSalary && _description.text.trim().isEmpty) {
       error = 'اكتب بيان السند';
@@ -1127,9 +1497,6 @@ class _SalaryReceiptFormScreenState extends State<SalaryReceiptFormScreen> {
       error = 'أدخل المبلغ المدفوع';
     }
     if (error != null) {
-      setState(() => _error = error!);
-      return;
-    }    if (error != null) {
       setState(() => _error = error!);
       return;
     }
@@ -1438,14 +1805,25 @@ class _SalaryReceiptFormScreenState extends State<SalaryReceiptFormScreen> {
                   ],
                 ),
               ),
-            // الراتب المُرسل للاعتماد: يظهر باسمه المرتبط برقمه التعريفي،
-            // ويكتب اسمه الثلاثي بنفسه عند الموافقة.
-            if (_isSalary && _signMode == SalaryReceipt.signRemote)
+            // اسم الموظف: يكتبه المرسل في الحالتين (اسمين أو ثلاثة)، ويظهر
+            // للموظف كما هو بلا تعديل.
+            const SizedBox(height: 10),
+            TextField(
+              key: const ValueKey('salary-employee-name'),
+              controller: _name,
+              textDirection: AppTr.uiDir,
+              onChanged: (_) => setState(() {}),
+              decoration: _decor(
+                _isSalary ? 'اكتب اسم الموظف *' : 'اسم المستلم *',
+                icon: Icons.person_outline_rounded,
+                hint: _isSalary ? AppTr.tr('اسمين أو ثلاثة') : null,
+              ),
+            ),
+            if (_isSalary)
               const Padding(
-                padding: EdgeInsets.only(top: 6),
+                padding: EdgeInsets.only(top: 5),
                 child: Text(
-                  'يظهر الموظف باسمه المرتبط برقمه التعريفي، ويكتب اسمه '
-                  'الثلاثي بنفسه عند الموافقة والتوقيع.',
+                  'إلزامي — اسمين على الأقل، ويظهر للموظف كما كتبته.',
                   style: TextStyle(
                     fontSize: 11,
                     height: 1.45,
@@ -1453,21 +1831,7 @@ class _SalaryReceiptFormScreenState extends State<SalaryReceiptFormScreen> {
                     color: AppTheme.muted,
                   ),
                 ),
-              )
-            else ...[
-              const SizedBox(height: 10),
-              TextField(
-                controller: _name,
-                textDirection: AppTr.uiDir,
-                onChanged: (_) => setState(() {}),
-                decoration: _decor(
-                  _isSalary
-                      ? 'اسم الموظف الحقيقي (اسمين على الأقل)'
-                      : 'اسم المستلم',
-                  icon: Icons.person_outline_rounded,
-                ),
               ),
-            ],
             if (_isSalary) ...[
               _section('3. الشهر'),
               Row(

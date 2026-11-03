@@ -1226,7 +1226,8 @@ class _PersonalSummary {
         }
       } else if (type == 'مستند') {
         docs++;
-        if (due != null) {
+        // المؤرشف / الملغى ليس «منتهيًا» يحتاج متابعة.
+        if (due != null && open) {
           final days = due.difference(today).inDays;
           if (days < 0) {
             docsExpired++;
@@ -1236,6 +1237,7 @@ class _PersonalSummary {
         }
       } else if (type == 'أدوية') {
         meds++;
+        if (!open) continue;
         final from = _parseDate(e.details['من تاريخ']);
         final to = _parseDate(e.details['إلى تاريخ']);
         if (to != null && to.isBefore(today)) {
@@ -1555,11 +1557,21 @@ class _AssetsSummary {
   _AssetsSummary(_SummaryData data, _InPeriod inPeriod, DateTime today) {
     // ما بقي من عقد أُغلق وسُوّيت مبالغه (أو استحقاقه بعد إغلاقه) لا يُحسب
     // مستحقًا؛ وما لم يُسوَّ يبقى مستحقًا يُتابَع.
+    // أصول في سلة المهملات: لا عقودها ولا دفعاتها.
+    final trashed = {
+      for (final asset in data.assets)
+        if (asset.status.trim() == 'محذوف' && asset.id != null) asset.id!,
+    };
+    // المسودة لم تُعتمد: لا تُعدّ عقدًا ولا تُستحق دفعاتها.
     final contractById = {
       for (final c in data.contracts)
-        if (c.id != null) c.id!: c,
+        if (c.id != null &&
+            !trashed.contains(c.assetId) &&
+            c.status != PropertyUnitContractRecord.statusPending)
+          c.id!: c,
     };
     for (final payment in data.payments) {
+      if (!contractById.containsKey(payment.contractId)) continue;
       if (!inPeriod(payment.dueDate)) continue;
       received += payment.amountPaid;
       final left = payment.amountDue - payment.amountPaid;
@@ -1585,7 +1597,7 @@ class _AssetsSummary {
       final map = status.contains('ملغ') ? _cancelled : _active;
       map[asset.category] = (map[asset.category] ?? 0) + 1;
     }
-    for (final contract in data.contracts) {
+    for (final contract in contractById.values) {
       if (!inPeriod(contract.startDate ?? contract.endDate)) continue;
       final category = categoryOf[contract.assetId] ?? 'real_estate';
       // الشيكات المكتوبة في العقد بحالة كل منها.

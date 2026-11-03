@@ -234,18 +234,19 @@ class RoscaPlan {
   /// حالة الدورة: مكتملة / متأخرة / جارية / قادمة.
   String statusOf(RoscaCycle cycle, [DateTime? now]) {
     if (cycle.isComplete) return RoscaCycle.statusDone;
+    // أي دورة فات موعدها ولم تكتمل «متأخرة» — لا الجارية وحدها.
+    final due = cycle.dueDate;
+    if (due != null) {
+      final today = now ?? DateTime.now();
+      final day = DateTime(today.year, today.month, today.day);
+      final dueDay = DateTime(due.year, due.month, due.day);
+      if (dueDay.isBefore(day)) return RoscaCycle.statusLate;
+    }
     final currentIndex = current?.index;
     if (currentIndex == null || cycle.index != currentIndex) {
       return RoscaCycle.statusNext;
     }
-    final due = cycle.dueDate;
-    if (due == null) return RoscaCycle.statusOpen;
-    final today = now ?? DateTime.now();
-    final day = DateTime(today.year, today.month, today.day);
-    final dueDay = DateTime(due.year, due.month, due.day);
-    return dueDay.isBefore(day)
-        ? RoscaCycle.statusLate
-        : RoscaCycle.statusOpen;
+    return RoscaCycle.statusOpen;
   }
 
   /// عدد الدورات المستحقة (حلّ موعدها) ولم يدفعها هذا العضو.

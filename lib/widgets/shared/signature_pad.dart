@@ -230,13 +230,21 @@ class _SignaturePadDialogState extends State<_SignaturePadDialog> {
                 ),
               ],
               const SizedBox(height: 12),
-              // المربع: التوقيع بالإصبع.
-              AspectRatio(
-                aspectRatio: 1,
-                child: LayoutBuilder(
-                  builder: (context, constraints) {
-                    final side = constraints.maxWidth;
-                    return Container(
+              // المربع: التوقيع بالإصبع. على الجوال بالطول = عرض النافذة كما
+              // كان؛ على الشاشات العريضة أو الجوال بالعرض يُصغَّر ليبقى مربعًا
+              // داخل الشاشة مع الأزرار.
+              LayoutBuilder(
+                builder: (context, constraints) {
+                  final screenH = MediaQuery.sizeOf(context).height;
+                  final fit = (screenH - 48 - 28 - 170).clamp(160.0, 520.0).toDouble();
+                  final side = constraints.maxWidth < fit
+                      ? constraints.maxWidth
+                      : fit;
+                  return Center(
+                    child: SizedBox(
+                      width: side,
+                      height: side,
+                      child: Container(
                       decoration: BoxDecoration(
                         color: Colors.white,
                         borderRadius: BorderRadius.circular(AppTheme.rInner),
@@ -280,9 +288,10 @@ class _SignaturePadDialogState extends State<_SignaturePadDialog> {
                           ],
                         ),
                       ),
-                    );
-                  },
-                ),
+                    ),
+                    ),
+                  );
+                },
               ),
               const SizedBox(height: 12),
               Row(

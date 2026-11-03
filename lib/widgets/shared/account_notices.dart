@@ -460,7 +460,6 @@ class AccountNotices {
           }
           // سند القبض: الموافقة لا تتم إلا بالتوقيع.
           var signature = '';
-          var fullName = '';
           if (accept && item.source == 'salary_receipts') {
             final strokes = await showSignaturePad(
               context,
@@ -471,20 +470,14 @@ class AccountNotices {
             if (strokes == null || strokes.isEmpty || !context.mounted) {
               return;
             }
+            // الاسم كتبه المرسل ويبقى كما هو — لا يُطلب من الموظف.
             signature = SalaryReceipt.encodeStrokes(strokes);
-            // الراتب: الاسم الثلاثي قبل إكمال الاعتماد.
-            if (item.entryType == 'سند قبض راتب') {
-              final typed = await askFullName(context);
-              if (typed == null || !context.mounted) return;
-              fullName = typed;
-            }
           }
           setBusy(() => busy = true);
           final error = await RequestsData.respond(
             item,
             accept,
             signature: signature,
-            name: fullName,
           );
           if (!context.mounted) return;
           setBusy(() => busy = false);

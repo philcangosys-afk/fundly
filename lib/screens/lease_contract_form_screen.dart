@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart' hide Text, Align;
-import 'package:share_plus/share_plus.dart';
+import 'package:pdf/pdf.dart' show PdfPageFormat;
+import 'package:printing/printing.dart' show Printing;
 
 import '../l10n/tr_widgets.dart';
 import '../l10n/app_language.dart';
@@ -132,6 +133,12 @@ class _LeaseContractFormScreenState extends State<LeaseContractFormScreen> {
   /// النشاط المُنشأ عند أول حفظ — فلا يُنشأ مرة ثانية إن أُعيد الحفظ.
   String? _createdAssetId;
 
+  /// ما حُفظ فعلًا على الخادم في هذه الشاشة: إن فشل حفظ لاحق (انقطاع شبكة)
+  /// وأُعيد الحفظ يُحدَّث نفس السجل بدل إنشاء عقد مكرر.
+  String? _savedContractId;
+  final Map<String, String> _savedUnitContractIds = {};
+  String? _savedGroupKey;
+
   /// «الأنشطة التجارية» في الرخصة: ثلاثة أسطر، و«المزيد» يضيف سطرًا.
   final List<TextEditingController> _activityLines = [];
 
@@ -163,6 +170,17 @@ class _LeaseContractFormScreenState extends State<LeaseContractFormScreen> {
         ..remove(LeaseContractData.kSignedBy);
       if (oldNo.isNotEmpty) _data.contract[LeaseContractData.kOldNo] = oldNo;
       _data.payments.clear();
+      // رسوم العقد السابق سُدِّدت معه: لا تتكرر مستحقةً على الجديد.
+      _data.adminFees.clear();
+      // التأمين محفوظ لدى المؤجر وينتقل مع التجديد: شيكه بلا تاريخ
+      // استحقاق قديم (كان يظهر «متأخرًا» من جديد).
+      for (final row in _data.deposits) {
+        if ((row[LeaseContractData.kCollectMethod] ?? '').trim() == 'شيك') {
+          row
+            ..remove(LeaseContractData.kPaymentChequeDate)
+            ..remove(LeaseContractData.kPaymentDue);
+        }
+      }
       // تجديد من «إدارة الإيجار»: الرقمان والمدة الجديدة جاهزة للمراجعة.
       if (widget.isRenewal) {
         _data.contract[LeaseContractData.kStartDate] = _iso(widget.renewStart!);
@@ -461,6 +479,41 @@ class _LeaseContractFormScreenState extends State<LeaseContractFormScreen> {
     'رقم الحساب',
   };
 
+  /// حقل اختياري (بلا نجمة): التاريخ فيه يُمسح بزر ×.
+  static bool _optionalField(LeaseFieldSpec spec) {
+    final label = spec.label;
+    if (label.endsWith(' *')) return false;
+    return !_requiredLabels.contains(label);
+  }
+
+  /// يمسح تاريخًا اختياريًا. مع «شيك» تاريخ الشيك والاستحقاق نسختان من
+  /// تاريخ واحد ([_syncChequeDue])، فيُمسحان معًا وإلا أعادته المزامنة.
+  static void _clearDate(Map<String, String> row, String key) {
+    final old = (row[key] ?? '').trim();
+    row[key] = '';
+    final other = switch (key) {
+      LeaseContractData.kPaymentChequeDate => LeaseContractData.kPaymentDue,
+      LeaseContractData.kPaymentDue => LeaseContractData.kPaymentChequeDate,
+      _ => null,
+    };
+    if (other != null && (row[other] ?? '').trim() == old) row[other] = '';
+  }
+
+  /// زر × داخل حقل التاريخ الاختياري حين يكون فيه تاريخ.
+  Widget? _clearDateButton(
+    LeaseFieldSpec spec,
+    String raw,
+    VoidCallback onClear,
+  ) {
+    if (raw.trim().isEmpty || !_optionalField(spec)) return null;
+    return IconButton(
+      tooltip: AppTr.tr('مسح التاريخ'),
+      visualDensity: VisualDensity.compact,
+      icon: const Icon(Icons.close_rounded, size: 18, color: AppTheme.muted),
+      onPressed: onClear,
+    );
+  }
+
   /// [sheet]: نوافذ الإضافة (دفعة/رسم/تأمين) — العنوان داخل الحقل دائمًا،
   /// حتى في النشاط التجاري، وإلا ظهرت المستطيلات فارغة بلا عناوين.
   InputDecoration _decoration(String label, {bool sheet = false}) {
@@ -699,7 +752,13 @@ class _LeaseContractFormScreenState extends State<LeaseContractFormScreen> {
         },
         borderRadius: BorderRadius.circular(AppTheme.rIcon),
         child: InputDecorator(
-          decoration: _decoration(spec.label),
+          decoration: _decoration(spec.label).copyWith(
+            suffixIcon: _clearDateButton(
+              spec,
+              raw,
+              () => setState(() => _clearDate(store, spec.key)),
+            ),
+          ),
           child: Text(
             raw.isEmpty ? 'غير محدد' : _pretty(raw),
             maxLines: 3,
@@ -1708,7 +1767,13 @@ class _LeaseContractFormScreenState extends State<LeaseContractFormScreen> {
                   },
                   borderRadius: BorderRadius.circular(AppTheme.rIcon),
                   child: InputDecorator(
-                    decoration: _decoration(spec.label, sheet: true),
+                    decoration: _decoration(spec.label, sheet: true).copyWith(
+                      suffixIcon: _clearDateButton(
+                        spec,
+                        raw,
+                        () => setSheetState(() => _clearDate(row, spec.key)),
+                      ),
+                    ),
                     child: Text(
                       raw.isEmpty ? 'غير محدد' : _pretty(raw),
                       maxLines: 3,
@@ -3372,6 +3437,22 @@ class _LeaseContractFormScreenState extends State<LeaseContractFormScreen> {
   /// اشتراط الحقول الإلزامية؛ يُراجَع ثم يُحفظ مسودة تُكمَل لاحقًا.
   Future<void> _save({bool asDraft = false}) async {
     _commitControllers();
+    // نهاية العقد قبل بدايته لا تُقبل (ولا في المسودة).
+    final startAt = DateTime.tryParse(
+      (_data.contract[LeaseContractData.kStartDate] ?? '').trim(),
+    );
+    final endAt = DateTime.tryParse(
+      (_data.contract[LeaseContractData.kEndDate] ?? '').trim(),
+    );
+    if (startAt != null && endAt != null && endAt.isBefore(startAt)) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('تاريخ نهاية العقد قبل تاريخ بدايته — صحّحه أولًا'),
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+      return;
+    }
     if (widget.isMultiUnit && widget.existing == null && _chosenUnits.length < 2) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(
@@ -3489,7 +3570,7 @@ class _LeaseContractFormScreenState extends State<LeaseContractFormScreen> {
       }
 
       final record = PropertyUnitContractRecord(
-        id: widget.existing?.id,
+        id: widget.existing?.id ?? _savedContractId,
         assetId: assetId,
         unitKey: widget.unitKey,
         unitName: _subjectName,
@@ -3516,8 +3597,9 @@ class _LeaseContractFormScreenState extends State<LeaseContractFormScreen> {
         // والرسوم والتأمين، والبقية نسخة العقد بلا مبالغ (فلا تتكرر
         // الدفعات)، والإيجار السنوي موزّع بالتساوي.
         final chosen = _chosenList;
+        // مفتاح المجموعة نفسه في إعادة الحفظ بعد فشل.
         final groupKey = widget.groupKey ??
-            'grp_${DateTime.now().microsecondsSinceEpoch}';
+            (_savedGroupKey ??= 'grp_${DateTime.now().microsecondsSinceEpoch}');
         final share = value / chosen.length;
         PropertyUnitContractRecord? primary;
         for (var i = 0; i < chosen.length; i++) {
@@ -3533,6 +3615,8 @@ class _LeaseContractFormScreenState extends State<LeaseContractFormScreen> {
           }
           final one = await widget.repository.upsertUnitContract(
             record.copyWith(
+              // ما حُفظ من هذه الوحدات قبل الفشل يُحدَّث لا يُكرَّر.
+              id: _savedUnitContractIds[unit.key],
               unitKey: unit.key,
               unitName: unit.name,
               leaseType: PropertyUnitContractRecord.leaseTypeMultiUnit,
@@ -3541,11 +3625,13 @@ class _LeaseContractFormScreenState extends State<LeaseContractFormScreen> {
               notes: notes,
             ),
           );
+          if (one.id != null) _savedUnitContractIds[unit.key] = one.id!;
           primary ??= one;
         }
         saved = primary!;
       } else {
         saved = await widget.repository.upsertUnitContract(record);
+        if (saved.id != null) _savedContractId = saved.id;
       }
       await _registerPaymentReminders(tenantName);
       // الدفعات والرسوم والتأمين تصير سجلات قابلة للتحصيل. كانت تبقى نصًّا
@@ -4107,11 +4193,31 @@ class _LeaseContractFormScreenState extends State<LeaseContractFormScreen> {
             IconButton(
               tooltip: AppTr.tr('مشاركة العقد'),
               icon: const Icon(Icons.ios_share_rounded, size: 20),
+              // المشاركة بنموذج العقد المعتمد كملف PDF (لا نصًّا) — نفس ما
+              // في معاينة الطباعة، على أندرويد والآيفون.
               onPressed: () async {
                 _commitControllers();
-                await SharePlus.instance.share(
-                  ShareParams(text: _data.toShareText()),
-                );
+                try {
+                  final bytes = await buildLeasePdf(
+                    _data,
+                    PdfPageFormat.a4,
+                    title: _shownTitle,
+                    activity: widget.forActivity,
+                    assetMeta: widget.propertyMeta,
+                  );
+                  await Printing.sharePdf(
+                    bytes: bytes,
+                    filename: '$_shownTitle.pdf',
+                  );
+                } catch (_) {
+                  if (!context.mounted) return;
+                  ScaffoldMessenger.of(context).showSnackBar(
+                    const SnackBar(
+                      content: Text('تعذّرت مشاركة العقد'),
+                      behavior: SnackBarBehavior.floating,
+                    ),
+                  );
+                }
               },
             ),
           ],

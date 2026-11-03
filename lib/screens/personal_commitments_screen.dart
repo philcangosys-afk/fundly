@@ -15,6 +15,10 @@ import '../widgets/shared/follow_filters.dart';
 import '../data/app_reminders_store.dart';
 import '../data/personal_entries_repository.dart';
 import '../data/fundly_auth.dart';
+import '../data/entry_status.dart';
+import '../data/salary_income_sync.dart';
+import '../data/salary_receipt_pdf.dart';
+import '../data/salary_receipts.dart';
 import '../data/document_store.dart';
 import '../data/reminder_lead.dart';
 import '../data/custody_sharing.dart';
@@ -49,6 +53,10 @@ const _prescriptionGroupKey = 'مجموعة الوصفة';
 const Map<String, String> _dateRangeStart = {
   'إلى تاريخ': 'من تاريخ',
   'تاريخ نهاية التفويض': 'تاريخ بداية التفويض',
+  // الدين: الاستحقاق لا يسبق تاريخ الدين. المستند: الانتهاء لا يسبق الإصدار.
+  'تاريخ الاستحقاق': 'تاريخ الدين',
+  'تاريخ الانتهاء': 'تاريخ الإصدار',
+  'تاريخ الاستلام': 'تاريخ البداية',
 };
 
 /// وقتان لا يكونان متساويين (وقت الدواء الإضافي غير وقت الجرعة).
@@ -224,6 +232,100 @@ DateTime? _parseDayValue(String raw) {
   // صيغة التطبيق: يوم/شهر/سنة، وصيغة الخادم: سنة-شهر-يوم.
   if (parts[0].length == 4) return DateTime(a, b, c);
   return DateTime(c, b, a);
+}
+
+/// الحالة كما تظهر في كل مكان (المنتهي تاريخه «منتهية») — في entry_status.
+String _derivedStatus(String stored, Map<String, String> details) =>
+    entryDerivedStatus(stored, details);
+
+
+/// أنواع «المتابعة والتخطيط» في مركز المتابعة.
+const Set<String> _organizationFollowTypes = {
+  'مهمة',
+  'موعد',
+  'عادة',
+  'تذكير',
+  'ملاحظات',
+  'متابعة',
+  'تسجيل / تخطيط',
+  'تجديد',
+  'تفويض',
+};
+
+/// حالات منتهية: لا تُعدّ متأخرة ولا قريبة ولا مفتوحة.
+const Set<String> _personalClosedStatuses = {
+  'مكتملة',
+  'مؤرشف',
+  'ملغاة',
+  'تمت التسوية',
+  'محذوف',
+  'مجمّدة',
+};
+
+/// الحالة الفعلية من تاريخ الاستحقاق (لا تُخزَّن، تُحسب عند العرض) — مصدر
+/// واحد لمركز المتابعة والفلاتر والقائمة والتفاصيل.
+String _personalEffectiveStatus(_CommitmentItem item) {
+  if (_personalClosedStatuses.contains(item.status)) return item.status;
+  // انتهى تاريخه: «منتهية» (تظهر في «المنتهي» لا في «المتأخر»).
+  if (item.status == 'منتهية') return item.status;
+  final parts = item.dueDate.split('/');
+  final day = parts.length == 3 ? int.tryParse(parts[0]) : null;
+  final month = parts.length == 3 ? int.tryParse(parts[1]) : null;
+  final year = parts.length == 3 ? int.tryParse(parts[2]) : null;
+  final date = day == null || month == null || year == null
+      ? null
+      : DateTime(year, month, day);
+  final type = item.entryType ?? '';
+  // سُدِّد كامله: «مكتملة». مناسبة / هدية مرّ يومها: «منتهية».
+  final outcome = entryOutcomeStatus(
+    type: type,
+    due: date,
+    details: item.details,
+    total: item.totalAmount,
+  );
+  if (outcome != null) return outcome;
+  // موعد المتابعة (entry_status): المصروف المتكرر والاشتراك والتذكير
+  // المتكرر بموعدها القادم، والقسط بأول قسط لم يُسدَّد، وما لا موعد له
+  // (ملاحظة، عهدة، دواء) بحالته.
+  final due = entryFollowDate(type: type, due: date, details: item.details);
+  if (due == null) return item.status;
+  final days = due.difference(DateUtils.dateOnly(DateTime.now())).inDays;
+  if (days < 0) return 'متأخرة';
+  // يوم الاستحقاق نفسه «مستحقة» فقط، لا «قريبة الاستحقاق» أيضًا.
+  if (days == 0) return 'مستحقة';
+  if (days <= 7) return 'قريبة الاستحقاق';
+  return 'نشطة';
+}
+
+/// الملاحظات بلا موعد، والعادة وما يتكرر يتجدد موعده: لا تُعدّ «متأخرة» في
+/// المتابعة والتخطيط.
+bool _personalNoDeadline(_CommitmentItem i) {
+  final repeat = (i.details['التكرار'] ?? '').trim();
+  final repeating = repeat.isNotEmpty &&
+      !repeat.contains('بدون') &&
+      !repeat.contains('لا يتكرر') &&
+      repeat != 'لا';
+  return i.entryType == 'ملاحظات' || i.entryType == 'عادة' || repeating;
+}
+
+/// الحالة كما تظهر للمستخدم في القائمة والتفاصيل: ما يعدّه مركز المتابعة
+/// «متأخرة» يظهر «متأخرة» بالأحمر عند فتحه، وغير ذلك حالته المحفوظة.
+String _shownStatus(_CommitmentItem item) {
+  if (_organizationFollowTypes.contains(item.entryType) &&
+      _personalNoDeadline(item)) {
+    return item.status;
+  }
+  final effective = _personalEffectiveStatus(item);
+  // ما يُحسب من البيانات يظهر كما هو: متأخرة، أو مكتملة (سُدِّد كامله)، أو
+  // منتهية (مرّ يوم المناسبة).
+  return const {'متأخرة', 'مكتملة', 'منتهية'}.contains(effective)
+      ? effective
+      : item.status;
+}
+
+Color _shownStatusColor(_CommitmentItem item) {
+  final shown = _shownStatus(item);
+  return shown == item.status ? item.statusColor : _personalStatusColor(shown);
 }
 
 /// أنواع الإضافات التي تُسجَّل في سجل المتابعة بدل إنشاء التزام مستقل.
@@ -421,6 +523,9 @@ DateTime _addMonthsClamped(DateTime date, int months) {
   _ => ('نشطة', const Color(0xFF178F7B)),
 };
 
+/// لون التفويض الموحَّد في كل الأقسام (نفس «مفوَّض» في العقارات).
+const Color _kDelegationRoleColor = Color(0xFF6A4C93);
+
 /// «مفوَّض بها أنا» (أنا المستلم) أو «فوّضت بها غيري» (أنا صاحبها).
 String? _custodyRoleLabel(Map<String, String> details) {
   final assignment = CustodyAssignment.decode(details);
@@ -457,7 +562,7 @@ Widget? _custodyRoleText(_CommitmentItem item) {
     style: const TextStyle(
       fontSize: 10,
       fontWeight: FontWeight.w800,
-      color: Color(0xFFA6691A),
+      color: _kDelegationRoleColor,
     ),
   );
 }
@@ -631,6 +736,7 @@ enum _CommitmentMenuAction {
   cancelAssignment,
   reopenCustody,
   freezeCustody,
+  receiptPdf,
   archive,
 }
 
@@ -1272,7 +1378,11 @@ class _PersonalCommitmentsScreenState extends State<PersonalCommitmentsScreen> {
     // الضيف بلا حساب: لا طلب للخادم ولا رسالة خطأ.
     if (FundlyAuth.isGuest) return;
     try {
-      final records = await _repository.fetchAll();
+      var records = await _repository.fetchAll();
+      // سندات القبض والرواتب المعتمدة التي وصلتني: تظهر هنا كإيراد.
+      if (await SalaryIncomeSync.syncReceived(existing: records) > 0) {
+        records = await _repository.fetchAll();
+      }
       if (!mounted) return;
       setState(() {
         _items
@@ -1526,12 +1636,14 @@ class _PersonalCommitmentsScreenState extends State<PersonalCommitmentsScreen> {
         )
         .toList();
     final paidAmount = _subscriptionTotalPaid(record.details);
+    // المنتهي تاريخه يظهر «منتهية» في القائمة والتفاصيل ومركز المتابعة.
+    final status = _derivedStatus(record.status, record.details);
     return _CommitmentItem(
       id: record.id,
       category: record.category,
       title: record.title,
-      status: record.status,
-      statusColor: _personalStatusColor(record.status),
+      status: status,
+      statusColor: _personalStatusColor(status),
       amount: record.amount,
       dueDate: record.dueDate,
       progress: record.amount > 0
@@ -2028,29 +2140,10 @@ class _PersonalCommitmentsScreenState extends State<PersonalCommitmentsScreen> {
   // (مكتملة/مؤرشف) تبقى كما هي. عتبة "قريبة الاستحقاق" = 7 أيام، حسب تعريف
   // ملف المتطلبات ("المستحق بعد 7 أيام").
   /// حالات منتهية: لا تُعدّ متأخرة ولا قريبة ولا مفتوحة.
-  static const Set<String> _closedStatuses = {
-    _statusCompleted,
-    'مؤرشف',
-    'ملغاة',
-    'تمت التسوية',
-    'محذوف',
-  };
+  static const Set<String> _closedStatuses = _personalClosedStatuses;
 
-  String _effectiveStatus(_CommitmentItem item) {
-    if (_closedStatuses.contains(item.status)) {
-      return item.status;
-    }
-    final due = _parseDueDate(item.dueDate);
-    if (due == null) return item.status;
-    final days = due
-        .difference(DateUtils.dateOnly(DateTime.now()))
-        .inDays;
-    if (days < 0) return _statusOverdue;
-    // يوم الاستحقاق نفسه «مستحقة» فقط، لا «قريبة الاستحقاق» أيضًا.
-    if (days == 0) return 'مستحقة';
-    if (days <= 7) return _statusDueSoon;
-    return _statusActive;
-  }
+  String _effectiveStatus(_CommitmentItem item) =>
+      _personalEffectiveStatus(item);
 
   bool _isDueToday(_CommitmentItem item) {
     final due = _parseDueDate(item.dueDate);
@@ -2082,27 +2175,8 @@ class _PersonalCommitmentsScreenState extends State<PersonalCommitmentsScreen> {
     final today = DateUtils.dateOnly(DateTime.now());
 
     // أنواع كل مجموعة كما في الملف المعتمد لمركز المتابعة.
-    const organizationTypes = {
-      'مهمة',
-      'موعد',
-      'عادة',
-      'تذكير',
-      'ملاحظات',
-      'متابعة',
-      'تسجيل / تخطيط',
-      'تجديد',
-      'تفويض',
-    };
-    const financialTypes = {
-      'المصروفات الشخصية',
-      'مصروف',
-      'إيراد',
-      'تحويل مالي',
-      'دين / قرض / سلفة',
-      'قسط',
-      'غرامة',
-      'جمعية',
-    };
+    const organizationTypes = _organizationFollowTypes;
+    const financialTypes = entryFinancialTypes;
     const lifestyleTypes = {
       'مناسبة',
       'هدية',
@@ -2122,14 +2196,7 @@ class _PersonalCommitmentsScreenState extends State<PersonalCommitmentsScreen> {
 
     // الملاحظات بلا موعد، والعادة وما يتكرر يتجدد موعده: لا يُعدّان
     // «متأخرة» في المتابعة والتخطيط.
-    bool noDeadline(_CommitmentItem i) {
-      final repeat = (i.details['التكرار'] ?? '').trim();
-      final repeating = repeat.isNotEmpty &&
-          !repeat.contains('بدون') &&
-          !repeat.contains('لا يتكرر') &&
-          repeat != 'لا';
-      return i.entryType == 'ملاحظات' || i.entryType == 'عادة' || repeating;
-    }
+    bool noDeadline(_CommitmentItem i) => _personalNoDeadline(i);
 
     List<_CommitmentItem> overdueOf(Set<String> types) => byType(types)
         .where(
@@ -2139,8 +2206,11 @@ class _PersonalCommitmentsScreenState extends State<PersonalCommitmentsScreen> {
         )
         .toList(growable: false);
 
-    List<_CommitmentItem> todayOf(Set<String> types) =>
-        byType(types).where(_isDueToday).toList(growable: false);
+    // «حان وقتها / مستحقة»: نفس الحساب (المصروف المتكرر بموعده القادم،
+    // وغير المتكرر عملية تمّت).
+    List<_CommitmentItem> todayOf(Set<String> types) => byType(types)
+        .where((i) => _effectiveStatus(i) == 'مستحقة')
+        .toList(growable: false);
 
     List<_CommitmentItem> soonOf(Set<String> types) => byType(types)
         .where((i) => _effectiveStatus(i) == _statusDueSoon)
@@ -2166,8 +2236,9 @@ class _PersonalCommitmentsScreenState extends State<PersonalCommitmentsScreen> {
         .toList(growable: false);
 
     // العهدة: المستنفدة ما صُرف كامل مبلغها، والقريبة ما بقي منها 20% فأقل.
+    // المسوّاة والملغاة والمؤرشفة خارج المتابعة.
     final custodyItems = items
-        .where((i) => i.entryType == 'عهدة مالية')
+        .where((i) => i.entryType == 'عهدة مالية' && _isOpenItem(i))
         .toList(growable: false);
     final custodyDrained = custodyItems.where((i) {
       final spent = _custodyTotalSpent(i.details);
@@ -4548,6 +4619,22 @@ class _PersonalCommitmentsScreenState extends State<PersonalCommitmentsScreen> {
             ? AppSettings.currencyOf(controllers['العملة']?.text)
             : null,
       ).copyWith(
+        // التاريخ / الوقت الاختياري: زر × يمسحه بعد اختياره.
+        suffixIcon: !field.required &&
+                (field.kind == _FinancialFieldKind.date ||
+                    field.kind == _FinancialFieldKind.time)
+            ? ValueListenableBuilder<TextEditingValue>(
+                valueListenable: controller,
+                builder: (context, value, _) => value.text.trim().isEmpty
+                    ? const SizedBox.shrink()
+                    : IconButton(
+                        tooltip: AppTr.tr('مسح التاريخ'),
+                        visualDensity: VisualDensity.compact,
+                        icon: const Icon(Icons.close_rounded, size: 18),
+                        onPressed: controller.clear,
+                      ),
+              )
+            : null,
         // خانة الرقم التعريفي: كيف سيظهر اسمي للطرف الآخر.
         helperText:
             field.label == _custodyHolderIdLabel ||
@@ -4622,7 +4709,12 @@ class _PersonalCommitmentsScreenState extends State<PersonalCommitmentsScreen> {
         if (field.kind == _FinancialFieldKind.number &&
             value != null &&
             value.trim().isNotEmpty) {
-          final number = double.tryParse(value.trim());
+          // أرقام عربية (١٢٣) وفواصل تُقبل — لوحة الآيفون بالعربية تكتبها.
+          final normalized = value.trim().replaceAll(RegExp(r'[,،٬\s]'), '');
+          final number = double.tryParse(normalized) ??
+              (RegExp(r'^[0-9٠-٩۰-۹.٫]+$').hasMatch(normalized)
+                  ? entryNumber(normalized)
+                  : null);
           if (number == null || number < 0) return 'أدخل رقماً صحيحاً';
         }
         return null;
@@ -7004,6 +7096,10 @@ class _PersonalCommitmentDetailsScreenState
       await _toggleCustodyFreeze();
       return;
     }
+    if (action == _CommitmentMenuAction.receiptPdf) {
+      await _shareReceiptPdf();
+      return;
+    }
     final title = widget.item.title;
     final (label, message, danger) = switch (action) {
       _CommitmentMenuAction.edit => (
@@ -7060,6 +7156,7 @@ class _PersonalCommitmentDetailsScreenState
         true,
       ),
       _CommitmentMenuAction.freezeCustody => ('تجميد العهدة', '', false),
+      _CommitmentMenuAction.receiptPdf => ('سند القبض PDF', '', false),
       _CommitmentMenuAction.archive => widget.item.status == 'مؤرشف'
           ? (
               'إخراج من الأرشيف',
@@ -7122,6 +7219,8 @@ class _PersonalCommitmentDetailsScreenState
         await _cancelCustodyAssignment();
       case _CommitmentMenuAction.freezeCustody:
         await _toggleCustodyFreeze();
+      case _CommitmentMenuAction.receiptPdf:
+        await _shareReceiptPdf();
       case _CommitmentMenuAction.archive:
         if (widget.item.status == 'مؤرشف') {
           await _unarchiveCommitment();
@@ -8836,6 +8935,40 @@ class _PersonalCommitmentDetailsScreenState
   }
 
   /// تجميد العهدة أو إلغاء تجميدها — لصاحبها من القائمة ⋮.
+  /// البند مرتبط بسند قبض / راتب: يُشارك السند نفسه كملف PDF.
+  Future<void> _shareReceiptPdf() async {
+    final id = (widget.item.details[SalaryIncomeSync.receiptKey] ?? '').trim();
+    if (id.isEmpty) return;
+    final messenger = ScaffoldMessenger.of(context);
+    messenger.showSnackBar(
+      const SnackBar(
+        content: Text('جارٍ تجهيز ملف PDF...'),
+        behavior: SnackBarBehavior.floating,
+      ),
+    );
+    try {
+      final receipt = await SalaryReceiptsRepository().fetchOne(id);
+      if (receipt == null) {
+        messenger.showSnackBar(
+          const SnackBar(
+            content: Text('لم يعد هذا السند قائمًا'),
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+        return;
+      }
+      await shareSalaryReceiptsPdf([receipt]);
+    } catch (error) {
+      debugPrint('Receipt PDF failed: $error');
+      messenger.showSnackBar(
+        const SnackBar(
+          content: Text('تعذّر تجهيز ملف PDF. حاول مرة أخرى.'),
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+    }
+  }
+
   Future<void> _toggleCustodyFreeze() async {
     final item = widget.item;
     if (!_isCustodyOwnerView(item.details)) return;
@@ -10884,15 +11017,15 @@ class _PersonalCommitmentDetailsScreenState
             Container(
               padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
               decoration: BoxDecoration(
-                color: item.statusColor.withValues(alpha: 0.1),
+                color: _shownStatusColor(item).withValues(alpha: 0.1),
                 borderRadius: BorderRadius.circular(8),
               ),
               child: Text(
-                item.status,
+                _shownStatus(item),
                 style: TextStyle(
                   fontSize: 10,
                   fontWeight: FontWeight.w900,
-                  color: item.statusColor,
+                  color: _shownStatusColor(item),
                 ),
               ),
             ),
@@ -12796,7 +12929,7 @@ class _CompactCommitmentHeader extends StatelessWidget {
             style: const TextStyle(
               fontSize: 10,
               fontWeight: FontWeight.w800,
-              color: Color(0xFFA6691A),
+              color: _kDelegationRoleColor,
             ),
           ),
         ],
@@ -12855,15 +12988,15 @@ class _CompactCommitmentHeader extends StatelessWidget {
               Container(
                 padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
                 decoration: BoxDecoration(
-                  color: item.statusColor.withValues(alpha: 0.1),
+                  color: _shownStatusColor(item).withValues(alpha: 0.1),
                   borderRadius: BorderRadius.circular(8),
                 ),
                 child: Text(
-                  item.status,
+                  _shownStatus(item),
                   style: TextStyle(
                     fontSize: 10,
                     fontWeight: FontWeight.w900,
-                    color: item.statusColor,
+                    color: _shownStatusColor(item),
                   ),
                 ),
               ),
@@ -12957,6 +13090,16 @@ class _CompactCommitmentHeader extends StatelessWidget {
                         icon: item.status == 'مجمّدة'
                             ? Icons.play_circle_outline_rounded
                             : Icons.ac_unit_rounded,
+                      ),
+                    ),
+                  // بند مرتبط بسند قبض / راتب: السند نفسه كملف PDF.
+                  if ((item.details[SalaryIncomeSync.receiptKey] ?? '')
+                      .isNotEmpty)
+                    const PopupMenuItem(
+                      value: _CommitmentMenuAction.receiptPdf,
+                      child: _CommitmentMenuItem(
+                        label: 'سند القبض PDF',
+                        icon: Icons.picture_as_pdf_outlined,
                       ),
                     ),
                   const PopupMenuItem(
@@ -13358,9 +13501,9 @@ class _SummaryDetailsCard extends StatelessWidget {
         ),
         _UnifiedInfoRow(
           label: 'الحالة',
-          value: item.status,
+          value: _shownStatus(item),
           icon: Icons.verified_user_outlined,
-          valueColor: item.statusColor,
+          valueColor: _shownStatusColor(item),
         ),
         _UnifiedInfoRow(
           label: 'تاريخ الاستحقاق',
@@ -13648,9 +13791,9 @@ class _PlanningDetailsCard extends StatelessWidget {
         ],
         _UnifiedInfoRow(
           label: 'الحالة',
-          value: item.status,
+          value: _shownStatus(item),
           icon: Icons.flag_outlined,
-          valueColor: item.statusColor,
+          valueColor: _shownStatusColor(item),
         ),
       ],
     );
@@ -14027,7 +14170,7 @@ class _CommitmentCard extends StatelessWidget {
       footer: item.entryType == 'عهدة مالية'
           ? _custodyRoleText(item)
           : null,
-      statusColor: item.statusColor,
+      statusColor: _shownStatusColor(item),
       stats: [
         // الدين والقسط: المبلغ ثم المتبقي — التاريخ لا يفيد هنا بقدر ما
         // يفيد ما بقي في الذمة.
@@ -16071,6 +16214,7 @@ class _SubscriptionPayment {
 Color _personalStatusColor(String status) {
   return switch (status) {
     'متأخرة' => const Color(0xFFC4392E),
+    'منتهية' => const Color(0xFFC4392E),
     'قريبة الاستحقاق' => const Color(0xFFCE8422),
     // المكتمل أسود والمتأخر أحمر في كل التطبيق.
     'مكتملة' => const Color(0xFF1E2725),

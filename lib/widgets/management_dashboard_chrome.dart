@@ -759,7 +759,38 @@ class ManagementCompactCard extends StatelessWidget {
     this.categoryStatus,
     this.badge,
     this.badgeColor = const Color(0xFF6A4C93),
+    this.draftTag,
   });
+
+  /// وسم «مسودة» بجانب الحالة (شاغر / مؤجر) — ما حُفظ مسودة ولم يُعتمد.
+  final String? draftTag;
+
+  static const _draftColor = Color(0xFFA6691A);
+
+  Widget _draftPill() => Container(
+    padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+    decoration: BoxDecoration(
+      color: _draftColor.withValues(alpha: 0.13),
+      borderRadius: BorderRadius.circular(AppTheme.rPill),
+    ),
+    child: Text(
+      draftTag!,
+      maxLines: 1,
+      style: const TextStyle(
+        fontSize: 9.5,
+        fontWeight: FontWeight.w900,
+        color: _draftColor,
+      ),
+    ),
+  );
+
+  bool get _hasDraft => draftTag != null && draftTag!.trim().isNotEmpty;
+
+  /// «مسودة» بجانب الحالة أينما كُتبت: في سطر النوع إن كانت الحالة فيه
+  /// (العقار)، وإلا تحت وسم الحالة في الطرف (المركبة والنشاط).
+  bool get _draftInCategoryRow =>
+      _hasDraft &&
+      ((categoryStatus?.trim().isNotEmpty ?? false) || status.trim().isEmpty);
 
   /// وسم صغير بجانب الاسم («مفوَّض أنا بإدارته» مثلًا).
   final String? badge;
@@ -903,6 +934,10 @@ class ManagementCompactCard extends StatelessWidget {
                               ),
                             )),
                           ),
+                          if (_draftInCategoryRow) ...[
+                            const SizedBox(width: 6),
+                            _draftPill(),
+                          ],
                           if (categoryStatus != null &&
                               categoryStatus!.trim().isNotEmpty) ...[
                             const SizedBox(width: 6),
@@ -1014,6 +1049,11 @@ class ManagementCompactCard extends StatelessWidget {
                         ),
                       )),
                     ),
+                    // «مسودة» تحت وسم الحالة (شاغر / مؤجر).
+                    if (_hasDraft && !_draftInCategoryRow) ...[
+                      const SizedBox(height: 4),
+                      _draftPill(),
+                    ],
                     if (trailingNote != null &&
                         trailingNote!.trim().isNotEmpty) ...[
                       const SizedBox(height: 5),

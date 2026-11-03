@@ -19,6 +19,7 @@ import '../data/project_assets_repository.dart';
 import '../data/delegated_assets.dart';
 import '../widgets/detail_page_chrome.dart';
 import '../data/lease_contract_data.dart';
+import '../data/entry_status.dart';
 import '../data/people_directory_store.dart';
 import '../data/document_store.dart';
 import 'lease_contract_form_screen.dart';
@@ -27,6 +28,9 @@ import 'asset_records_screen.dart';
 import 'global_summary_screen.dart';
 import 'document_templates_screen.dart';
 import 'smart_calendar_screen.dart';
+import 'template_print_screen.dart' show TemplatePrintScreen;
+import '../widgets/shared/location_picker.dart';
+import '../widgets/shared/clear_date_suffix.dart';
 import '../widgets/management_dashboard_chrome.dart';
 import '../widgets/shared/app_design.dart';
 import '../data/subscription_plans.dart';
@@ -491,11 +495,11 @@ class _ProjectsActivitiesScreenState extends State<ProjectsActivitiesScreen> {
   /// العقد الساري: لم ينتهِ بعد. وأقربها انتهاءً هو الذي يُعرض، لأنه أول
   /// ما يحتاج تجديدًا.
   PropertyUnitContractRecord? _activeContractOf(_AssetItem item) {
-    final now = DateTime.now();
     PropertyUnitContractRecord? best;
     for (final contract in _contractsOf(item)) {
       final end = contract.endDate;
-      if (end != null && end.isBefore(now)) continue;
+      // يوم الانتهاء نفسه ما زال ساريًا.
+      if (_contractEndedByDate(contract)) continue;
       if (best == null) {
         best = contract;
         continue;
@@ -519,13 +523,10 @@ class _ProjectsActivitiesScreenState extends State<ProjectsActivitiesScreen> {
 
   /// مفاتيح الوحدات التي عليها عقد سارٍ (المسودة لا تجعل الوحدة مؤجرة).
   Set<String> _leasedUnitKeysOf(_AssetItem item) {
-    final now = DateTime.now();
+    // يوم انتهاء العقد نفسه ما زال مؤجرًا (مقارنة بالتاريخ لا بالساعة).
     return {
       for (final contract in _contractsOf(item))
-        if (!_contractClosed(contract) &&
-            contract.status != PropertyUnitContractRecord.statusPending &&
-            (contract.endDate == null || !contract.endDate!.isBefore(now)))
-          contract.unitKey,
+        if (_contractHolds(contract)) contract.unitKey,
     };
   }
 
@@ -701,9 +702,16 @@ class _ProjectsActivitiesScreenState extends State<ProjectsActivitiesScreen> {
       owner: item.owner,
       tenant: item.tenant,
       rentValue: item.rentValue,
+      // سنة-شهر-يوم دائمًا: التاريخ بصيغة يوم/شهر/سنة (رخصة النشاط، ملكية
+      // المركبة) كان يُرفض فيُحفظ فارغًا.
       endDate: item.endDate == 'غير محدد'
           ? null
-          : item.endDate.replaceAll('/', '-'),
+          : () {
+              final d = _parseAssetDate(item.endDate.trim());
+              if (d == null) return item.endDate.replaceAll('/', '-');
+              String two(int v) => v.toString().padLeft(2, '0');
+              return '${d.year}-${two(d.month)}-${two(d.day)}';
+            }(),
       annualYield: item.annualYield,
       occupancyRate: item.occupancyRate,
       contractProgress: item.contractProgress,
@@ -787,8 +795,14 @@ class _ProjectsActivitiesScreenState extends State<ProjectsActivitiesScreen> {
     // الصيانة تُضاف إلى حالة الإيجار ولا تحلّ محلها: «شاغر / صيانة».
     String withMaint(String s) => openMaintenance ? '$s / صيانة' : s;
     if (item.category == 'equipment') {
+      final contracts = _contractsOf(item);
       return withMaint(
-        _contractsOf(item).any(_contractHolds) ? 'مؤجر' : 'شاغر',
+        contracts.any(_contractHolds)
+            ? 'مؤجر'
+            // انتهت مدة العقد ولم يُلغَ / يُجدَّد بعد.
+            : contracts.any(_contractEndedOpen)
+            ? 'منتهي العقد'
+            : 'شاغر',
       );
     }
     if (item.category != 'real_estate') {
@@ -799,11 +813,14 @@ class _ProjectsActivitiesScreenState extends State<ProjectsActivitiesScreen> {
     String withPropMaint(String s) => inMaint ? '$s / صيانة' : s;
     final leasedKeys = _leasedUnitKeysOf(item);
     if (item.units.isNotEmpty) {
+      // الحالة المحفوظة في الوحدة لا تُعتمد إلا لعقار بلا عقود مسجّلة
+      // (بيانات قديمة)، و«مؤجرة» وحدها تعني مؤجرة — المسودة والمنتهي لا.
+      final noContracts = _contractsOf(item).isEmpty;
       final leased = item.units
           .where(
             (unit) =>
                 leasedKeys.contains(unit.unitKey) ||
-                (leasedKeys.isEmpty && unit.status != 'شاغرة'),
+                (noContracts && unit.status == 'مؤجرة'),
           )
           .length;
       if (leased == 0) return withPropMaint('شاغر');
@@ -821,7 +838,7 @@ class _ProjectsActivitiesScreenState extends State<ProjectsActivitiesScreen> {
     return switch (label) {
       'ملغي' => const Color(0xFF8C3A32),
       'مجمّد' || 'مؤرشف' => const Color(0xFF5C6B68),
-      'صيانة' || 'متابعة' => const Color(0xFFC4392E),
+      'صيانة' || 'متابعة' || 'منتهي العقد' => const Color(0xFFC4392E),
       'شاغر' => _kVacantColor,
       'مؤجر جزئيًا' => _kPartlyLeasedColor,
       _ => const Color(0xFF34A894),
@@ -1451,9 +1468,15 @@ class _ProjectsActivitiesScreenState extends State<ProjectsActivitiesScreen> {
         for (final contract in _contractsOf(item)) {
           final id = contract.id;
           if (id == null) continue;
+          // المسودة لم تُعتمد بعد: دفعاتها ليست مستحقة.
+          if (contract.status == PropertyUnitContractRecord.statusPending) {
+            continue;
+          }
           for (final payment in _paymentsByContract[id] ?? const []) {
             final remaining = payRemaining(payment);
             if (remaining <= 0) continue;
+            // سقطت بإلغاء العقد / تسويته: لا تُتابَع (كما في صفحة الأصل).
+            if (paymentWaivedByClosure(contract, payment)) continue;
             final due = payment.dueDate;
             final stage = moneyStage(due);
             if (stage == null || due == null) continue;
@@ -1635,6 +1658,11 @@ class _ProjectsActivitiesScreenState extends State<ProjectsActivitiesScreen> {
         if (kind != 'تذكير') continue;
         // عقد إيجار انتهى أو ينتهي خلال أسبوع: يحتاج تجديدًا أو إخلاءً.
         for (final contract in _contractsOf(item)) {
+          // المُغلق (ملغي / مُجدَّد / منتهٍ بتسوية) والمسودة لا يُذكَّر بهما.
+          if (_contractClosed(contract) ||
+              contract.status == PropertyUnitContractRecord.statusPending) {
+            continue;
+          }
           final end = contract.endDate;
           final stage = planStage(end);
           if (stage == null || end == null) continue;
@@ -1684,8 +1712,11 @@ class _ProjectsActivitiesScreenState extends State<ProjectsActivitiesScreen> {
     // ---- صيانة: ما موعده اليوم أو خلال أسبوع ----
     List<FollowUpEntry> maintenance(List<_AssetItem> scoped) {
       final items = <(String, DateTime, FollowUpEntry)>[];
-      void add(String title, DateTime? date, String place) {
-        if (date == null || daysTo(date) < 0) return;
+      void add(String title, DateTime? date, String place, String state) {
+        // المنتهية لا تُتابَع، والمفتوحة («تحت الصيانة») التي فات موعدها
+        // تبقى «متأخرة».
+        if (state == _kMaintDone || date == null) return;
+        if (daysTo(date) < 0 && state != _kMaintOpen) return;
         final stage = planStage(date);
         if (stage == null) return;
         items.add((
@@ -1712,6 +1743,7 @@ class _ProjectsActivitiesScreenState extends State<ProjectsActivitiesScreen> {
                 '${entry['الوصف'] ?? ''}'.trim(),
                 flexDate('${entry['التاريخ'] ?? ''}'),
                 '${unit.name} · ${item.title}',
+                '${entry[_kMaintStateKey] ?? ''}'.trim(),
               );
             }
           } catch (_) {
@@ -1725,6 +1757,7 @@ class _ProjectsActivitiesScreenState extends State<ProjectsActivitiesScreen> {
             flexDate(entry.data['تاريخ التنفيذ'] ?? entry.data['التاريخ']) ??
                 flexDate(entry.data['تاريخ الطلب']),
             item.title,
+            (entry.data[_kMaintStateKey] ?? '').trim(),
           );
         }
       }
@@ -2271,9 +2304,12 @@ class _ProjectsActivitiesScreenState extends State<ProjectsActivitiesScreen> {
       title: result.name.isNotEmpty
           ? result.name
           : (result.description.isEmpty ? 'عقار جديد' : result.description),
-      subType: result.units.length > 1
-          ? 'عمارة'
-          : (result.units.isNotEmpty ? result.units.first.type : propertyType),
+      // نوع العقار المختار (فيلا بوحدتين تبقى «فيلا» لا «عمارة»).
+      subType: propertyType.trim().isNotEmpty
+          ? propertyType
+          : (result.units.length > 1
+                ? 'عمارة'
+                : (result.units.isNotEmpty ? result.units.first.type : '')),
       category: 'real_estate',
       isSublease: isSublease,
       locationOrType: result.address.isEmpty ? 'غير محدد' : result.address,
@@ -2949,6 +2985,11 @@ class _ProjectsActivitiesScreenState extends State<ProjectsActivitiesScreen> {
                               // العقار: شاغر / مؤجر يسار السطر الثاني بلونه.
                               categoryStatus: item.category == 'real_estate'
                                   ? _assetStatusLabel(item)
+                                  : null,
+                              // محفوظ مسودة: «مسودة» بجانب «شاغر».
+                              draftTag: _hasDraftContract(item) &&
+                                      !_isCancelledAsset(item)
+                                  ? 'مسودة'
                                   : null,
                               // سهم لليسار يوضح الدخول للعنصر.
                               showChevron: true,
@@ -4741,6 +4782,10 @@ class _ProjectAssetDetailsScreenState extends State<ProjectAssetDetailsScreen> {
   /// مستحق يحتاج متابعة على عقد قائم (غير ملغي ولا منتهٍ).
   bool _isCurrentDue(RentPaymentEntry entry) {
     if (_contractClosed(entry.contract)) return false;
+    // المسودة لم تُعتمد بعد: دفعاتها ليست مستحقة.
+    if (entry.contract.status == PropertyUnitContractRecord.statusPending) {
+      return false;
+    }
     final label = rentPaymentStatusLabel(entry.payment);
     return label == 'مستحقة' || label == 'متأخرة';
   }
@@ -4769,7 +4814,11 @@ class _ProjectAssetDetailsScreenState extends State<ProjectAssetDetailsScreen> {
       if (raw.isEmpty) return false;
       final parsed = _parseFlexibleDate(raw);
       if (parsed == null) return false;
-      return parsed.difference(now).inDays <= 30;
+      // بالتاريخ لا بالساعة (كان يُدخل ما ينتهي بعد 31 يومًا).
+      return DateUtils.dateOnly(parsed)
+              .difference(DateUtils.dateOnly(now))
+              .inDays <=
+          30;
     }).toList(growable: false);
   }
 
@@ -5386,6 +5435,13 @@ class _ProjectAssetDetailsScreenState extends State<ProjectAssetDetailsScreen> {
     // (التأكيد تمّ في قائمة الثلاث نقاط نفسها.)
     if (action == ThreeDotMenuAction.delete) {
       final label = _singularCategoryLabel(_item.category);
+      final blocked = _cancelBlockedMessage;
+      if (blocked != null) {
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(content: Text(blocked), behavior: SnackBarBehavior.floating),
+        );
+        return;
+      }
       if (!_isCancelledAsset(_item)) {
         // تاريخ الإلغاء يُحفظ ويظهر تحت الحالة في القائمة.
         final now = DateTime.now();
@@ -6080,11 +6136,19 @@ class _ProjectAssetDetailsScreenState extends State<ProjectAssetDetailsScreen> {
     Map<String, String>? existing,
     int? index,
   }) async {
-    final row = await _showMaintenanceSheetShared(
+    final sheet = await _showMaintenanceSheetShared(
       context,
       existing: existing == null ? null : _maintenanceCompat(existing),
     );
-    if (row == null || !mounted) return;
+    if (sheet == null || !mounted) return;
+    // التعديل يحمل معرّف السجل وتذكيره: يُحدَّث نفس السجل على الخادم بدل
+    // إضافة نسخة ثانية في كل تعديل.
+    final row = <String, String>{
+      ...sheet,
+      for (final key in const ['_id', '_reminder_id'])
+        if ((existing?[key] ?? '').isNotEmpty && (sheet[key] ?? '').isEmpty)
+          key: existing![key]!,
+    };
     _persistEntry(
       _groups.firstWhere((g) => g.kind == _entryKindMaintenance),
       row,
@@ -7265,6 +7329,8 @@ class _ProjectAssetDetailsScreenState extends State<ProjectAssetDetailsScreen> {
                   ].join(' / '),
                   statusLabel: _assetStatusFromUnits(item),
                   statusColor: _assetStatusColorFromUnits(item),
+                  isDraft: _assetHasDraft,
+                  cancelBlockedMessage: _cancelBlockedMessage,
                   dueCount: _dueFollowUpCount,
                   oldDuesCount: _oldDuesCount,
                   docsCount: _docsFollowUp.length,
@@ -7495,9 +7561,8 @@ child: ListView(
     final status = _effectiveUnitStatus(unit);
     return switch (_unitStatusFilter) {
       'شاغرة' => status == 'شاغرة' && !_unitIsCancelled(unit),
-      'مؤجرة' => status != 'شاغرة' &&
-          status != 'مسودة' &&
-          !_unitIsCancelled(unit),
+      // «مؤجرة» وحدها (لا المجمّدة ولا منتهي العقد).
+      'مؤجرة' => status == 'مؤجرة' && !_unitIsCancelled(unit),
       'مسودة' => status == 'مسودة' && !_unitIsCancelled(unit),
       'ملغاة' => _unitContractCancelled(unit),
       _ => true,
@@ -8484,13 +8549,12 @@ child: ListView(
   /// الشاشات.
   String _effectiveUnitStatus(_PropertyUnit unit) {
     if (unit.status.contains('ملغ')) return unit.status;
-    final now = DateTime.now();
     PropertyUnitContractRecord? found;
     var draft = false;
     for (final contract in _unitContracts) {
       if (contract.unitKey != unit.unitKey) continue;
-      final end = contract.endDate;
-      if (!_contractClosed(contract) && (end == null || !end.isBefore(now))) {
+      // يوم انتهاء العقد نفسه ما زال مؤجرًا (مقارنة بالتاريخ لا بالساعة).
+      if (!_contractClosed(contract) && !_contractEndedByDate(contract)) {
         // عقد ناقص محفوظ كمسودة: الوحدة لم تُؤجَّر بعد.
         if (contract.status == PropertyUnitContractRecord.statusPending) {
           draft = true;
@@ -8508,6 +8572,42 @@ child: ListView(
         : 'شاغرة';
   }
 
+  /// عقد محفوظ مسودة (لم يُعتمد ولم يُغلق) — نفس تعريف فلتر «مسودة» في
+  /// القائمة.
+  bool get _assetHasDraft => _unitContracts.any(
+    (contract) =>
+        contract.status == PropertyUnitContractRecord.statusPending &&
+        !_contractClosed(contract),
+  );
+
+  /// لا يُلغى العقار / المركبة / النشاط وعليه عقد إيجار ساري (معتمد ولم
+  /// يُسوَّ ويُغلق بعد، ولو انتهت مدته): التسوية والإلغاء من «إدارة التأجير»
+  /// أولًا. null: لا مانع.
+  String? get _cancelBlockedMessage {
+    if (_isCancelledAsset(_item)) return null;
+    final live = _unitContracts
+        .where(
+          (contract) =>
+              !_contractClosed(contract) &&
+              contract.status != PropertyUnitContractRecord.statusPending,
+        )
+        .toList(growable: false);
+    if (live.isEmpty) return null;
+    final tenants = {
+      for (final contract in live)
+        if ((contract.tenantName ?? '').trim().isNotEmpty)
+          contract.tenantName!.trim(),
+    };
+    final where = switch (_item.category) {
+      'equipment' => '«إدارة التأجير»',
+      'activity' => '«إدارة النشاط»',
+      _ => '«إدارة الإيجار» في الوحدة',
+    };
+    return 'لا يمكن إلغاء «${_item.title}» الآن: عليه عقد إيجار ساري'
+        '${tenants.isEmpty ? '' : ' (المستأجر: ${tenants.join('، ')})'}.\n'
+        'قم بتسوية عقد الإيجار الساري وإلغائه أولًا من $where، ثم ألغِ.';
+  }
+
   /// صيانة مفتوحة («تحت الصيانة») في قسم الصيانة.
   bool get _hasOpenMaintenance =>
       (_entriesByKind[_entryKindMaintenance] ?? const <Map<String, String>>[])
@@ -8518,7 +8618,12 @@ child: ListView(
   String get _equipStatusLabel {
     if (_isCancelledAsset(_item)) return 'ملغي';
     if (_item.status == 'مؤرشف') return 'مؤرشف';
-    final base = _equipContracts.any(_contractHolds) ? 'مؤجر' : 'شاغر';
+    final base = _equipContracts.any(_contractHolds)
+        ? 'مؤجر'
+        // انتهت مدة العقد ولم يُلغَ / يُجدَّد بعد.
+        : _equipContracts.any(_contractEndedOpen)
+        ? 'منتهي العقد'
+        : 'شاغر';
     // الصيانة تُضاف إلى حالة الإيجار: «شاغر / صيانة» أو «مؤجر / صيانة».
     return _hasOpenMaintenance ? '$base / صيانة' : base;
   }
@@ -8533,7 +8638,7 @@ child: ListView(
       : switch (_equipStatusLabel) {
     'ملغي' => const Color(0xFF8C3A32),
     'مجمّد' || 'مؤرشف' => const Color(0xFF5C6B68),
-    'صيانة' => const Color(0xFFC4392E),
+    'صيانة' || 'منتهي العقد' => const Color(0xFFC4392E),
     'شاغر' => _kVacantColor,
     _ => const Color(0xFF34A894),
   };
@@ -8548,13 +8653,12 @@ child: ListView(
         item.needsAttention || item.status == 'صيانة' || _hasOpenMaintenance;
     String withMaint(String s) => inMaint ? '$s / صيانة' : s;
     if (item.units.isEmpty) {
+      // المسودة لا تجعل العقار مؤجرًا.
       return withMaint(
-        _unitContracts.any(
-              (c) =>
-                  !_contractClosed(c) &&
-                  (c.endDate == null || !c.endDate!.isBefore(DateTime.now())),
-            )
+        _unitContracts.any(_contractHolds)
             ? 'مؤجر'
+            : _unitContracts.any(_contractEndedOpen)
+            ? 'منتهي العقد'
             : 'شاغر',
       );
     }
@@ -8571,7 +8675,7 @@ child: ListView(
       : switch (_assetStatusFromUnits(item)) {
         'ملغي' => const Color(0xFF8C3A32),
         'مجمّد' || 'مؤرشف' => const Color(0xFF5C6B68),
-        'صيانة' => const Color(0xFFC4392E),
+        'صيانة' || 'منتهي العقد' => const Color(0xFFC4392E),
         'شاغر' => _kVacantColor,
         'مؤجر جزئيًا' => _kPartlyLeasedColor,
         _ => const Color(0xFF34A894),
@@ -9017,8 +9121,26 @@ child: ListView(
   /// أعلى الصفحة تحمل بقية الأوامر — زرّان لمعنى واحد في شاشة واحدة.
   List<ThreeDotExtraAction> _topMenuExtraActions() {
     // المركبات: «تعديل بيانات» في مكانه بالقائمة (تعديل، مشاركة، إلغاء،
-    // أرشيف، تفويض آخرين) — لا أمرًا إضافيًا أعلاها.
-    if (_item.category == 'equipment') return const [];
+    // أرشيف، تفويض آخرين). في «إدارة التأجير» وحدها: «تعديل عقد التأجير» —
+    // «العقد كامل» للعرض والمشاركة فقط.
+    if (_item.category == 'equipment') {
+      final contract = _equipContract;
+      final delegation = DelegatedAssets.of(_item.id);
+      if (_selectedTab != 1 ||
+          contract == null ||
+          !_isLeaseContract(contract) ||
+          _contractClosed(contract) ||
+          (delegation != null && !delegation.canEdit)) {
+        return const [];
+      }
+      return [
+        ThreeDotExtraAction(
+          label: 'تعديل عقد التأجير',
+          icon: Icons.edit_note_rounded,
+          onSelected: () => _openEquipContractForm(existing: contract),
+        ),
+      ];
+    }
     if (_item.category == 'activity') {
       // النشاط الرئيسي: «إضافة فرع» مع «الفروع» كما «إضافة وحدة» مع
       // «الوحدات»، و«إضافة موظف» مع «الأفراد والجهات».
@@ -9920,11 +10042,12 @@ child: ListView(
               amountLabel: _item.amountLabel,
               followupNote: 'فرع تابع للنشاط الرئيسي: ${_item.title}',
               owner: _item.owner,
-              endDate: licenseEnd.isNotEmpty
-                  ? licenseEnd.replaceAll('/', '-')
-                  : (_item.endDate == 'غير محدد'
-                        ? null
-                        : _item.endDate.replaceAll('/', '-')),
+              // سنة-شهر-يوم (يوم/شهر/سنة كان يُرفض فيُحفظ فارغًا).
+              endDate: _isoAssetDate(
+                licenseEnd.isNotEmpty
+                    ? licenseEnd
+                    : (_item.endDate == 'غير محدد' ? '' : _item.endDate),
+              ),
               description: _item.description,
               serialNumber: 'branch:$id',
             );
@@ -10010,6 +10133,7 @@ child: ListView(
                   statusColor: item.isFrozen
                       ? const Color(0xFF8C9A97)
                       : const Color(0xFF0E7161),
+                  cancelBlockedMessage: _cancelBlockedMessage,
                   dueCount: _dueFollowUpCount,
                   oldDuesCount: _oldDuesCount,
                   docsCount: _docsFollowUp.length,
@@ -11134,7 +11258,14 @@ child: ListView(
                             foregroundColor: Colors.white,
                             minimumSize: const Size(0, 48),
                           ),
-                          onPressed: () => Share.share(text),
+                          onPressed: () => printOrShareLeaseContract(
+                            sheetContext,
+                            contract: contract,
+                            text: text,
+                            fileName: 'عقد-${_item.title}',
+                            activity: true,
+                            assetMeta: _item.propertyMeta,
+                          ),
                           icon: const Icon(Icons.print_outlined, size: 18),
                           label: const Text('طباعة / مشاركة'),
                         ),
@@ -11639,7 +11770,13 @@ child: ListView(
         endDate: of(_EquipKeys.ownershipEnd).isEmpty
             ? 'غير محدد'
             : of(_EquipKeys.ownershipEnd),
-        tenant: of(_EquipKeys.company).isEmpty
+        // المستأجر من عقد التأجير القائم لا يُستبدل بتعديل بيانات المركبة.
+        tenant: _equipContract != null &&
+                _contractHolds(_equipContract!) &&
+                _item.tenant.trim().isNotEmpty &&
+                _item.tenant != 'غير محدد'
+            ? _item.tenant
+            : of(_EquipKeys.company).isEmpty
             ? 'غير محدد'
             : of(_EquipKeys.company),
         locationOrType: of(_EquipKeys.projectLocation).isEmpty
@@ -11992,7 +12129,12 @@ child: ListView(
             );
           }
 
-          Widget box(String text, IconData icon, VoidCallback onTap) =>
+          Widget box(
+            String text,
+            IconData icon,
+            VoidCallback onTap, {
+            VoidCallback? onClear,
+          }) =>
               InkWell(
                 onTap: onTap,
                 borderRadius: BorderRadius.circular(AppTheme.rInner),
@@ -12022,6 +12164,21 @@ child: ListView(
                           ),
                         ),
                       ),
+                      // بعد الاختيار: × يمسح التاريخ / الساعة.
+                      if (onClear != null)
+                        InkWell(
+                          onTap: onClear,
+                          customBorder: const CircleBorder(),
+                          child: Padding(
+                            padding: const EdgeInsets.all(2),
+                            child: Icon(
+                              Icons.close_rounded,
+                              size: 16,
+                              color: AppTheme.muted,
+                              semanticLabel: AppTr.tr('مسح التاريخ'),
+                            ),
+                          ),
+                        ),
                     ],
                   ),
                 ),
@@ -12118,6 +12275,9 @@ child: ListView(
                             startDate.isEmpty ? 'التاريخ' : startDate,
                             Icons.calendar_today_rounded,
                             () => pickDate((v) => startDate = v),
+                            onClear: startDate.isEmpty
+                                ? null
+                                : () => setSheet(() => startDate = ''),
                           ),
                         ),
                         const SizedBox(width: 8),
@@ -12126,6 +12286,9 @@ child: ListView(
                             startTime.isEmpty ? 'الساعة' : startTime,
                             Icons.schedule_rounded,
                             () => pickTime((v) => startTime = v),
+                            onClear: startTime.isEmpty
+                                ? null
+                                : () => setSheet(() => startTime = ''),
                           ),
                         ),
                       ],
@@ -12140,6 +12303,9 @@ child: ListView(
                             endDate.isEmpty ? 'التاريخ' : endDate,
                             Icons.calendar_today_rounded,
                             () => pickDate((v) => endDate = v),
+                            onClear: endDate.isEmpty
+                                ? null
+                                : () => setSheet(() => endDate = ''),
                           ),
                         ),
                         const SizedBox(width: 8),
@@ -12148,6 +12314,9 @@ child: ListView(
                             endTime.isEmpty ? 'الساعة' : endTime,
                             Icons.schedule_rounded,
                             () => pickTime((v) => endTime = v),
+                            onClear: endTime.isEmpty
+                                ? null
+                                : () => setSheet(() => endTime = ''),
                           ),
                         ),
                       ],
@@ -12177,7 +12346,23 @@ child: ListView(
                     ),
                     const SizedBox(height: 16),
                     FilledButton(
-                      onPressed: () => Navigator.of(sheetContext).pop(true),
+                      onPressed: () {
+                        // الإغلاق لا يسبق البدء.
+                        final from = entryParseDay(startDate);
+                        final to = entryParseDay(endDate);
+                        if (from != null && to != null && to.isBefore(from)) {
+                          ScaffoldMessenger.of(sheetContext).showSnackBar(
+                            const SnackBar(
+                              content: Text(
+                                'تاريخ الإغلاق قبل تاريخ البدء — صحّح التاريخين',
+                              ),
+                              behavior: SnackBarBehavior.floating,
+                            ),
+                          );
+                          return;
+                        }
+                        Navigator.of(sheetContext).pop(true);
+                      },
                       style: FilledButton.styleFrom(
                         backgroundColor: _kEquipmentColor,
                         foregroundColor: Colors.white,
@@ -12894,10 +13079,15 @@ child: ListView(
   /// «السجل التاريخي» وعلى رابطه في الحركات المالية.
   double get _historyDues {
     final today = DateUtils.dateOnly(DateTime.now());
+    // العنصر الملغى: كل أموره صارت في «السجل التاريخي»، ومنها عقوده التي
+    // لم تُغلق بعد.
+    final cancelled = _isCancelledAsset(_item);
     var total = 0.0;
     for (final entry in _propertyPayments) {
       final c = entry.contract;
-      if (!_contractClosed(c) && !_contractEndedByDate(c)) continue;
+      if (!cancelled && !_contractClosed(c) && !_contractEndedByDate(c)) {
+        continue;
+      }
       if (LeaseContractData.isSettled(c.notes)) continue;
       final due = entry.payment.dueDate;
       if (due == null || DateUtils.dateOnly(due).isAfter(today)) continue;
@@ -12907,7 +13097,15 @@ child: ListView(
   }
 
   bool get _historyNeedsAttention =>
-      _historyDues > 0.009 || _oldDuesCount > 0;
+      _historyDues > 0.009 ||
+      _oldDuesCount > 0 ||
+      // عنصر ملغى وعليه عقد ساري لم يُسوَّ ويُغلق: يحتاج متابعة.
+      (_isCancelledAsset(_item) &&
+          _unitContracts.any(
+            (c) =>
+                !_contractClosed(c) &&
+                c.status != PropertyUnitContractRecord.statusPending,
+          ));
 
   /// العقود السابقة ومبالغها صارت في «السجل التاريخي»: هنا رابط واضح إليه
   /// (أحمر إن كانت هناك مبالغ متأخرة تحتاج تسوية).
@@ -13517,8 +13715,29 @@ child: ListView(
   Future<void> _openEquipFullContract(
     PropertyUnitContractRecord contract,
   ) async {
+    // عقد التأجير: عرض فقط بنموذج العقد المعتمد (PDF) مع الطباعة والمشاركة
+    // كملف PDF — التعديل من ⋮ «تعديل عقد التأجير» في «إدارة التأجير».
     if (_isLeaseContract(contract)) {
-      await _openEquipContractForm(existing: contract);
+      final lease = LeaseContractData.decode(contract.notes);
+      final vehicleClass =
+          _item.propertyMeta[_EquipKeys.vehicleClass] ?? _kVehicleLand;
+      final title = 'عقد تأجير $vehicleClass';
+      final (_, assetMeta) = _vehicleLeaseFields();
+      final no = leaseContractNumber(contract);
+      await Navigator.of(context).push(
+        MaterialPageRoute<void>(
+          builder: (_) => TemplatePrintScreen(
+            title: title,
+            fileName: no.isEmpty ? title : '$title-$no',
+            buildPdf: (format) => buildLeasePdf(
+              lease,
+              format,
+              title: title,
+              assetMeta: assetMeta,
+            ),
+          ),
+        ),
+      );
       return;
     }
     final lines = _equipContractLines(contract);
@@ -14973,6 +15192,8 @@ child: ListView(
                       accentColor: _kEquipmentColor,
                       statusLabel: _equipStatusLabel,
                       statusColor: _equipStatusColor,
+                      isDraft: _assetHasDraft,
+                      cancelBlockedMessage: _cancelBlockedMessage,
                       showEdit: !_contractEndedOpen(_equipContract),
                       categoryLabel:
                           item.propertyMeta[_EquipKeys.vehicleClass] ??
@@ -15217,6 +15438,13 @@ child: ListView(
                 _EquipKeys.warrantyCertEnd,
               ),
               for (final path in otherDocs) _equipDocRow(path),
+              // إكسسوارات المركبة كما أُدخلت عند الإضافة: النوع × العدد.
+              for (final annex in item.annexes.entries)
+                _equipRow(
+                  'إكسسوار',
+                  '${annex.key} × ${annex.value}',
+                  Icons.extension_outlined,
+                ),
               // بيانات الآليات القديمة (قبل النموذج الجديد).
               if (meta.isEmpty) ...[
                 _equipRow('المورد', item.owner, Icons.local_shipping_outlined),
@@ -15424,6 +15652,7 @@ child: ListView(
                   deleteIcon: _assetDeleteIcon(item),
                   deleteMessage: _assetDeleteMessage(item),
                   deleteConfirmLabel: _assetDeleteConfirm(item),
+                  deleteBlockedMessage: _cancelBlockedMessage,
                 ),
               ),
               tabs: propertySections,
@@ -19174,13 +19403,42 @@ Widget? _delegationSummaryCard(String? assetId) {
       ),
     ),
   );
-  List<Widget> numbered(List<String> items) => [
-    for (var i = 0; i < items.length; i++)
-      Padding(
-        padding: const EdgeInsetsDirectional.only(start: 8),
-        child: line('${i + 1}. ${AppTr.tr(items[i])}'),
+  // سطر التفويض و«عرض التفاصيل» بجانبه: الوحدات والصلاحيات في نافذة.
+  Widget delegationRow(
+    String text, {
+    required List<String> units,
+    required List<String> permissions,
+  }) => Row(
+    textDirection: AppTr.uiDir,
+    crossAxisAlignment: CrossAxisAlignment.center,
+    children: [
+      Expanded(child: line(text, strong: true)),
+      Builder(
+        builder: (context) => InkWell(
+          borderRadius: BorderRadius.circular(AppTheme.rPill),
+          onTap: () => _showDelegationDetails(
+            context,
+            title: text,
+            units: units,
+            permissions: permissions,
+          ),
+          child: const Padding(
+            padding: EdgeInsets.symmetric(horizontal: 6, vertical: 4),
+            child: Text(
+              'عرض التفاصيل',
+              style: TextStyle(
+                fontSize: 11.5,
+                fontWeight: FontWeight.w900,
+                color: _kDelegatedColor,
+                decoration: TextDecoration.underline,
+                decorationColor: _kDelegatedColor,
+              ),
+            ),
+          ),
+        ),
       ),
-  ];
+    ],
+  );
   return Container(
     margin: const EdgeInsets.only(bottom: 12),
     padding: const EdgeInsets.all(12),
@@ -19214,33 +19472,110 @@ Widget? _delegationSummaryCard(String? assetId) {
           ],
         ),
         const SizedBox(height: 6),
-        if (incoming != null) ...[
-          line(
+        if (incoming != null)
+          delegationRow(
             '${AppTr.tr('مفوَّض أنا بإدارته')} — '
             '${AppTr.tr('من')}: ${incoming.owner}',
-            strong: true,
+            units: incoming.wholeAsset ? const <String>[] : incoming.unitRefs.toList(),
+            permissions: incoming.plainPermissions,
           ),
-          if (!incoming.wholeAsset)
-            line(
-              '${AppTr.tr('الوحدات المفوَّضة')}: '
-              '${incoming.unitRefs.join('، ')}',
-            ),
-          ...numbered(incoming.plainPermissions),
-        ],
         for (final d in outgoing) ...[
           const SizedBox(height: 4),
-          line(
+          delegationRow(
             '${AppTr.tr('فوّضت غيري بإدارته')} — '
             '${AppTr.tr('إلى')}: ${d.delegateName}',
-            strong: true,
+            units: d.wholeAsset ? const <String>[] : d.unitRefs.toList(),
+            permissions: d.permissions,
           ),
-          if (!d.wholeAsset)
-            line(
-              '${AppTr.tr('الوحدات المفوَّضة')}: ${d.unitRefs.join('، ')}',
-            ),
-          ...numbered(d.permissions),
         ],
       ],
+    ),
+  );
+}
+
+/// تفاصيل التفويض: الوحدات المفوَّضة (إن لم يكن على الأصل كله) والصلاحيات
+/// مرقّمة.
+Future<void> _showDelegationDetails(
+  BuildContext context, {
+  required String title,
+  required List<String> units,
+  required List<String> permissions,
+}) {
+  return showDialog<void>(
+    context: context,
+    builder: (dialogContext) => Directionality(
+      textDirection: AppTr.uiDir,
+      child: AlertDialog(
+        titlePadding: const EdgeInsetsDirectional.fromSTEB(18, 10, 6, 0),
+        title: Row(
+          children: [
+            const Icon(
+              Icons.verified_user_outlined,
+              size: 20,
+              color: _kDelegatedColor,
+            ),
+            const SizedBox(width: 6),
+            const Expanded(
+              child: Text(
+                'صلاحيات التفويض',
+                style: TextStyle(
+                  fontSize: 15,
+                  fontWeight: FontWeight.w900,
+                  color: _kDelegatedColor,
+                ),
+              ),
+            ),
+            IconButton(
+              tooltip: AppTr.tr('إغلاق'),
+              onPressed: () => Navigator.pop(dialogContext),
+              icon: const Icon(Icons.close_rounded),
+            ),
+          ],
+        ),
+        content: SingleChildScrollView(
+          child: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Text(
+                title,
+                style: const TextStyle(
+                  fontSize: 12.5,
+                  height: 1.5,
+                  fontWeight: FontWeight.w900,
+                  color: _kDelegatedColor,
+                ),
+              ),
+              if (units.isNotEmpty) ...[
+                const SizedBox(height: 6),
+                Text(
+                  '${AppTr.tr('الوحدات المفوَّضة')}: ${units.join('، ')}',
+                  style: const TextStyle(
+                    fontSize: 12,
+                    height: 1.5,
+                    fontWeight: FontWeight.w700,
+                    color: Color(0xFF2C3B38),
+                  ),
+                ),
+              ],
+              const SizedBox(height: 8),
+              for (var i = 0; i < permissions.length; i++)
+                Padding(
+                  padding: const EdgeInsets.only(bottom: 4),
+                  child: Text(
+                    '${i + 1}. ${AppTr.tr(permissions[i])}',
+                    style: const TextStyle(
+                      fontSize: 12.5,
+                      height: 1.5,
+                      fontWeight: FontWeight.w700,
+                      color: Color(0xFF2C3B38),
+                    ),
+                  ),
+                ),
+            ],
+          ),
+        ),
+      ),
     ),
   );
 }
@@ -19494,9 +19829,11 @@ Future<Map<String, String>?> _finishMaintenanceShared(
 }
 
 /// عقد قائم فعلًا (غير مغلق ولا مسودة) — يجعل الأصل «مؤجر».
+/// العقد قائم الآن: معتمد (لا مسودة)، لم يُغلق، ولم تمرّ نهايته.
 bool _contractHolds(PropertyUnitContractRecord c) =>
     !_contractClosed(c) &&
-    c.status != PropertyUnitContractRecord.statusPending;
+    c.status != PropertyUnitContractRecord.statusPending &&
+    !_contractEndedByDate(c);
 
 bool _contractClosed(PropertyUnitContractRecord c) =>
     c.status == PropertyUnitContractRecord.statusExpired ||
@@ -19524,8 +19861,9 @@ IconData _assetDeleteIcon(_AssetItem item) => _isCancelledAsset(item)
 String _assetDeleteMessage(_AssetItem item) => _isCancelledAsset(item)
     ? 'سيُنقل «${item.title}» إلى سلة المهملات، ومنها يمكن استعادته أو '
           'حذفه نهائيًا. هل تريد المتابعة؟'
-    : 'سيُلغى «${item.title}» ويبقى ظاهرًا بحالة «ملغي» وفي «السجل '
-          'التاريخي»، ولا يُحذف. هل تريد الإلغاء؟';
+    : 'إذا ألغيت «${item.title}» فلن تستطيع استعادته: يصبح «ملغي» وتنتقل '
+          'كل أموره (العقود والدفعات والمستندات) إلى «السجل التاريخي». '
+          'هل تريد الإلغاء؟';
 
 String _assetDeleteConfirm(_AssetItem item) =>
     _isCancelledAsset(item) ? 'نقل إلى السلة' : 'إلغاء العنصر';
@@ -20627,6 +20965,43 @@ Future<bool> openChequeActions({
   return true;
 }
 
+/// «طباعة / مشاركة» العقد كامل: نموذج العقد المعتمد (PDF) في معاينة
+/// الطباعة، ومنها الطباعة أو المشاركة كملف PDF — على أندرويد والآيفون.
+/// العقد القديم بلا بيانات تفصيلية يُشارك نصًّا كما كان.
+Future<void> printOrShareLeaseContract(
+  BuildContext context, {
+  required PropertyUnitContractRecord contract,
+  required String text,
+  required String fileName,
+  bool activity = false,
+  Map<String, String> assetMeta = const <String, String>{},
+}) async {
+  final lease = LeaseContractData.decode(contract.notes);
+  if (lease.isEmpty) {
+    await Share.share(text);
+    return;
+  }
+  final title = activity
+      ? 'عقد إيجار النشاط التجاري'
+      : (lease.isInvestor ? 'عقد مستثمر' : 'عقد الإيجار');
+  final clean = fileName.replaceAll(RegExp(r'[\\/:*?"<>|\n\r]+'), '-').trim();
+  await Navigator.of(context).push(
+    MaterialPageRoute<void>(
+      builder: (_) => TemplatePrintScreen(
+        title: title,
+        fileName: clean.isEmpty ? title : clean,
+        buildPdf: (format) => buildLeasePdf(
+          lease,
+          format,
+          title: title,
+          activity: activity,
+          assetMeta: assetMeta,
+        ),
+      ),
+    ),
+  );
+}
+
 /// رقم العقد كما يُعرض: المكتوب في العقد، وإلا رقم مشتق من معرّفه.
 /// «تحميل» العقد كامل: ملف PDF بالعقد يُفتح له نافذة النظام فيُحفظ في
 /// الملفات/التنزيلات أو يُرسل. كان يُكتب ملفًا نصيًّا داخل مساحة التطبيق
@@ -21693,8 +22068,11 @@ class _AddPropertyStep1ScreenState extends State<_AddPropertyStep1Screen> {
 
   bool get _entryIsFacility => _facilities.contains(_selectedEntry);
 
-  _UnitEntryForm get _form =>
-      _forms.putIfAbsent(_selectedEntry, _UnitEntryForm.new);
+  _UnitEntryForm get _form => _forms.putIfAbsent(
+    _selectedEntry,
+    () => _UnitEntryForm()
+      ..firstNumber.text = '${_nextUnitNumber(_units, _selectedEntry)}',
+  );
 
   @override
   void dispose() {
@@ -21736,6 +22114,19 @@ class _AddPropertyStep1ScreenState extends State<_AddPropertyStep1Screen> {
     final baseName = form.name.text.trim().isEmpty
         ? type
         : form.name.text.trim();
+    final duplicates = _duplicateUnitNames(_units, type, baseName, first, count);
+    if (duplicates.isNotEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        SnackBar(
+          content: Text(
+            'موجودة مسبقًا: ${duplicates.take(5).join('، ')} — '
+            'غيّر رقم البداية (المتاح ${_nextUnitNumber(_units, type)})',
+          ),
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+      return;
+    }
     final showFull = type == _kUnitFullFloor;
     final residential = _unitTypeIsResidential(type);
     final hasRooms = _unitTypeHasRooms(type);
@@ -21935,8 +22326,16 @@ class _AddPropertyStep1ScreenState extends State<_AddPropertyStep1Screen> {
       MaterialPageRoute(
         builder: (_) => _PropertyReviewScreen(
           description: _descriptionCtrl.text.trim(),
-          address: _addressCtrl.text.trim(),
-          mapLink: _mapLinkCtrl.text.trim(),
+          // المختار من الخريطة: عنوانه ورابطه. المكتوب بلا اختيار: الرابط
+          // رابطًا، واسم المنطقة عنوانًا.
+          address: _addressCtrl.text.trim().isNotEmpty
+              ? _addressCtrl.text.trim()
+              : (_looksLikeLink(_mapLinkCtrl.text)
+                    ? ''
+                    : _mapLinkCtrl.text.trim()),
+          mapLink: _looksLikeLink(_mapLinkCtrl.text)
+              ? _mapLinkCtrl.text.trim()
+              : '',
           quickAddEnabled: true,
           units: List<_PropertyUnit>.from(_units),
           name: _nameCtrl.text.trim(),
@@ -22067,6 +22466,50 @@ class _AddPropertyStep1ScreenState extends State<_AddPropertyStep1Screen> {
 
   /// يفتح خرائط جوجل: على الرابط الملصوق إن كان رابطًا، وإلا بحثًا عن
   /// العنوان المكتوب في حقل العنوان.
+  /// رابط المكان المختار من الخريطة (فارغ: لم يُختر أو عُدِّل الحقل بعده).
+  String _pickedLink = '';
+
+  /// المكتوب رابط لا اسم منطقة؟
+  static bool _looksLikeLink(String text) {
+    final t = text.trim().toLowerCase();
+    return t.startsWith('http') ||
+        t.startsWith('www.') ||
+        t.contains('maps.') ||
+        t.contains('goo.gl') ||
+        _parseLatLngFromMapLink(t) != null;
+  }
+
+  /// الخريطة داخل التطبيق: يُبحث فيها عن المكتوب (أو يُفتح على الرابط)،
+  /// ويُثبَّت الدبوس، ثم «اختيار» يعيد العنوان والرابط والمدينة والمنطقة.
+  Future<void> _pickPropertyLocation() async {
+    FocusScope.of(context).unfocus();
+    final raw = _mapLinkCtrl.text.trim();
+    final coords = _parseLatLngFromMapLink(raw);
+    final picked = await showLocationPicker(
+      context,
+      query: _looksLikeLink(raw) ? '' : raw,
+      lat: coords?.$1,
+      lng: coords?.$2,
+    );
+    if (picked == null || !mounted) return;
+    setState(() {
+      _pickedLink = picked.link;
+      _mapLinkCtrl.text = picked.link;
+      _addressCtrl.text = picked.address.isNotEmpty
+          ? picked.address
+          : '${picked.lat.toStringAsFixed(6)}, ${picked.lng.toStringAsFixed(6)}';
+      // المدينة والمنطقة في «بيانات العقار الرسمية» إن كانتا فارغتين.
+      final city = _officialCtrl('المدينة');
+      if (city.text.trim().isEmpty && picked.city.isNotEmpty) {
+        city.text = picked.city;
+      }
+      final area = _officialCtrl('المنطقة');
+      if (area.text.trim().isEmpty && picked.area.isNotEmpty) {
+        area.text = picked.area;
+      }
+    });
+  }
+
   Future<void> _openMapsForProperty() async {
     final link = _mapLinkCtrl.text.trim();
     final address = _addressCtrl.text.trim();
@@ -22325,37 +22768,83 @@ class _AddPropertyStep1ScreenState extends State<_AddPropertyStep1Screen> {
           ),
         ],
         const SizedBox(height: 12),
-        _propertyFieldLabel('العنوان / ابحث عن موقع'),
-        const SizedBox(height: 6),
-        TextField(
-          controller: _addressCtrl,
-          textAlign: AppTr.alignEnd,
-          decoration: _propertyInputDecoration(
-            'مثال: مدينة الرياض 31 - أبو ظبي - الإمارات',
-          ).copyWith(prefixIcon: const Icon(Icons.search_rounded)),
-        ),
-        const SizedBox(height: 12),
-        _propertyFieldLabel('رابط الموقع على الخريطة (اختياري)'),
+        // حقل واحد للموقع: يُكتب فيه اسم المنطقة (ثم زر الخريطة أو «بحث»
+        // في لوحة المفاتيح) أو يُلصق رابط. الخريطة داخل التطبيق: بحث، دبوس
+        // على المكان، ثم «اختيار» فتُحفظ بياناته هنا.
+        _propertyFieldLabel('ابحث عن الموقع أو اكتب الرابط'),
         const SizedBox(height: 6),
         TextField(
           controller: _mapLinkCtrl,
           textAlign: AppTr.alignEnd,
-          decoration: _propertyInputDecoration('رابط Google Maps مثلاً')
-              .copyWith(
-                // الضغط على هذا الزر يفتح خرائط جوجل فعلًا: على الرابط
-                // المكتوب إن وُجد، وإلا بحثًا عن العنوان المكتوب أعلاه.
-                // كان النص مجرد تلميح لا يفعل شيئًا عند الضغط عليه.
-                suffixIcon: IconButton(
-                  onPressed: _openMapsForProperty,
+          textInputAction: TextInputAction.search,
+          onSubmitted: (_) => _pickPropertyLocation(),
+          onChanged: (text) {
+            // تعديل الحقل بعد الاختيار يُسقط بيانات المكان المختار.
+            if (_pickedLink.isNotEmpty && text.trim() != _pickedLink) {
+              setState(() {
+                _pickedLink = '';
+                _addressCtrl.clear();
+              });
+            }
+          },
+          decoration: _propertyInputDecoration(
+            'اسم المنطقة أو رابط Google Maps',
+          ).copyWith(
+            suffixIcon: IconButton(
+              onPressed: _pickPropertyLocation,
+              tooltip: AppTr.tr('تحديد الموقع على الخريطة'),
+              icon: const Icon(
+                Icons.map_outlined,
+                size: 20,
+                color: _kPropertyColor,
+              ),
+            ),
+          ),
+        ),
+        if (_pickedLink.isNotEmpty && _addressCtrl.text.trim().isNotEmpty) ...[
+          const SizedBox(height: 6),
+          Container(
+            padding: const EdgeInsets.fromLTRB(10, 8, 4, 8),
+            decoration: BoxDecoration(
+              color: _kPropertyColor.withValues(alpha: 0.07),
+              borderRadius: BorderRadius.circular(AppTheme.rInner),
+            ),
+            child: Row(
+              textDirection: AppTr.uiDir,
+              children: [
+                const Icon(
+                  Icons.location_on_rounded,
+                  size: 18,
+                  color: _kPropertyColor,
+                ),
+                const SizedBox(width: 6),
+                Expanded(
+                  child: Text(
+                    _addressCtrl.text.trim(),
+                    maxLines: 3,
+                    textAlign: AppTr.alignEnd,
+                    style: const TextStyle(
+                      fontSize: 11.5,
+                      height: 1.5,
+                      fontWeight: FontWeight.w700,
+                      color: Color(0xFF022E2A),
+                    ),
+                  ),
+                ),
+                IconButton(
                   tooltip: AppTr.tr('فتح في خرائط جوجل'),
+                  visualDensity: VisualDensity.compact,
+                  onPressed: _openMapsForProperty,
                   icon: const Icon(
-                    Icons.map_outlined,
-                    size: 20,
+                    Icons.open_in_new_rounded,
+                    size: 18,
                     color: _kPropertyColor,
                   ),
                 ),
-              ),
-        ),
+              ],
+            ),
+          ),
+        ],
         const SizedBox(height: 16),
         _propertyFieldLabel('بيانات العقار الرسمية (تُستعمل في عقود الإيجار)'),
         const SizedBox(height: 6),
@@ -23596,10 +24085,18 @@ class _AssetDetailHeaderCard extends StatelessWidget {
     this.extraActions = const <ThreeDotExtraAction>[],
     this.compact = false,
     this.showEdit = true,
+    this.isDraft = false,
+    this.cancelBlockedMessage,
   });
+
+  /// سبب يمنع «إلغاء» العنصر الآن (عقد إيجار ساري) — يظهر بدل التأكيد.
+  final String? cancelBlockedMessage;
 
   /// «تعديل بيانات» في الثلاث نقاط — يُخفى إذا انتهى العقد ولم يُلغَ.
   final bool showEdit;
+
+  /// عقد محفوظ مسودة لم يُعتمد: وسم «مسودة» بجانب الحالة (شاغر).
+  final bool isDraft;
 
   /// مطويّ عند التمرير: بلا شريط المتابعة.
   final bool compact;
@@ -23731,6 +24228,24 @@ class _AssetDetailHeaderCard extends StatelessWidget {
               ),
             ),
           ),
+          if (isDraft) ...[
+            const SizedBox(width: 4),
+            Container(
+              padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
+              decoration: BoxDecoration(
+                color: const Color(0xFFA6691A).withValues(alpha: 0.12),
+                borderRadius: BorderRadius.circular(8),
+              ),
+              child: const Text(
+                'مسودة',
+                style: TextStyle(
+                  fontSize: 10,
+                  fontWeight: FontWeight.w800,
+                  color: Color(0xFFA6691A),
+                ),
+              ),
+            ),
+          ],
           // عنصر فوّضني صاحبه بإدارته: دائرة بلون التفويض و«مفوَّض».
           if (delegation != null) ...[
             const SizedBox(width: 4),
@@ -23773,6 +24288,7 @@ class _AssetDetailHeaderCard extends StatelessWidget {
             deleteIcon: _assetDeleteIcon(item),
             deleteMessage: _assetDeleteMessage(item),
             deleteConfirmLabel: _assetDeleteConfirm(item),
+            deleteBlockedMessage: cancelBlockedMessage,
           ),
         ],
       ),
@@ -26968,7 +27484,13 @@ class _UnitDetailsScreenState extends State<_UnitDetailsScreen> {
                         backgroundColor: AppTheme.gold,
                         foregroundColor: Colors.white,
                       ),
-                      onPressed: () => Share.share(text),
+                      onPressed: () => printOrShareLeaseContract(
+                        sheetContext,
+                        contract: _contract!,
+                        text: text,
+                        fileName: 'عقد-${_unit.name}',
+                        assetMeta: widget.propertyMeta,
+                      ),
                       icon: const Icon(Icons.ios_share_rounded, size: 17),
                       label: const Text('طباعة / مشاركة'),
                     ),
@@ -28976,8 +29498,15 @@ child: ListView(
     Map<String, String>? existing,
     int? index,
   }) async {
-    final row = await _showMaintenanceSheetShared(context, existing: existing);
-    if (row == null || !mounted) return;
+    final sheet = await _showMaintenanceSheetShared(context, existing: existing);
+    if (sheet == null || !mounted) return;
+    // التعديل يحمل معرّفات البند (التذكير...) فلا يتكرر.
+    final row = <String, String>{
+      ...sheet,
+      for (final key in const ['_id', '_reminder_id'])
+        if ((existing?[key] ?? '').isNotEmpty && (sheet[key] ?? '').isEmpty)
+          key: existing![key]!,
+    };
     final list = [..._maintenanceEntries];
     if (index == null) {
       list.add(row);
@@ -29708,7 +30237,13 @@ child: ListView(
                             foregroundColor: Colors.white,
                             minimumSize: const Size(0, 48),
                           ),
-                          onPressed: () => Share.share(text),
+                          onPressed: () => printOrShareLeaseContract(
+                            sheetContext,
+                            contract: _contract!,
+                            text: text,
+                            fileName: 'عقد-${_unit.name}',
+                            assetMeta: widget.propertyMeta,
+                          ),
                           icon: const Icon(Icons.print_outlined, size: 18),
                           label: const Text('طباعة / مشاركة'),
                         ),
@@ -29947,8 +30482,9 @@ child: ListView(
     if (repo == null || assetId == null || contract?.id == null) return;
     final today = DateUtils.dateOnly(DateTime.now());
     final oldEnd = contract!.endDate;
+    // يبدأ الجديد في اليوم التالي لنهاية السابق (لا يتداخلان يومًا).
     final start = oldEnd != null && !DateUtils.dateOnly(oldEnd).isBefore(today)
-        ? oldEnd
+        ? DateUtils.dateOnly(oldEnd).add(const Duration(days: 1))
         : today;
     final months = await _pickContractMonths(
       title: 'تجديد العقد',
@@ -29957,7 +30493,8 @@ child: ListView(
       confirmLabel: 'متابعة',
     );
     if (months == null || !mounted) return;
-    final end = DateTime(start.year, start.month + months, start.day);
+    // سنة من 1/1 تنتهي 31/12.
+    final end = DateTime(start.year, start.month + months, start.day - 1);
     final oldNumber = leaseContractNumber(contract);
     final saved = await Navigator.of(context).push<PropertyUnitContractRecord>(
       MaterialPageRoute(
@@ -29980,7 +30517,12 @@ child: ListView(
     );
     if (saved == null || !mounted) return;
     setState(() => _contract = saved);
-    widget.onUnitStatusChanged('مؤجرة');
+    // التجديد المحفوظ مسودة لا يجعل الوحدة مؤجرة.
+    widget.onUnitStatusChanged(
+      saved.status == PropertyUnitContractRecord.statusPending
+          ? 'مسودة'
+          : 'مؤجرة',
+    );
     await _load();
     if (!mounted) return;
     ScaffoldMessenger.of(context).showSnackBar(
@@ -33299,9 +33841,18 @@ class _AddEquipmentScreenState extends State<_AddEquipmentScreen> {
         readOnly: true,
         onTap: onTap,
         textAlign: AppTr.alignEnd,
-        decoration: _propertyInputDecoration(
-          hint,
-        ).copyWith(suffixIcon: Icon(icon, size: 19)),
+        // بعد الاختيار: زر × يمسح التاريخ (كلها اختيارية في نموذج المركبة).
+        decoration: _propertyInputDecoration(hint).copyWith(
+          suffixIcon: ValueListenableBuilder<TextEditingValue>(
+            valueListenable: controller,
+            builder: (context, value, _) => value.text.trim().isEmpty
+                ? Icon(icon, size: 19)
+                : clearDateSuffix(
+                    controller,
+                    onCleared: () => setState(() {}),
+                  ),
+          ),
+        ),
       ),
     ],
   );
@@ -33909,6 +34460,52 @@ const List<String> _kFacilityLabels = [
   'أخرى',
 ];
 
+/// تاريخ الأصل بصيغة سنة-شهر-يوم للخادم، من يوم/شهر/سنة أو سنة/شهر/يوم.
+String? _isoAssetDate(String raw) {
+  final text = raw.trim();
+  if (text.isEmpty) return null;
+  final parts = text.split(RegExp(r'[/-]'));
+  if (parts.length != 3) return null;
+  final a = int.tryParse(parts[0]);
+  final b = int.tryParse(parts[1]);
+  final c = int.tryParse(parts[2].split(' ').first);
+  if (a == null || b == null || c == null) return null;
+  final d = a > 31 ? DateTime(a, b, c) : DateTime(c, b, a);
+  String two(int v) => v.toString().padLeft(2, '0');
+  return '${d.year}-${two(d.month)}-${two(d.day)}';
+}
+
+/// أول رقم متاح لنوع وحدة: بعد أكبر رقم موجود منه (1 إن لم يوجد) — فلا
+/// تُنشأ «شقة 1» مرة ثانية بنفس هوية الموجودة.
+int _nextUnitNumber(Iterable<_PropertyUnit> units, String type) {
+  var max = 0;
+  for (final unit in units) {
+    if (unit.type != type) continue;
+    final n = int.tryParse(unit.unitNumber.trim()) ?? 0;
+    if (n > max) max = n;
+  }
+  return max + 1;
+}
+
+/// الوحدات الجديدة التي لها هوية وحدة موجودة (النوع والاسم والرقم) — تشترك
+/// معها في العقود والدفعات والصيانة إن أُضيفت.
+List<String> _duplicateUnitNames(
+  Iterable<_PropertyUnit> existing,
+  String type,
+  String baseName,
+  int first,
+  int count,
+) {
+  final keys = {for (final unit in existing) unit.unitKey};
+  return [
+    for (var i = 0; i < count; i++)
+      if (keys.contains(
+        '$type|${count == 1 ? baseName : '$baseName ${first + i}'}|${first + i}',
+      ))
+        count == 1 ? baseName : '$baseName ${first + i}',
+  ];
+}
+
 /// حقول نموذج نوع واحد (وحدة أو مرفق) — تبقى حيّة عند التنقل بين الأنواع.
 class _UnitEntryForm {
   final count = TextEditingController();
@@ -34030,7 +34627,12 @@ class _UnitsEntryScreenState extends State<_UnitsEntryScreen> {
 
   bool get _isFacility => _kFacilityLabels.contains(_selected);
 
-  _UnitEntryForm get _form => _forms.putIfAbsent(_selected, _UnitEntryForm.new);
+  _UnitEntryForm get _form => _forms.putIfAbsent(
+    _selected,
+    () => _UnitEntryForm()
+      ..firstNumber.text =
+          '${_nextUnitNumber([...widget.existingUnits, ..._addedThisSession], _selected)}',
+  );
 
   @override
   void initState() {
@@ -34131,6 +34733,23 @@ class _UnitsEntryScreenState extends State<_UnitsEntryScreen> {
       final name = form.name.text.trim().isEmpty
           ? type
           : form.name.text.trim();
+      if (!_isFacility) {
+        final all = [...widget.existingUnits, ..._addedThisSession];
+        final duplicates =
+            _duplicateUnitNames(all, type, name, firstNo, count);
+        if (duplicates.isNotEmpty) {
+          ScaffoldMessenger.of(context).showSnackBar(
+            SnackBar(
+              content: Text(
+                'موجودة مسبقًا: ${duplicates.take(5).join('، ')} — '
+                'غيّر رقم البداية (المتاح ${_nextUnitNumber(all, type)})',
+              ),
+              behavior: SnackBarBehavior.floating,
+            ),
+          );
+          return;
+        }
+      }
       final full = type == _kUnitApartment || type == _kUnitFullFloor;
       final rooms = _unitTypeHasRooms(type);
       final home = _unitTypeIsResidential(type);

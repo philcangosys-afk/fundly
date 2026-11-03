@@ -369,8 +369,14 @@ class DelegationRecord {
   // تخزين الحالة كحقل مستقل يجعلها تتقادم: تفويض انتهى أمس يبقى "نشطًا"
   // إلى أن يفتح أحدهم الصفحة ويحدّثه يدويًا.
 
-  bool get isEnded =>
-      endDate != null && endDate!.isBefore(DateTime.now());
+  /// التفويض «حتى 2/11» ساري طوال يوم 2/11 (مقارنة بالتاريخ لا بالساعة).
+  bool get isEnded {
+    final end = endDate;
+    if (end == null) return false;
+    final now = DateTime.now();
+    return DateTime(end.year, end.month, end.day)
+        .isBefore(DateTime(now.year, now.month, now.day));
+  }
 
   bool get isScheduled =>
       !isPaused && startDate != null && startDate!.isAfter(DateTime.now());

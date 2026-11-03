@@ -1831,6 +1831,14 @@ class _GeneralDocsGridState extends State<_GeneralDocsGrid> {
                         ),
                       ),
                       ),
+                      // بعد الاختيار: × يمسح تاريخ الانتهاء.
+                      if (expiry != null)
+                        IconButton(
+                          tooltip: AppTr.tr('مسح التاريخ'),
+                          visualDensity: VisualDensity.compact,
+                          onPressed: () => setSheet(() => expiry = null),
+                          icon: const Icon(Icons.close_rounded, size: 18),
+                        ),
                       const SizedBox(width: 8),
                       Expanded(
                         child: DropdownButtonFormField<String>(
@@ -3562,6 +3570,14 @@ class _ModuleDocumentsScreenState extends State<ModuleDocumentsScreen> {
                           ),
                         ),
                       ),
+                      // بعد الاختيار: × يمسح تاريخ الانتهاء.
+                      if (expiry != null)
+                        IconButton(
+                          tooltip: AppTr.tr('مسح التاريخ'),
+                          visualDensity: VisualDensity.compact,
+                          onPressed: () => setSheet(() => expiry = null),
+                          icon: const Icon(Icons.close_rounded, size: 18),
+                        ),
                       const SizedBox(width: 8),
                       Expanded(
                         child: AppRemovableAttachment(
@@ -3848,12 +3864,52 @@ class _ModuleDocumentsScreenState extends State<ModuleDocumentsScreen> {
       ..sort((a, b) => b.value.length.compareTo(a.value.length));
     return [
       for (final entry in ordered) ...[
-        _groupHeader(entry.key, entry.value.length, color),
+        _groupHeader(
+          entry.key,
+          entry.value.length,
+          color,
+          alerts: _alertsIn(entry.value),
+        ),
         _grid(entry.value, color),
         const SizedBox(height: 16),
       ],
     ];
   }
+
+  /// المنتهي أو الذي ينتهي خلال 30 يومًا.
+  static int _alertsIn(Iterable<AppDocument> docs) =>
+      docs.where((doc) => doc.isExpired || doc.isExpiringSoon).length;
+
+  /// «N تنبيه» بالأحمر: يدلّ على طريق المستند الذي يحتاج متابعة.
+  Widget _alertPill(int alerts) => Container(
+    padding: const EdgeInsets.symmetric(horizontal: 7, vertical: 2),
+    decoration: BoxDecoration(
+      color: const Color(0xFFC4392E).withValues(alpha: 0.10),
+      borderRadius: BorderRadius.circular(AppTheme.rPill),
+    ),
+    child: Row(
+      mainAxisSize: MainAxisSize.min,
+      children: [
+        Container(
+          width: 7,
+          height: 7,
+          decoration: const BoxDecoration(
+            color: Color(0xFFC4392E),
+            shape: BoxShape.circle,
+          ),
+        ),
+        const SizedBox(width: 4),
+        Text(
+          '$alerts ${AppTr.tr('تنبيه')}',
+          style: const TextStyle(
+            fontSize: 10.5,
+            fontWeight: FontWeight.w900,
+            color: Color(0xFFC4392E),
+          ),
+        ),
+      ],
+    ),
+  );
 
   Widget _navTile({
     required IconData icon,
@@ -3861,6 +3917,7 @@ class _ModuleDocumentsScreenState extends State<ModuleDocumentsScreen> {
     required String subtitle,
     required Color color,
     required VoidCallback onTap,
+    int alerts = 0,
   }) => Padding(
     padding: const EdgeInsets.only(bottom: 10),
     child: Material(
@@ -3911,6 +3968,10 @@ class _ModuleDocumentsScreenState extends State<ModuleDocumentsScreen> {
                   ],
                 ),
               ),
+              if (alerts > 0) ...[
+                _alertPill(alerts),
+                const SizedBox(width: 4),
+              ],
               const AppChevron(),
             ],
           ),
@@ -3939,6 +4000,7 @@ class _ModuleDocumentsScreenState extends State<ModuleDocumentsScreen> {
         _docsInSection(section).length,
         color,
         onAdd: () => _addPersonal(section),
+        alerts: _alertsIn(_docsInSection(section)),
       ),
       if (_docsInSection(section).isEmpty)
         _hint('لا توجد مستندات')
@@ -3967,6 +4029,7 @@ class _ModuleDocumentsScreenState extends State<ModuleDocumentsScreen> {
               '${_itemsIn(section).length} عنصر · '
               '${_docsInSection(section).length} مستند',
           color: color,
+          alerts: _alertsIn(_docsInSection(section)),
           onTap: () => setState(() {
             _section = section;
             _search.clear();
@@ -3997,6 +4060,7 @@ class _ModuleDocumentsScreenState extends State<ModuleDocumentsScreen> {
             '${_docsOf(item).length} مستند',
           ].join(' · '),
           color: color,
+          alerts: _alertsIn(_docsOf(item)),
           onTap: () => setState(() {
             _item = item;
             _search.clear();
@@ -4004,7 +4068,12 @@ class _ModuleDocumentsScreenState extends State<ModuleDocumentsScreen> {
         ),
       if (orphans.isNotEmpty) ...[
         const SizedBox(height: 6),
-        _groupHeader('مستندات أخرى', orphans.length, color),
+        _groupHeader(
+          'مستندات أخرى',
+          orphans.length,
+          color,
+          alerts: _alertsIn(orphans),
+        ),
         _grid(orphans, color),
       ],
     ];
@@ -4163,6 +4232,7 @@ class _ModuleDocumentsScreenState extends State<ModuleDocumentsScreen> {
     int count,
     Color color, {
     VoidCallback? onAdd,
+    int alerts = 0,
   }) => Padding(
     padding: const EdgeInsets.only(bottom: 8),
     child: Row(
@@ -4186,6 +4256,10 @@ class _ModuleDocumentsScreenState extends State<ModuleDocumentsScreen> {
             ),
           ),
         ),
+        if (alerts > 0) ...[
+          _alertPill(alerts),
+          const SizedBox(width: 6),
+        ],
         Container(
           padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 2),
           decoration: BoxDecoration(

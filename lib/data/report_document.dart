@@ -131,6 +131,9 @@ const _closedWords = [
   'مسدد',
   'منجز',
   'مؤرشف',
+  'تسوية',
+  'مجمّد',
+  'محذوف',
 ];
 
 bool _isClosed(String status) =>
@@ -140,7 +143,9 @@ bool _isCancelled(String status) => status.contains('ملغ');
 
 /// عدد الأيام من اليوم حتى تاريخ السجل (سالب = فات).
 int? _daysUntil(SummaryItem item) {
-  final date = item.date;
+  // يوم المتابعة نفسه المستعمل في الملخص (المصروف المتكرر بموعده القادم،
+  // وتاريخ إضافة الشخص لا يُحسب).
+  final date = item.followDay;
   if (date == null) return null;
   final today = DateUtils.dateOnly(DateTime.now());
   return DateUtils.dateOnly(date).difference(today).inDays;
@@ -154,7 +159,11 @@ ReportItemState reportStateOf(SummaryItem item) {
   if (_isClosed(status)) return ReportItemState.done;
   final days = _daysUntil(item);
   if (days != null && item.scope != ScopeCatalog.people) {
-    if (days < 0) return ReportItemState.overdue;
+    if (days < 0) {
+      return item.canBeOverdue
+          ? ReportItemState.overdue
+          : ReportItemState.active;
+    }
     if (days == 0) return ReportItemState.dueToday;
     if (days <= 7) return ReportItemState.dueSoon;
   }
@@ -203,7 +212,7 @@ bool _matchesStatus(SummaryItem item, String option) {
       return !closed && days == 0;
     case 'متأخرة':
     case 'متأخر':
-      return !closed && days != null && days < 0;
+      return !closed && item.canBeOverdue && days != null && days < 0;
     case 'مكتملة':
     case 'مكتمل':
       return _isClosed(status);

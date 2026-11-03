@@ -720,15 +720,20 @@ String encodePayExtra(Map<String, String> data) {
 /// حالة الدفعة كما تظهر للمستخدم: مدفوعة / متأخرة / مجدولة / مستحقة.
 String rentPaymentStatusLabel(PropertyUnitPaymentRecord payment) {
   if (payment.status == PropertyUnitPaymentRecord.statusPaid) return 'مدفوعة';
-  if (payment.status == PropertyUnitPaymentRecord.statusPartial) {
-    return 'مدفوعة جزئيًا';
-  }
   if (payment.status == PropertyUnitPaymentRecord.statusLate) return 'متأخرة';
   final due = payment.dueDate;
+  final now = DateTime.now();
+  final today = DateTime(now.year, now.month, now.day);
+  final pastDue = due != null &&
+      DateTime(due.year, due.month, due.day).isBefore(today);
+  if (payment.status == PropertyUnitPaymentRecord.statusPartial) {
+    // سُدِّد جزء وفات موعد الباقي: «متأخرة» (يحتاج متابعة) لا «جزئيًا».
+    return pastDue && payRemaining(payment) > 0.009
+        ? 'متأخرة'
+        : 'مدفوعة جزئيًا';
+  }
   if (due != null) {
-    final now = DateTime.now();
-    final today = DateTime(now.year, now.month, now.day);
-    if (due.isBefore(today)) return 'متأخرة';
+    if (pastDue) return 'متأخرة';
     if (due.isAfter(today.add(const Duration(days: 7)))) return 'قادمة';
   }
   return 'مستحقة';

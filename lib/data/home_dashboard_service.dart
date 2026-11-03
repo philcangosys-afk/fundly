@@ -6,12 +6,17 @@ import 'package:fundly/data/shared_entries_repository.dart';
 import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import '../screens/rent_payments_view.dart'
+    show payRemaining, paymentWaivedByClosure;
+
 import 'app_reminders_store.dart';
+import 'entry_status.dart';
 import 'reminder_lead.dart';
 import 'custody_sharing.dart';
 import 'shared_member_state.dart';
 import 'delegations_repository.dart';
 import 'calendar_items_store.dart';
+import 'rosca_cycles.dart';
 import 'shared_alerts.dart';
 
 class HomeDashboardMetrics {
@@ -236,7 +241,7 @@ class HomeDashboardService {
       'شهري' || 'شهريًا' => 1,
       'ربع سنوي' || 'كل 3 شهور' => 3,
       'نصف سنوي' || 'كل 6 شهور' => 6,
-      'سنوي' || 'سنويًا' => 12,
+      'سنوي' || 'سنويًا' || 'شهر أختاره' => 12,
       _ => 0,
     };
     final days = switch (r) {
@@ -294,6 +299,23 @@ class HomeDashboardService {
       assets = await _assetsRepository.fetchAssets();
     } catch (error) {
       debugPrint('HomeDashboardService assets fetch failed: $error');
+    }
+    // ما في سلة المهملات لا يدخل أي رقم ولا الكلندر.
+    assets = [
+      for (final asset in assets)
+        if (asset.status != 'محذوف') asset,
+    ];
+
+    // عقود الأصول ودفعاتها — «مالية تحتاج متابعة» بنفس حساب مركز المتابعة.
+    List<PropertyUnitContractRecord> unitContracts = const [];
+    List<PropertyUnitPaymentRecord> unitPayments = const [];
+    if (assets.isNotEmpty) {
+      try {
+        unitContracts = await _assetsRepository.fetchAllUnitContracts();
+        unitPayments = await _assetsRepository.fetchAllUnitPayments();
+      } catch (error) {
+        debugPrint('HomeDashboardService asset payments fetch failed: $error');
+      }
     }
 
     try {
@@ -403,8 +425,30 @@ class HomeDashboardService {
 
       // يحتاج متابعة: موعده خلال 7 أيام أو فات — يُحسب من التاريخ، لأن
       // الحالة المخزّنة تبقى «نشطة» ولا تتحوّل وحدها إلى «متأخرة».
-      final needsFollowup =
-          !closed && due != null && due.difference(today).inDays <= 7;
+      // المصروف / الإيراد عملية تمّت: لا يحتاج متابعة بمرور تاريخه، والمتكرر
+      // منه بموعده القادم (نفس حساب مركز المتابعة).
+      // نفس حساب مركز المتابعة في الالتزامات الشخصية (entry_status): موعد
+      // المتابعة، والمسدَّد كامله / المنتهي لا يُتابَع.
+      final followDue = entryFollowDate(
+        type: entry.entryType,
+        due: due,
+        details: entry.details,
+        now: today,
+      );
+      final finished = entryDerivedStatus(entry.status, entry.details) ==
+              'منتهية' ||
+          entryOutcomeStatus(
+                type: entry.entryType,
+                due: due,
+                details: entry.details,
+                total: entry.amount,
+                now: today,
+              ) !=
+              null;
+      final needsFollowup = !closed &&
+          !finished &&
+          followDue != null &&
+          followDue.difference(today).inDays <= 7;
       if (needsFollowup) personalNeedsFollowup += 1;
       final isDocument =
           entry.entryType == 'مستند' || entry.entryType == 'ضمانات';
@@ -412,14 +456,17 @@ class HomeDashboardService {
         if (!closed && due != null && due.isBefore(in30Days)) {
           personalDocsFollowup += 1;
         }
-      } else if (needsFollowup) {
+      } else if (needsFollowup &&
+          entryFinancialTypes.contains(entry.entryType)) {
+        // «مالية تحتاج متابعة»: الأنواع المالية وحدها، كـ«مستحقات» المركز.
         personalMoneyFollowup += 1;
       }
 
       if (due != null && !closed) {
         // البند المتكرر (اشتراك شهري مثلًا): التنبيه على موعده القادم.
         final repeat = (entry.details['التكرار'] ?? '').trim();
-        final recurring = repeat.isNotEmpty &&
+        // «بدون تكرار» ليست تكرارًا.
+        final recurring = entryIsRepeating(entry.details) &&
             entry.entryType != 'قسط' &&
             entry.entryType != 'دين / قرض / سلفة';
         calendarItems.add(
@@ -428,7 +475,8 @@ class HomeDashboardService {
             module: 'الالتزامات الشخصية',
             date: recurring ? nextOccurrence(due, repeat, today) : due,
             sourceId: entry.id ?? '',
-            status: entry.status,
+            // المسدَّد كامله / المنتهي يظهر مغلقًا لا «متأخرًا».
+            status: finished ? 'مكتملة' : entry.status,
             entryType: entry.entryType,
             time: _entryTimeOf(entry.details),
             repeat: recurring ? repeat : '',
@@ -452,13 +500,33 @@ class HomeDashboardService {
     var equipmentCount = 0;
 
     var assetsDocsFollowup = 0;
+    // «مالية تحتاج متابعة»: دفعات عقود معتمدة (لا مسودة) باقٍ منها شيء،
+    // فات موعدها أو يحلّ خلال 30 يومًا، ولم تسقط بإلغاء العقد / تسويته —
+    // نفس «مالية» في مركز متابعة العقارات.
+    final liveAssetIds = {for (final asset in assets) asset.id ?? ''};
+    final contractById = {
+      for (final contract in unitContracts)
+        if (contract.id != null &&
+            liveAssetIds.contains(contract.assetId) &&
+            contract.status != PropertyUnitContractRecord.statusPending)
+          contract.id!: contract,
+    };
+    final dueLimit = today.add(const Duration(days: 30));
+    for (final payment in unitPayments) {
+      final contract = contractById[payment.contractId];
+      final due = payment.dueDate;
+      if (contract == null || due == null) continue;
+      if (payRemaining(payment) <= 0) continue;
+      if (paymentWaivedByClosure(contract, payment)) continue;
+      if (DateTime(due.year, due.month, due.day).isAfter(dueLimit)) continue;
+      assetsNeedsFollowup += 1;
+    }
     for (final asset in assets) {
-      if (asset.needsAttention) {
-        assetsNeedsFollowup += 1;
-      }
+      // الملغى: أموره في «السجل التاريخي» لا في المستندات والكلندر.
+      final cancelled = asset.status.startsWith('ملغ');
       // انتهاء العقد/الرخصة خلال 30 يومًا = مستند يحتاج متابعة.
       final assetEnd = _parseDdMmYyyy(asset.endDate ?? '');
-      if (assetEnd != null && assetEnd.isBefore(in30Days)) {
+      if (!cancelled && assetEnd != null && assetEnd.isBefore(in30Days)) {
         assetsDocsFollowup += 1;
       }
       // القيم المخزَّنة في قاعدة البيانات هي 'business' و'equipment'
@@ -472,7 +540,7 @@ class HomeDashboardService {
         equipmentCount += 1;
       }
       final due = _parseDdMmYyyy(asset.endDate ?? '');
-      if (due != null) {
+      if (due != null && !cancelled) {
         calendarItems.add(
           HomeCalendarItem(
             title: asset.title,
@@ -493,7 +561,10 @@ class HomeDashboardService {
       'المركبات ووسائل النقل',
     };
     for (final reminder in savedReminders) {
+      // تذكيرات دفعات الإيجار ليست مستندات (والمالية محسوبة من الدفعات).
+      final isPayment = reminder.id.contains('payment');
       if (assetModules.contains(reminder.module) &&
+          !isPayment &&
           reminder.expiryDate.isBefore(in30Days)) {
         assetsDocsFollowup += 1;
       }
@@ -581,17 +652,32 @@ class HomeDashboardService {
       if (open && entry.entryType == sharedTypeCircle) {
         sharedActiveCircles += 1;
       }
-      if (open) {
-        final due = _parseDdMmYyyy(entry.dueDate);
-        if (due != null && due.difference(today).inDays <= 7) {
+      // «مالية تحتاج متابعة» كمركز متابعة المشتركة: الجمعية وحدها لها موعد
+      // دفع (موعد دورتها الجارية) — تاريخ الرحلة أو المشاركة تاريخ نشاط لا
+      // موعد سداد.
+      if (open && entry.entryType == sharedTypeCircle) {
+        DateTime? due;
+        try {
+          due = RoscaLedger.plan(
+            entry.details,
+            sharedMemberNames(entry.details),
+          ).current?.dueDate;
+        } catch (_) {
+          due = null;
+        }
+        due ??= _parseDdMmYyyy(entry.dueDate);
+        if (due != null &&
+            DateTime(due.year, due.month, due.day).difference(today).inDays <=
+                7) {
           sharedNeedsFollowup += 1;
         }
       }
 
-      final docEnd = _parseDdMmYyyy(
-        entry.details['تاريخ انتهاء المستند'] ?? '',
-      );
-      if (docEnd != null && docEnd.isBefore(in30Days)) sharedDocsFollowup += 1;
+      // المستندات داخل الالتزام (قائمة «مستندات»): منتهية أو تنتهي خلال 30
+      // يومًا — كمركز المتابعة.
+      if (open && _sharedDocsNeedFollowUp(entry.details, today)) {
+        sharedDocsFollowup += 1;
+      }
       final sharedDue = _parseDdMmYyyy(entry.dueDate);
       // بنود المتابعة والمستندات ودورة الجمعية والاعتمادات والميزانية.
       if (open) calendarItems.addAll(sharedAlertItems(entry));
@@ -624,8 +710,11 @@ class HomeDashboardService {
       } else {
         peopleCount += 1;
       }
-      final openTasks = (record['openTasks'] as num?)?.toInt() ?? 0;
-      if (openTasks > 0) {
+      // مستحقات قائمة له أو عليه — نفس «مستحقات تحتاج متابعة» في بطاقة
+      // الفرد. (عدّاد openTasks يزيد ولا ينقص فلا يصلح هنا.)
+      final dueToYou = (record['dueToYou'] as num?)?.toDouble() ?? 0;
+      final dueOnYou = (record['dueOnYou'] as num?)?.toDouble() ?? 0;
+      if (dueToYou > 0 || dueOnYou > 0) {
         peopleNeedsFollowup += 1;
       }
       final details = record['details'];
@@ -768,4 +857,23 @@ class HomeDashboardService {
     }
     return date;
   }
+}
+
+/// مستند في قائمة «مستندات» داخل الالتزام المشترك انتهى أو ينتهي خلال 30
+/// يومًا.
+bool _sharedDocsNeedFollowUp(Map<String, String> details, DateTime today) {
+  final raw = details['مستندات'];
+  if (raw == null || raw.trim().isEmpty) return false;
+  try {
+    final decoded = jsonDecode(raw);
+    if (decoded is! List) return false;
+    for (final doc in decoded.whereType<Map>()) {
+      final date = entryParseDay('${doc['date'] ?? ''}');
+      if (date == null) continue;
+      if (date.difference(today).inDays <= 30) return true;
+    }
+  } catch (_) {
+    return false;
+  }
+  return false;
 }

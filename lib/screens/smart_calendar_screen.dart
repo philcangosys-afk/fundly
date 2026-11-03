@@ -3,6 +3,7 @@ import '../l10n/tr_widgets.dart';
 import '../l10n/app_language.dart';
 
 import '../data/calendar_items_store.dart';
+import '../data/entry_status.dart';
 import '../data/home_dashboard_service.dart';
 import '../data/shared_alerts.dart';
 import '../l10n/home_strings.dart';
@@ -179,6 +180,13 @@ class _SmartCalendarScreenState extends State<SmartCalendarScreen> {
     if (_isDone(item)) return false;
     final kind = _kindOf(item);
     if (kind == 'ملاحظات' || kind == 'عادة' || item.repeat.isNotEmpty) {
+      return false;
+    }
+    // المصروف / الإيراد عملية تمّت: لا تُعدّ «متأخرة» بمرور تاريخها (كما في
+    // صفحة الالتزامات الشخصية).
+    if (entryTransactionTypes.contains(kind)) return false;
+    // العهدة والدواء والمناسبة والهدية: يومها بداية أو حدث لا موعد سداد.
+    if (const {'عهدة مالية', 'أدوية', 'مناسبة', 'هدية'}.contains(kind)) {
       return false;
     }
     final group = _groupOf(item);
@@ -814,15 +822,34 @@ class _SmartCalendarScreenState extends State<SmartCalendarScreen> {
               ),
             ],
           ),
-          const Row(
+          // أسماء الأيام كاملة؛ تصغر تلقائيًا لتتسع في عمودها بلا قطع.
+          Row(
             children: [
-              Expanded(child: Center(child: Text('أحد'))),
-              Expanded(child: Center(child: Text('اثن'))),
-              Expanded(child: Center(child: Text('ثلا'))),
-              Expanded(child: Center(child: Text('أرب'))),
-              Expanded(child: Center(child: Text('خمي'))),
-              Expanded(child: Center(child: Text('جمع'))),
-              Expanded(child: Center(child: Text('سبت'))),
+              for (final day in const [
+                'الأحد',
+                'الاثنين',
+                'الثلاثاء',
+                'الأربعاء',
+                'الخميس',
+                'الجمعة',
+                'السبت',
+              ])
+                Expanded(
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(horizontal: 1),
+                    child: FittedBox(
+                      fit: BoxFit.scaleDown,
+                      child: Text(
+                        day,
+                        maxLines: 1,
+                        style: const TextStyle(
+                          fontSize: 12,
+                          fontWeight: FontWeight.w700,
+                        ),
+                      ),
+                    ),
+                  ),
+                ),
             ],
           ),
           const SizedBox(height: 6),

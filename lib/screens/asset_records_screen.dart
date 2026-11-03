@@ -1048,6 +1048,14 @@ class _AssetRecordsScreenState extends State<AssetRecordsScreen> {
 
     String statusOf(PropertyUnitContractRecord c) {
       if (c.status == 'cancelled') return 'ملغي';
+      // المُجدَّد أو المُنهى (مغلق) «منتهي»، والمسودة «مسودة» — كبطاقة العقد.
+      if (c.status == PropertyUnitContractRecord.statusExpired ||
+          c.status == 'ended') {
+        return 'منتهي';
+      }
+      if (c.status == PropertyUnitContractRecord.statusPending) {
+        return 'مسودة';
+      }
       final end = c.endDate;
       if (end != null &&
           DateUtils.dateOnly(end).isBefore(DateUtils.dateOnly(DateTime.now()))) {

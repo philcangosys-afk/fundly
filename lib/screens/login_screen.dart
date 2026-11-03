@@ -44,7 +44,8 @@ class _LoginGateState extends State<LoginGate> {
   }
 }
 
-/// أول فتح للتطبيق على الجوال: اختيار اللغة فقط، ثم يدخل التطبيق.
+/// أول فتح للتطبيق على الجوال: اختيار اللغة والعملة الافتراضية، ثم يدخل
+/// التطبيق (وتُغيَّران لاحقًا من الإعدادات).
 class FirstLanguageScreen extends StatefulWidget {
   const FirstLanguageScreen({super.key, required this.onDone});
 
@@ -167,7 +168,80 @@ class _FirstLanguageScreenState extends State<FirstLanguageScreen> {
                       ),
                     ),
                   ),
-                const SizedBox(height: 14),
+                const SizedBox(height: 12),
+                // العملة الافتراضية: تظهر بجانب كل مبلغ، وكل سجل جديد يبدأ
+                // بها (ويُغيَّر لسجل بعينه من نموذجه).
+                const Text(
+                  'العملة الافتراضية',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                    fontSize: 18,
+                    fontWeight: FontWeight.w900,
+                    color: _kInk,
+                  ),
+                ),
+                const SizedBox(height: 4),
+                const Text(
+                  'Default currency',
+                  textAlign: TextAlign.center,
+                  style: TextStyle(
+                    fontSize: 12.5,
+                    fontWeight: FontWeight.w700,
+                    color: _kMuted,
+                  ),
+                ),
+                const SizedBox(height: 12),
+                DropdownButtonFormField<String>(
+                  key: const ValueKey('first-run-currency'),
+                  initialValue: AppSettings.currencies.containsKey(
+                    AppSettings.instance.currency,
+                  )
+                      ? AppSettings.instance.currency
+                      : null,
+                  isExpanded: true,
+                  decoration: InputDecoration(
+                    filled: true,
+                    fillColor: Colors.white,
+                    prefixIcon: const Icon(
+                      Icons.payments_outlined,
+                      color: _kGreen,
+                    ),
+                    contentPadding: const EdgeInsets.symmetric(
+                      horizontal: 14,
+                      vertical: 14,
+                    ),
+                    border: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(16),
+                      borderSide: const BorderSide(color: _kLine),
+                    ),
+                    enabledBorder: OutlineInputBorder(
+                      borderRadius: BorderRadius.circular(16),
+                      borderSide: const BorderSide(color: _kLine),
+                    ),
+                  ),
+                  items: [
+                    for (final currency in AppSettings.currencies.keys)
+                      DropdownMenuItem(
+                        value: currency,
+                        child: Text(
+                          currency,
+                          style: const TextStyle(
+                            fontSize: 14,
+                            fontWeight: FontWeight.w800,
+                            color: _kInk,
+                          ),
+                        ),
+                      ),
+                  ],
+                  onChanged: _busy
+                      ? null
+                      : (value) async {
+                          if (value == null) return;
+                          await AppSettings.instance.setCurrency(value);
+                          if (mounted) setState(() {});
+                        },
+                ),
+                const SizedBox(height: 16),
                 FilledButton(
                   style: FilledButton.styleFrom(
                     backgroundColor: _kDeep,

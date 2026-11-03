@@ -49,6 +49,9 @@ dependencies:
   open_filex: ^4.7.0
   # جلب الموقع الجغرافي من الجوال بعد إذن المستخدم.
   geolocator: ^13.0.2
+  # خريطة داخل التطبيق لتحديد موقع العقار (بحث + دبوس) — OpenStreetMap بلا مفتاح.
+  flutter_map: ^8.1.1
+  latlong2: ^0.9.1
   # إشعارات الجوال بصوت للتذكيرات والمواعيد (الإصدار 19 يناسب Flutter 3.35).
   flutter_local_notifications: ^19.0.0
   # إشعارات تصل والتطبيق مغلق (Firebase Cloud Messaging).

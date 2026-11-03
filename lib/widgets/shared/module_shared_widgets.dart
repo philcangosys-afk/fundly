@@ -621,7 +621,12 @@ class ThreeDotMenu extends StatelessWidget {
     this.showDelete = true,
     this.trailingActions = const [],
     this.showArchive = true,
+    this.deleteBlockedMessage,
   });
+
+  /// سبب يمنع الحذف/الإلغاء الآن (عقد إيجار ساري مثلًا): يظهر بدل نافذة
+  /// التأكيد ولا يُنفَّذ شيء.
+  final String? deleteBlockedMessage;
 
   /// false: بلا «أرشيف» (العنصر المفوَّض: الأرشفة لصاحبه وحده).
   final bool showArchive;
@@ -674,6 +679,47 @@ class ThreeDotMenu extends StatelessWidget {
           return;
         }
         final action = value as ThreeDotMenuAction;
+        final blocked = deleteBlockedMessage?.trim() ?? '';
+        if (action == ThreeDotMenuAction.delete && blocked.isNotEmpty) {
+          await showDialog<void>(
+            context: context,
+            builder: (dialogContext) => Directionality(
+              textDirection: AppTr.uiDir,
+              child: AlertDialog(
+                backgroundColor: Colors.white,
+                shape: RoundedRectangleBorder(
+                  borderRadius: BorderRadius.circular(AppTheme.rInner),
+                ),
+                title: Text(
+                  deleteLabel,
+                  textAlign: TextAlign.right,
+                  style: const TextStyle(
+                    fontSize: 15,
+                    fontWeight: FontWeight.w900,
+                    color: Color(0xFF022E2A),
+                  ),
+                ),
+                content: Text(
+                  blocked,
+                  textAlign: TextAlign.right,
+                  style: const TextStyle(
+                    fontSize: 12.5,
+                    height: 1.7,
+                    fontWeight: FontWeight.w600,
+                    color: Color(0xFF46534F),
+                  ),
+                ),
+                actions: [
+                  TextButton(
+                    onPressed: () => Navigator.of(dialogContext).pop(),
+                    child: const Text('حسنًا'),
+                  ),
+                ],
+              ),
+            ),
+          );
+          return;
+        }
         final (label, message, danger) = switch (action) {
           ThreeDotMenuAction.edit => (
             'تعديل بيانات',

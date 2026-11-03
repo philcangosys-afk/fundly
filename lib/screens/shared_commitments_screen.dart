@@ -10,6 +10,7 @@ import '../data/shared_member_state.dart';
 import '../data/fundly_account.dart';
 import '../widgets/management_dashboard_chrome.dart';
 import '../widgets/detail_page_chrome.dart';
+import '../widgets/shared/clear_date_suffix.dart';
 import '../widgets/shared/app_filter_sheet.dart';
 import 'global_summary_screen.dart';
 import '../widgets/shared/followup_center_sheet.dart';
@@ -1918,13 +1919,33 @@ class _SharedItem {
     this.createdAt,
   });
 
+  /// الجمعية التي اكتملت دوراتها وسُلِّمت كلها «مكتملة» في القائمة أيضًا —
+  /// كانت تُصحَّح فقط عند فتح تفاصيلها (ولو أكملها عضو آخر).
+  static String _listStatus(SharedEntryRecord r) {
+    if (r.status != _sharedStatusActive) return r.status;
+    if (_sharedCanonicalType(r.entryType) != 'جمعية مالية') return r.status;
+    try {
+      final names = <String>[];
+      for (final member in _parseSharedMembers(r.details)) {
+        final name = member.name.trim();
+        if (name.isNotEmpty && !names.contains(name)) names.add(name);
+      }
+      final plan = RoscaLedger.plan(r.details, names);
+      final done = plan.cycles.isNotEmpty &&
+          plan.cycles.every((c) => c.isComplete && c.isPaidOut);
+      return done ? _sharedStatusCompleted : r.status;
+    } catch (_) {
+      return r.status;
+    }
+  }
+
   factory _SharedItem.fromRecord(SharedEntryRecord r) => _SharedItem(
     id: r.id ?? '',
     entryType: r.entryType,
     title: r.title,
     amount: r.amount,
     dueDate: r.dueDate,
-    status: r.status,
+    status: _listStatus(r),
     details: r.details,
     // التاريخ والساعة (بالتوقيت المحلي).
     lastUpdate: r.createdAt == null
@@ -4679,6 +4700,21 @@ Future<void> _openSharedEntryForm(
         builder: (context, setSheetState) {
           Future<void> save() async {
             if (!(formKey.currentState?.validate() ?? false)) return;
+            // النهاية / العودة لا تسبق البداية / الرحلة — في كل الأنواع.
+            for (final (endKey, startKey) in const [
+              ('تاريخ النهاية', 'تاريخ البداية'),
+              ('تاريخ العودة', 'تاريخ الرحلة'),
+            ]) {
+              final from = roscaParseDate(controllers[startKey]?.text ?? '');
+              final to = roscaParseDate(controllers[endKey]?.text ?? '');
+              if (from != null && to != null && to.isBefore(from)) {
+                await _sharedFormNotice(
+                  context,
+                  '«${AppTr.tr(endKey)}» ${AppTr.tr('قبل')} «${AppTr.tr(startKey)}» — ${AppTr.tr('صحّح التاريخين')}',
+                );
+                return;
+              }
+            }
             // الاسم إلزامي في كل الأنواع (اسم المجموعة في تحديد الأدوار).
             if ((controllers[titleField.label]?.text.trim() ?? '').isEmpty) {
               await _sharedFormNotice(
@@ -4908,7 +4944,8 @@ Future<void> _openSharedEntryForm(
             details['تقسيم الأعضاء'] = jsonEncode(splitValues);
 
             final amountText = controllers[amountField.label]?.text.trim() ?? '0';
-            var recordAmount = int.tryParse(amountText) ?? 0;
+            // أرقام عربية وكسور وفواصل (2,500.5) تُقرأ — كان يُحفظ 0.
+            var recordAmount = (parseMoney(amountText) ?? 0).round();
             // الرحلة بلا ميزانية مسبقة: مبلغها هو مجموع مساهمات الأعضاء عند
             // «دفعة مقطوعة»، وصفر عند «دفع فردي» حيث لا مساهمة أصلًا.
             if (form.fields.any((f) => f.kind == _SharedFieldKind.team)) {
@@ -5164,28 +5201,9 @@ Future<String?> _pickSharedPerson(BuildContext context, Color accent) async {
               ],
             ),
             const SizedBox(height: 12),
-            ListTile(
-              contentPadding: EdgeInsets.zero,
-              leading: Icon(Icons.badge_outlined, color: accent),
-              title: const Text(
-                'دعوة بالرقم التعريفي',
-                textAlign: TextAlign.right,
-                style: TextStyle(
-                  fontSize: 13,
-                  fontWeight: FontWeight.w900,
-                  color: AppTheme.title,
-                ),
-              ),
-              subtitle: Text(
-                '${AppTr.tr('اكتب رقم الشخص بصيغة FND-XXXX-XXXX')}\n'
-                '${fndNameHint()}',
-                textAlign: TextAlign.right,
-                style: const TextStyle(
-                  fontSize: 11,
-                  height: 1.5,
-                  color: AppTheme.muted,
-                ),
-              ),
+            // خانة بشكل حقل كتابة: إطار ونقاط مكان الأرقام.
+            FndEntryBox(
+              accent: accent,
               onTap: () async {
                 // يكتب الرقم فيظهر تحته اسم صاحبه من الخادم.
                 final person = await askFndPerson(sheetContext);
@@ -6892,7 +6910,12 @@ Widget _buildSharedField(
         return TextFormField(
           controller: controller,
           readOnly: true,
-          decoration: _sharedFieldDecoration(labelText, field.icon, accent, optional: field.optional),
+          // التاريخ الاختياري يُمسح بزر × بعد اختياره.
+          decoration: _sharedFieldDecoration(labelText, field.icon, accent, optional: field.optional).copyWith(
+            suffixIcon: field.required
+                ? null
+                : clearDateSuffix(controller, onCleared: () => setSheetState(() {})),
+          ),
           validator: trValidator(field.required ? (v) => v == null || v.isEmpty ? 'مطلوب' : null : null),
           onTap: () async {
             final picked = await showDatePicker(context: context, initialDate: DateTime.now(), firstDate: DateTime(2000), lastDate: DateTime(2100), builder: (pickerContext, child) => Directionality(textDirection: AppTr.uiDir, child: child!));
@@ -7016,7 +7039,9 @@ Future<Map<String, String>?> showSharedFollowUpForm(
             {bool required = false}) => TextFormField(
           controller: c[key],
           readOnly: true,
-          decoration: deco(text, icon, required: required),
+          decoration: deco(text, icon, required: required).copyWith(
+            suffixIcon: required ? null : clearDateSuffix(c[key]!),
+          ),
           validator: trValidator(required
               ? (v) => v == null || v.trim().isEmpty ? 'مطلوب' : null
               : null),
@@ -7039,7 +7064,9 @@ Future<Map<String, String>?> showSharedFollowUpForm(
             TextFormField(
               controller: c[key],
               readOnly: true,
-              decoration: deco(text, icon),
+              decoration: deco(text, icon).copyWith(
+                suffixIcon: clearDateSuffix(c[key]!),
+              ),
               onTap: () async {
                 final picked = await showTimePicker(
                   context: context,
@@ -7793,6 +7820,9 @@ class _SharedCommitmentCard extends StatelessWidget {
       // على مستوى السطر الثاني.
       keepStatSlots: true,
       subtitleMaxLines: 2,
+      // كل قيمة يسارًا في سطر واحد (يصغر الخط إن طالت): الحالة ثم المبلغ
+      // ثم التاريخ — ثلاثة أسطر كالاسم والنوع وطريقة التحصيل يمينًا.
+      statsSingleLine: true,
       // الحالة بلونها فوق المبلغ: نشطة أخضر، مكتملة أزرق، مؤرشفة رمادي.
       statsHeader: _statePill(),
       stats: [
@@ -16731,7 +16761,9 @@ class _SharedCommitmentDetailsScreenState extends State<SharedCommitmentDetailsS
           Widget dateField(String key, String text, IconData icon, {bool required = false}) => TextFormField(
             controller: c[key],
             readOnly: true,
-            decoration: deco(text, icon, required: required),
+            decoration: deco(text, icon, required: required).copyWith(
+              suffixIcon: required ? null : clearDateSuffix(c[key]!),
+            ),
             validator: trValidator(required
                 ? (v) => v == null || v.trim().isEmpty ? 'مطلوب' : null
                 : null),
@@ -16750,7 +16782,9 @@ class _SharedCommitmentDetailsScreenState extends State<SharedCommitmentDetailsS
           Widget timeField(String key, String text, IconData icon) => TextFormField(
             controller: c[key],
             readOnly: true,
-            decoration: deco(text, icon),
+            decoration: deco(text, icon).copyWith(
+              suffixIcon: clearDateSuffix(c[key]!),
+            ),
             onTap: () async {
               final picked = await showTimePicker(context: context, initialTime: TimeOfDay.now());
               if (picked == null) return;

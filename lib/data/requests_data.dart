@@ -5,6 +5,7 @@ import 'custody_sharing.dart';
 import 'delegations_repository.dart';
 import 'fundly_account.dart';
 import 'personal_entries_repository.dart';
+import 'salary_income_sync.dart';
 import 'salary_receipts.dart';
 import 'shared_entries_repository.dart';
 import 'shared_expenses.dart';
@@ -74,6 +75,8 @@ class RequestsData {
             name: name,
           );
           if (error != null) return error;
+          // المعتمد يظهر عند المستلم في «مالية» كإيراد.
+          if (accept) await SalaryIncomeSync.syncReceived();
         case 'personal_entries':
           final repo = SupabasePersonalEntriesRepository();
           final fresh = await repo.fetchOne(item.recordId);

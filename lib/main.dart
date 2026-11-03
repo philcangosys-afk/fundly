@@ -1124,8 +1124,8 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
         case 'قريبة الاستحقاق':
           if (!item.isDueSoon || closed(item)) return false;
         case 'مستحقة':
-          if (item.date == null ||
-              !DateUtils.isSameDay(item.date, today) ||
+          if (item.followDay == null ||
+              !DateUtils.isSameDay(item.followDay, today) ||
               closed(item)) {
             return false;
           }
@@ -5659,8 +5659,10 @@ class _DelegationsHubPageState extends State<_DelegationsHubPage> {
     return remaining >= 0 && remaining <= 30;
   }
 
+  /// ساري طوال يوم نهايته (مقارنة بالتاريخ لا بالساعة).
   bool _isEnded(_DelegationRecord d) {
-    return d.endDate.isBefore(DateTime.now());
+    return DateUtils.dateOnly(d.endDate)
+        .isBefore(DateUtils.dateOnly(DateTime.now()));
   }
 
   bool _isScheduled(_DelegationRecord d) {
@@ -7999,15 +8001,18 @@ class _DelegationsHubPageState extends State<_DelegationsHubPage> {
                       return;
                     }
                     if (action == 'revoke') {
-                      // إلغاء فوري: ينتهي اليوم، ويبقى في «المنتهية» مع سجله.
-                      final today = DateUtils.dateOnly(DateTime.now());
+                      // إلغاء فوري: ينتهي أمس (فيُعدّ منتهيًا من الآن، لأن
+                      // يوم النهاية نفسه ساري)، ويبقى في «المنتهية» مع سجله.
+                      final yesterday = DateUtils.dateOnly(
+                        DateTime.now(),
+                      ).subtract(const Duration(days: 1));
                       await _persist(
                         item.copyWith(
                           active: true,
-                          startDate: item.startDate.isAfter(today)
-                              ? today
+                          startDate: item.startDate.isAfter(yesterday)
+                              ? yesterday
                               : null,
-                          endDate: today,
+                          endDate: yesterday,
                           permissions: DelegationRecord.withLog(
                             item.permissions,
                             'إلغاء فوري للتفويض',

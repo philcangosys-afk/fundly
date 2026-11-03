@@ -3,11 +3,14 @@ import 'dart:convert';
 import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import 'custody_sharing.dart';
 import 'delegations_repository.dart';
+import 'entry_status.dart';
 import 'personal_entries_repository.dart';
 import 'project_assets_repository.dart';
 import 'scope_catalog.dart';
 import 'shared_entries_repository.dart';
+import 'shared_member_state.dart';
 
 /// عنصر موحَّد يمثّل أي سجل في التطبيق (التزام شخصي أو مشترك، شخص/جهة،
 /// تفويض، عقار/نشاط/معدة) داخل الملخص الشامل والتقارير والأرشيف.
@@ -28,6 +31,9 @@ class SummaryItem {
     this.subtitle = '',
     this.createdAt,
     this.searchText = '',
+    this.followsDate = true,
+    this.followDate,
+    this.canBeOverdue = true,
   });
 
   /// القسم الرئيسي كما في قائمة [ScopeCatalog.scopes].
@@ -58,15 +64,41 @@ class SummaryItem {
   /// في التقارير والأرشيف.
   final String searchText;
 
-  bool get isOverdue =>
-      date != null &&
-      date!.isBefore(DateTime.now()) &&
-      !_closedStatuses.contains(status);
+  /// false: التاريخ للاطلاع فقط (تاريخ إضافة الشخص، مصروف تمّ) — لا يجعل
+  /// العنصر «متأخرًا» ولا «قريبًا».
+  final bool followsDate;
 
+  /// موعد المتابعة إن اختلف عن [date] (المصروف المتكرر: موعده القادم).
+  final DateTime? followDate;
+
+  /// false: مرور التاريخ يعني «منتهي» لا «متأخر» (نهاية عقد أصل، تفويض).
+  final bool canBeOverdue;
+
+  /// يوم المتابعة (بلا ساعة) — نفس ما يُحسب في صفحة القسم عند فتح العنصر.
+  DateTime? get followDay {
+    if (!followsDate) return null;
+    final day = followDate ?? date;
+    return day == null ? null : DateTime(day.year, day.month, day.day);
+  }
+
+  bool get isClosed => _closedStatuses.contains(status.trim());
+
+  /// متأخر: فات يوم موعده (اليوم نفسه «مستحق» لا «متأخر») ولم يُغلق.
+  bool get isOverdue {
+    final day = followDay;
+    if (!canBeOverdue || day == null || isClosed) return false;
+    final now = DateTime.now();
+    return day.isBefore(DateTime(now.year, now.month, now.day));
+  }
+
+  /// قريبة الاستحقاق: خلال 7 أيام بعد اليوم — نفس تعريف صفحات الأقسام
+  /// (اليوم نفسه «مستحقة»).
   bool get isDueSoon {
-    if (date == null) return false;
-    final days = date!.difference(DateTime.now()).inDays;
-    return days >= 0 && days <= 30;
+    final day = followDay;
+    if (day == null || isClosed) return false;
+    final now = DateTime.now();
+    final days = day.difference(DateTime(now.year, now.month, now.day)).inDays;
+    return days >= 1 && days <= 7;
   }
 
   static const _closedStatuses = {
@@ -74,7 +106,16 @@ class SummaryItem {
     'منتهي',
     'مغلقة',
     'مكتملة',
+    'مكتمل',
     'مسددة',
+    'مسدد',
+    'ملغاة',
+    'ملغى',
+    'ملغي',
+    'تمت التسوية',
+    'مؤرشف',
+    'مجمّدة',
+    'محذوف',
   };
 }
 
@@ -109,8 +150,37 @@ class HomeSummaryService {
       for (final entry in await _personalRepository.fetchAll()) {
         // ما في سلة المهملات لا يدخل الملخصات ولا التقارير.
         if (entry.status == 'محذوف') continue;
+        // عهدة أو دين مع حساب آخر: ما أراقبه فقط أو لم أقبله بعد ليس لي —
+        // كالرئيسية.
+        if (entry.entryType == 'عهدة مالية' ||
+            entry.entryType == 'دين / قرض / سلفة') {
+          final assignment = CustodyAssignment.decode(entry.details);
+          final role = assignment.roleFor(AppIdentity.id);
+          if (role == CustodyRole.observer ||
+              (role == CustodyRole.holder && !assignment.isAccepted)) {
+            continue;
+          }
+        }
+        final due = _parseDdMmYyyy(entry.dueDate);
+        // نفس حساب صفحة الالتزامات الشخصية (entry_status): موعد المتابعة
+        // (المتكرر بموعده القادم، القسط بأول قسط لم يُسدَّد، والملاحظة
+        // والعهدة والدواء والمصروف غير المتكرر بلا موعد)، ونتيجته (سُدِّد
+        // كامله = مكتملة، مناسبة مرّ يومها = منتهية).
+        final follow = entryFollowDate(
+          type: entry.entryType,
+          due: due,
+          details: entry.details,
+        );
+        final outcome = entryOutcomeStatus(
+          type: entry.entryType,
+          due: due,
+          details: entry.details,
+          total: entry.amount,
+        );
         items.add(
           SummaryItem(
+            followsDate: follow != null,
+            followDate: follow,
             scope: ScopeCatalog.personal,
             section: ScopeCatalog.sectionForType(
               ScopeCatalog.personal,
@@ -120,8 +190,12 @@ class HomeSummaryService {
             type: entry.entryType.isEmpty ? 'غير مصنّف' : entry.entryType,
             title: entry.title,
             amount: entry.amount,
-            date: _parseDdMmYyyy(entry.dueDate),
-            status: entry.status,
+            date: due,
+            // «منتهية» لما مرّ «إلى تاريخ» — كما تظهر في صفحتها.
+            status: entryFinalStatuses.contains(entry.status)
+                ? entry.status
+                : (outcome ??
+                      entryDerivedStatus(entry.status, entry.details)),
             person: _personOf(entry.details),
             payment: entry.details['طريقة الدفع'] ?? '',
             subtitle: entry.category,
@@ -136,8 +210,22 @@ class HomeSummaryService {
 
     try {
       for (final entry in await _sharedRepository.fetchAll()) {
+        // ما أرشفته لنفسي من الالتزامات المشتركة لا يدخل الملخص.
+        if (SharedMemberState.hasMine(
+          entry.details,
+          SharedMemberState.archivedKey,
+        )) {
+          continue;
+        }
+        final due = _parseDdMmYyyy(entry.dueDate);
+        final isTransaction = entryTransactionTypes.contains(entry.entryType);
+        final next = isTransaction && due != null
+            ? entryNextRepeatDate(due, entry.details)
+            : null;
         items.add(
           SummaryItem(
+            followsDate: !isTransaction || next != null,
+            followDate: next,
             scope: ScopeCatalog.shared,
             section: ScopeCatalog.sectionForType(
               ScopeCatalog.shared,
@@ -147,7 +235,7 @@ class HomeSummaryService {
             type: entry.entryType.isEmpty ? 'غير مصنّف' : entry.entryType,
             title: entry.title,
             amount: entry.amount,
-            date: _parseDdMmYyyy(entry.dueDate),
+            date: due,
             status: entry.status,
             person: _personOf(entry.details),
             payment: entry.details['طريقة الدفع'] ?? '',
@@ -171,6 +259,8 @@ class HomeSummaryService {
         };
         items.add(
           SummaryItem(
+            // نهاية العقد/الرخصة: «منتهي» بعد مرورها لا «متأخر».
+            canBeOverdue: false,
             scope: scope,
             section: asset.subType.isEmpty ? 'بيانات الأصل' : asset.subType,
             type: asset.subType.isEmpty ? 'أصل' : asset.subType,
@@ -197,6 +287,7 @@ class HomeSummaryService {
           .fetchDelegations()) {
         items.add(
           SummaryItem(
+            canBeOverdue: false,
             scope: ScopeCatalog.delegations,
             section: DelegationRecord.mainScopeOf(delegation.scope),
             type:
@@ -226,6 +317,8 @@ class HomeSummaryService {
         final name = (person['fullName'] ?? '').toString();
         items.add(
           SummaryItem(
+            // تاريخ الإضافة للاطلاع فقط — كل شخص كان يُعدّ «متأخرًا».
+            followsDate: false,
             scope: ScopeCatalog.people,
             section: isEntity ? 'الجهات والشركات' : 'الأفراد',
             type: category.isNotEmpty ? category : (isEntity ? 'جهة' : 'فرد'),

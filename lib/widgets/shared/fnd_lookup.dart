@@ -38,6 +38,118 @@ class FndNameNotice extends StatelessWidget {
   );
 }
 
+/// خانة «الرقم التعريفي» بشكل حقل كتابة واضح (إطار ونقاط مكان الأرقام)،
+/// فيعرف المستخدم أنه يكتب فيها. الضغط يفتح نافذة الكتابة نفسها.
+class FndEntryBox extends StatelessWidget {
+  const FndEntryBox({
+    super.key,
+    required this.onTap,
+    this.accent = AppTheme.brand,
+    this.title = 'دعوة بالرقم التعريفي',
+  });
+
+  final VoidCallback onTap;
+  final Color accent;
+  final String title;
+
+  @override
+  Widget build(BuildContext context) {
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Row(
+          children: [
+            Icon(Icons.badge_outlined, size: 18, color: accent),
+            const SizedBox(width: 6),
+            Expanded(
+              child: Text(
+                title,
+                style: const TextStyle(
+                  fontSize: 13,
+                  fontWeight: FontWeight.w900,
+                  color: AppTheme.title,
+                ),
+              ),
+            ),
+          ],
+        ),
+        const SizedBox(height: 8),
+        Material(
+          color: Colors.white,
+          borderRadius: BorderRadius.circular(AppTheme.rField),
+          child: InkWell(
+            key: const ValueKey('fnd-entry-box'),
+            onTap: onTap,
+            borderRadius: BorderRadius.circular(AppTheme.rField),
+            child: Container(
+              height: 52,
+              padding: const EdgeInsets.symmetric(horizontal: 14),
+              decoration: BoxDecoration(
+                borderRadius: BorderRadius.circular(AppTheme.rField),
+                border: Border.all(
+                  color: accent.withValues(alpha: 0.6),
+                  width: 1.4,
+                ),
+              ),
+              // الرقم يُكتب من اليسار دائمًا: FND ثم مكان الأرقام نقاطًا.
+              child: Row(
+                textDirection: TextDirection.ltr,
+                children: [
+                  Container(width: 2, height: 22, color: accent),
+                  const SizedBox(width: 8),
+                  Text(
+                    'FND',
+                    textDirection: TextDirection.ltr,
+                    style: TextStyle(
+                      fontSize: 15,
+                      fontWeight: FontWeight.w900,
+                      color: accent,
+                      letterSpacing: 1,
+                    ),
+                  ),
+                  const Expanded(
+                    child: Text(
+                      ' - • • • •  - • • • •',
+                      textDirection: TextDirection.ltr,
+                      maxLines: 1,
+                      style: TextStyle(
+                        fontSize: 15,
+                        fontWeight: FontWeight.w900,
+                        color: Color(0xFFB5C3C0),
+                        letterSpacing: 1.5,
+                      ),
+                    ),
+                  ),
+                  Icon(Icons.edit_rounded, size: 19, color: accent),
+                ],
+              ),
+            ),
+          ),
+        ),
+        const SizedBox(height: 6),
+        Text(
+          'اضغط واكتب رقم الشخص — يظهر اسمه لتتأكد منه',
+          style: TextStyle(
+            fontSize: 11.5,
+            fontWeight: FontWeight.w800,
+            color: accent,
+          ),
+        ),
+        const SizedBox(height: 2),
+        Text(
+          fndNameHint(),
+          style: const TextStyle(
+            fontSize: 10.5,
+            height: 1.5,
+            fontWeight: FontWeight.w600,
+            color: AppTheme.muted,
+          ),
+        ),
+      ],
+    );
+  }
+}
+
 /// نافذة الرقم التعريفي: يكتب المستخدم الرقم فيظهر تحته الاسم المرتبط به
 /// من الخادم، فيتأكد أنه الشخص الصحيح قبل الدعوة أو الإسناد.
 /// تعيد (الرقم، الاسم) أو null عند الإلغاء.
@@ -108,6 +220,13 @@ class _FndLookupDialogState extends State<_FndLookupDialog> {
     if (!AppIdentity.isValid(id)) {
       ScaffoldMessenger.of(context).showSnackBar(
         const SnackBar(content: Text('الصيغة الصحيحة FND-XXXX-XXXX')),
+      );
+      return;
+    }
+    // لا يُضاف رقمي التعريفي أنا (تفويض نفسي أو عضوية لنفسي).
+    if (AppIdentity.id.isNotEmpty && id == AppIdentity.id) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(content: Text('هذا رقمك التعريفي — اكتب رقم الشخص الآخر')),
       );
       return;
     }

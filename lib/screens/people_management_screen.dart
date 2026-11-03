@@ -6,7 +6,9 @@ import '../l10n/app_language.dart';
 import 'package:share_plus/share_plus.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 
+import '../data/entry_status.dart';
 import '../data/app_settings.dart';
+import '../widgets/shared/clear_date_suffix.dart';
 import '../widgets/shared/fnd_lookup.dart';
 import 'salary_receipts_screen.dart';
 import '../data/salary_receipts.dart';
@@ -117,10 +119,31 @@ bool _isEntityKind(String key) => key.startsWith('entity_');
 int _dueFollowUpCount(_PersonItem person) =>
     (person.dueToYou > 0 ? 1 : 0) + (person.dueOnYou > 0 ? 1 : 0);
 
+/// مستندات الفرد المنتهية ([expired]) أو التي تنتهي خلال 30 يومًا — من
+/// تواريخ انتهاء وثائقه الفعلية، لا من نص محفوظ.
+int _personDocsCount(_PersonItem person, bool expired) {
+  var count = 0;
+  for (final doc in _IdentityDoc.all) {
+    final days = _daysFromToday(person.details[doc.expiryKey] ?? '');
+    if (days == null) continue;
+    if (expired ? days < 0 : days >= 0 && days <= 30) count++;
+  }
+  for (final line in person.activityLog) {
+    if (!line.startsWith('مستندات')) continue;
+    final due = _PeopleManagementScreenState._entryDueDate(line);
+    if (due == null) continue;
+    final days = DateUtils.dateOnly(due)
+        .difference(DateUtils.dateOnly(DateTime.now()))
+        .inDays;
+    if (expired ? days < 0 : days >= 0 && days <= 30) count++;
+  }
+  return count;
+}
+
 /// مستندات تحتاج متابعة — نفس تعريف «وثائق للمتابعة» في مركز المتابعة،
 /// فلا يختلف رقم البطاقة عن رقم المركز.
 int _docsFollowUpCount(_PersonItem person) =>
-    person.statusNote.contains('مستند') ? 1 : 0;
+    _personDocsCount(person, true) + _personDocsCount(person, false);
 
 /// سطر التصنيف بلا تكرار: سجل تصنيفه «قريب» ودوره «قريب» كان يظهر
 /// «قريب · قريب».
@@ -272,7 +295,20 @@ String _medicineState(PersonalEntryRecord record) {
 /// حالة بند متابعة وتخطيط حسب موعده.
 String _planState(PersonalEntryRecord record) {
   if (_closedStatuses.contains(record.status)) return 'مكتملة';
-  final days = _daysFromToday(record.dueDate);
+  if (entryDerivedStatus(record.status, record.details) == 'منتهية') {
+    return 'مكتملة';
+  }
+  // نفس صفحة الالتزامات الشخصية: الملاحظة بلا موعد، والمتكرر بموعده القادم.
+  final follow = entryFollowDate(
+    type: record.entryType,
+    due: entryParseDay(record.dueDate),
+    details: record.details,
+  );
+  final days = follow == null
+      ? null
+      : DateUtils.dateOnly(follow)
+            .difference(DateUtils.dateOnly(DateTime.now()))
+            .inDays;
   if (days == null) return 'نشطة';
   if (days < 0) return 'متأخرة';
   if (days == 0) return 'حان وقتها';
@@ -719,7 +755,8 @@ class _PeopleManagementScreenState extends State<PeopleManagementScreen> {
       'status_near' =>
         status.contains('قريب') ||
             status.contains('ينتهي خلال') ||
-            status.contains('قارب'),
+            status.contains('قارب') ||
+            _personDocsCount(person, false) > 0,
       'status_urgent' =>
         status.contains('مستعجل') ||
             status.contains('عاجل') ||
@@ -727,7 +764,8 @@ class _PeopleManagementScreenState extends State<PeopleManagementScreen> {
       'status_late' =>
         status.contains('متأخر') ||
             status.contains('منتهي') ||
-            status.contains('متأخرة'),
+            status.contains('متأخرة') ||
+            _personDocsCount(person, true) > 0,
       _ => false,
     };
   }
@@ -796,8 +834,10 @@ class _PeopleManagementScreenState extends State<PeopleManagementScreen> {
       case 'المستحق بعد 7 أيام':
         if (person.openTasks <= 0) return false;
       case 'متأخر':
+        // وثيقة منتهية فعلًا تُعدّ أيضًا (من تواريخها لا من نص محفوظ).
         if (!person.statusNote.contains('متأخر') &&
-            !person.badge.contains('عاجل')) {
+            !person.badge.contains('عاجل') &&
+            _personDocsCount(person, true) == 0) {
           return false;
         }
       case 'مكتمل':
@@ -1147,24 +1187,8 @@ class _PeopleManagementScreenState extends State<PeopleManagementScreen> {
               .length;
     }
 
-    int docsCount(_PersonItem person, bool expired) {
-      var count = 0;
-      for (final doc in _IdentityDoc.all) {
-        final days = _daysFromToday(person.details[doc.expiryKey] ?? '');
-        if (days == null) continue;
-        if (expired ? days < 0 : days >= 0 && days <= 30) count++;
-      }
-      for (final line in person.activityLog) {
-        if (!line.startsWith('مستندات')) continue;
-        final due = _entryDueDate(line);
-        if (due == null) continue;
-        final days = DateUtils.dateOnly(due)
-            .difference(DateUtils.dateOnly(DateTime.now()))
-            .inDays;
-        if (expired ? days < 0 : days >= 0 && days <= 30) count++;
-      }
-      return count;
-    }
+    int docsCount(_PersonItem person, bool expired) =>
+        _personDocsCount(person, expired);
 
     // العهدة: ما سُلِّم لهذا الفرد من «عهدة مالية» في الالتزامات الشخصية.
     List<PersonalEntryRecord> custodyOf(_PersonItem person) => [
@@ -2266,7 +2290,8 @@ class _PeopleManagementScreenState extends State<PeopleManagementScreen> {
                           additionalCategoryNames: selectedAdditional.toList(
                             growable: false,
                           ),
-                          extraNote: notes.isEmpty ? old.extraNote : notes,
+                          // مسح الملاحظة في التعديل يمسحها فعلًا.
+                          extraNote: notes,
                           documents: documents,
                           documentsCount: documents.length,
                           lastUpdate: _todayStamp(),
@@ -2838,10 +2863,16 @@ class _PeopleManagementScreenState extends State<PeopleManagementScreen> {
       },
       decoration: InputDecoration(
         hintText: hint,
-        suffixIcon: const Icon(
-          Icons.calendar_today_rounded,
-          size: 18,
-          color: Color(0xFF0E7161),
+        // بعد الاختيار: × يمسح التاريخ.
+        suffixIcon: ValueListenableBuilder<TextEditingValue>(
+          valueListenable: controller,
+          builder: (context, value, _) => value.text.trim().isEmpty
+              ? const Icon(
+                  Icons.calendar_today_rounded,
+                  size: 18,
+                  color: Color(0xFF0E7161),
+                )
+              : clearDateSuffix(controller, onCleared: onPicked),
         ),
         border: OutlineInputBorder(borderRadius: BorderRadius.circular(12)),
         isDense: true,
@@ -4404,9 +4435,23 @@ class _PersonDetailsScreenState extends State<PersonDetailsScreen> {
                             value: end == null ? 'مفتوح' : _formatDate(end),
                             onTap: () async {
                               final picked = await pick(end);
-                              if (picked != null) {
-                                setSheetState(() => end = picked);
+                              if (picked == null) return;
+                              // النهاية لا تسبق البداية.
+                              if (DateUtils.dateOnly(picked).isBefore(
+                                DateUtils.dateOnly(start),
+                              )) {
+                                if (!context.mounted) return;
+                                ScaffoldMessenger.of(context).showSnackBar(
+                                  const SnackBar(
+                                    content: Text(
+                                      '«إلى تاريخ» لا يسبق «من تاريخ»',
+                                    ),
+                                    behavior: SnackBarBehavior.floating,
+                                  ),
+                                );
+                                return;
                               }
+                              setSheetState(() => end = picked);
                             },
                             onClear: end == null
                                 ? null
@@ -6742,7 +6787,8 @@ class _PersonDetailsScreenState extends State<PersonDetailsScreen> {
     // المبلغ المُدخل يُضاف فعليًا إلى رصيد الشخص. كان يُكتب سابقًا كنص في
     // السجل الزمني فقط، فتبقى بطاقة الشخص تعرض "له : 0 درهم" مهما سُجِّل من
     // مبالغ — وكان ترتيب "الأعلى مستحقات" بلا أي معنى نتيجة ذلك.
-    final amount = double.tryParse(amountCtrl.text.trim()) ?? 0;
+    // أرقام عربية وفواصل الآلاف (1,500) تُقرأ — كانت تُحسب صفرًا.
+    final amount = entryNumber(amountCtrl.text);
     if (showAmount && _directionKinds.contains(resolvedKind) && amount > 0) {
       updated = amountToPerson
           ? updated.copyWith(
