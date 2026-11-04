@@ -691,6 +691,7 @@ class _Page {
     required this.date,
     this.metaExtra = const [],
     this.warn = false,
+    this.letterhead = true,
   });
 
   final String title;
@@ -699,6 +700,10 @@ class _Page {
   final DateTime date;
   final List<(String, String)> metaExtra;
   final bool warn;
+
+  /// ترويسة Fundly: الشعار والاسم وجدول رقم المستند والتاريخ والشريط
+  /// الملوّن والتذييل. بدونها مستند أبيض بالعنوان والمحتوى ورقم الصفحة.
+  final bool letterhead;
 }
 
 /// الصفحة كاملة: الرأس في الصفحة الأولى، والتذييل برقم الصفحة في كل صفحة.
@@ -725,6 +730,7 @@ Future<Uint8List> _render(
   final issuedOn = _dmy(DateTime.now());
 
   final header = <pw.Widget>[
+    if (page.letterhead) ...[
     pw.Row(
       crossAxisAlignment: pw.CrossAxisAlignment.start,
       children: [
@@ -784,7 +790,16 @@ Future<Uint8List> _render(
     pw.SizedBox(height: 8),
     pw.Container(height: 1.2, color: accent),
     pw.SizedBox(height: 10),
+    ],
     pw.Center(child: _text(_tr(page.title), size: 18, bold: true, color: _title)),
+    if (!page.letterhead)
+      pw.Center(
+        child: _text(
+          '${_dmy(page.date)} ${_tr('م')}',
+          size: 8.5,
+          color: _muted,
+        ),
+      ),
     pw.Center(
       child: pw.Text(
         page.subtitle,
@@ -803,7 +818,9 @@ Future<Uint8List> _render(
         margin: const pw.EdgeInsets.fromLTRB(32, 30, 32, 28),
         textDirection: rtl ? pw.TextDirection.rtl : pw.TextDirection.ltr,
         theme: pw.ThemeData.withFont(base: _fontRegular!, bold: _fontBold!),
-        buildBackground: (context) => pw.FullPage(
+        buildBackground: !page.letterhead
+            ? null
+            : (context) => pw.FullPage(
           ignoreMargins: true,
           child: pw.Stack(
             children: [
@@ -845,12 +862,14 @@ Future<Uint8List> _render(
         child: pw.Row(
           children: [
             pw.Expanded(
-              child: _text(
-                '${_tr('صادر إلكترونيًا عبر تطبيق Fundly')} · $issuedOn — '
-                '${_tr('أي كشط أو تعديل يدوي يُبطل هذا المستند')}',
-                size: 6.8,
-                color: _faint,
-              ),
+              child: page.letterhead
+                  ? _text(
+                      '${_tr('صادر إلكترونيًا عبر تطبيق Fundly')} · $issuedOn — '
+                      '${_tr('أي كشط أو تعديل يدوي يُبطل هذا المستند')}',
+                      size: 6.8,
+                      color: _faint,
+                    )
+                  : pw.SizedBox(),
             ),
             _text(
               '${_tr('صفحة')} ${context.pageNumber} / ${context.pagesCount}',
@@ -986,6 +1005,8 @@ Future<Uint8List> buildTemplatePdf(
     final extraTo = [
       if (v('رقم هوية المرسل إليه').isNotEmpty)
         '${_tr('رقم الهوية')}: ${v('رقم هوية المرسل إليه')}',
+      if (v('رقم جواز المرسل إليه').isNotEmpty)
+        '${_tr('رقم الجواز')}: ${v('رقم جواز المرسل إليه')}',
       v('عنوان المرسل إليه'),
     ].where((s) => s.isNotEmpty).join(' · ');
     if (extraTo.isNotEmpty) body.add(_text(extraTo, size: 8.5, color: _muted));
@@ -1576,6 +1597,7 @@ Future<Uint8List> buildRecordPdf({
   required PdfPageFormat format,
   String subtitle = 'RECORD',
   List<(String, String)> meta = const [],
+  bool letterhead = true,
 }) async {
   final doc = _Doc();
   final body = <pw.Widget>[];
@@ -1604,6 +1626,7 @@ Future<Uint8List> buildRecordPdf({
       docNo: '',
       date: DateTime.now(),
       metaExtra: meta,
+      letterhead: letterhead,
     ),
     body,
     format,

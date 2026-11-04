@@ -189,8 +189,9 @@ class LocationPickerScreen extends StatefulWidget {
 }
 
 class _LocationPickerScreenState extends State<LocationPickerScreen> {
-  // بلا موقع سابق: أبوظبي.
-  static const _fallback = LatLng(24.4539, 54.3773);
+  // بلا موقع سابق: عرض عام للعالم دون دولة بعينها، ويُقرَّب إلى موقع
+  // الجهاز إن كان الإذن ممنوحًا مسبقًا.
+  static const _fallback = LatLng(20, 20);
 
   final _map = MapController();
   final _searchCtrl = TextEditingController();
@@ -292,6 +293,24 @@ class _LocationPickerScreenState extends State<LocationPickerScreen> {
       );
     } finally {
       if (mounted) setState(() => _searching = false);
+    }
+  }
+
+  /// بلا موقع سابق ولا بحث: يُقرَّب إلى آخر موقع معروف للجهاز دون طلب إذن
+  /// ودون تثبيت دبوس. إن لم يكن الإذن ممنوحًا تبقى الخريطة على العرض العام.
+  Future<void> _centerOnDeviceQuietly() async {
+    try {
+      if (!await Geolocator.isLocationServiceEnabled()) return;
+      final permission = await Geolocator.checkPermission();
+      if (permission != LocationPermission.whileInUse &&
+          permission != LocationPermission.always) {
+        return;
+      }
+      final position = await Geolocator.getLastKnownPosition();
+      if (position == null || !mounted || !_mapReady || _pin != null) return;
+      _map.move(LatLng(position.latitude, position.longitude), 12);
+    } catch (_) {
+      // يبقى العرض العام.
     }
   }
 
@@ -580,8 +599,14 @@ class _LocationPickerScreenState extends State<LocationPickerScreen> {
                     mapController: _map,
                     options: MapOptions(
                       initialCenter: _start,
-                      initialZoom: widget.initialLat != null ? 16 : 10,
-                      onMapReady: () => _mapReady = true,
+                      initialZoom: widget.initialLat != null ? 16 : 2,
+                      onMapReady: () {
+                        _mapReady = true;
+                        if (widget.initialLat == null &&
+                            _searchCtrl.text.trim().isEmpty) {
+                          _centerOnDeviceQuietly();
+                        }
+                      },
                       onTap: (_, point) {
                         _searchFocus.unfocus();
                         _setPin(point, move: false);

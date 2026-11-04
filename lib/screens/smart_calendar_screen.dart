@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart' hide Text, Align;
 import '../l10n/tr_widgets.dart';
+import '../widgets/shared/module_shared_widgets.dart' show directOpenRoute;
 import '../l10n/app_language.dart';
 
 import '../data/calendar_items_store.dart';
@@ -14,9 +15,32 @@ import 'shared_commitments_screen.dart';
 import '../widgets/shared/app_design.dart';
 
 class SmartCalendarScreen extends StatefulWidget {
-  const SmartCalendarScreen({super.key, this.metricsLoader});
+  const SmartCalendarScreen({
+    super.key,
+    this.metricsLoader,
+    this.modules,
+    this.scopeLabel = '',
+  });
 
   final Future<HomeDashboardMetrics> Function()? metricsLoader;
+
+  /// كلندر داخلي لقسم: بنود هذه الأقسام وحدها (أسماء [HomeCalendarItem.module]).
+  /// بدونه: كل الأقسام (كلندر الرئيسية).
+  final Set<String>? modules;
+
+  /// اسم القسم تحت العنوان في الكلندر الداخلي.
+  final String scopeLabel;
+
+  /// كلندر الالتزامات الشخصية — ونظائره للأقسام الأخرى.
+  static const personalModules = {'الالتزامات الشخصية'};
+  static const sharedModules = {'الالتزامات المشتركة'};
+  static const peopleModules = {'الأفراد والجهات'};
+  static const assetModules = {
+    'العقارات والأنشطة التجارية',
+    'الأنشطة التجارية',
+    'العقارات',
+    'المركبات ووسائل النقل',
+  };
 
   @override
   State<SmartCalendarScreen> createState() => _SmartCalendarScreenState();
@@ -71,6 +95,19 @@ class _SmartCalendarScreenState extends State<SmartCalendarScreen> {
     if (!mounted) return;
     final metrics = results[0] as HomeDashboardMetrics;
     final records = results[1] as List<CalendarRecord>;
+    final scope = widget.modules;
+    // الكلندر الداخلي: بنود القسم وحدها — بلا ما أُضيف في الكلندر العام.
+    if (scope != null) {
+      setState(() {
+        _items = [
+          for (final item in metrics.calendarItems)
+            if (scope.contains(item.module)) item,
+        ];
+        _records = const [];
+        _isLoading = false;
+      });
+      return;
+    }
     final items = List<HomeCalendarItem>.from(metrics.calendarItems);
     for (final record in records) {
       if (items.any((item) => item.sourceId == record.id)) continue;
@@ -331,10 +368,8 @@ class _SmartCalendarScreenState extends State<SmartCalendarScreen> {
                     ],
                   ),
                   const SizedBox(height: 12),
-                  // مهمة، موعد، عادة، تذكير، ملاحظات.
-                  Wrap(
-                    spacing: 6,
-                    runSpacing: 6,
+                  // مهمة، موعد، عادة، تذكير، ملاحظات — الخمسة في سطر واحد.
+                  Row(
                     children: [
                       for (final option in const [
                         ('مهمة', Icons.task_alt_rounded),
@@ -343,7 +378,12 @@ class _SmartCalendarScreenState extends State<SmartCalendarScreen> {
                         ('تذكير', Icons.notifications_active_outlined),
                         ('ملاحظات', Icons.sticky_note_2_outlined),
                       ])
-                        ChoiceChip(
+                        Expanded(
+                          child: Padding(
+                            padding: const EdgeInsets.symmetric(horizontal: 2),
+                            child: FittedBox(
+                              fit: BoxFit.scaleDown,
+                              child: ChoiceChip(
                           avatar: Icon(
                             option.$2,
                             size: 16,
@@ -354,6 +394,15 @@ class _SmartCalendarScreenState extends State<SmartCalendarScreen> {
                           label: Text(option.$1),
                           selected: type == option.$1,
                           showCheckmark: false,
+                          // مدمجة لتتسع الخمسة في سطر واحد.
+                          visualDensity: VisualDensity.compact,
+                          materialTapTargetSize:
+                              MaterialTapTargetSize.shrinkWrap,
+                          padding: const EdgeInsets.symmetric(horizontal: 4),
+                          labelPadding: const EdgeInsetsDirectional.only(
+                            start: 2,
+                            end: 4,
+                          ),
                           selectedColor: const Color(0xFF0A5A50),
                           labelStyle: TextStyle(
                             fontSize: 12,
@@ -364,6 +413,9 @@ class _SmartCalendarScreenState extends State<SmartCalendarScreen> {
                           ),
                           onSelected: (_) =>
                               setSheetState(() => type = option.$1),
+                              ),
+                            ),
+                          ),
                         ),
                     ],
                   ),
@@ -372,7 +424,7 @@ class _SmartCalendarScreenState extends State<SmartCalendarScreen> {
                     key: const ValueKey('calendar-record-title'),
                     controller: titleController,
                     decoration: InputDecoration(
-                      label: const Text('العنوان *'),
+                      label: const Text('الموضوع *'),
                       border: OutlineInputBorder(),
                     ),
                   ),
@@ -427,29 +479,45 @@ class _SmartCalendarScreenState extends State<SmartCalendarScreen> {
                     ],
                   ),
                   const SizedBox(height: 10),
+                  // «مخصص» (-1): يكتب عدد الأيام بنفسه.
                   DropdownButtonFormField<int>(
+                    key: ValueKey('calendar-remind-$remindBeforeDays'),
                     initialValue: remindBeforeDays,
                     decoration: InputDecoration(
                       labelText: AppTr.tr('التذكير قبل الموعد'),
                       border: OutlineInputBorder(),
                     ),
-                    items:
-                        const {
-                              0: 'في نفس اليوم',
-                              1: 'قبل يوم',
-                              3: 'قبل 3 أيام',
-                              7: 'قبل أسبوع',
-                              30: 'قبل شهر',
-                            }.entries
-                            .map(
-                              (entry) => DropdownMenuItem(
-                                value: entry.key,
-                                child: Text(entry.value),
-                              ),
-                            )
-                            .toList(),
-                    onChanged: (value) =>
-                        setSheetState(() => remindBeforeDays = value ?? 0),
+                    items: [
+                      for (final entry in {
+                        0: 'في نفس اليوم',
+                        1: 'قبل يوم',
+                        3: 'قبل 3 أيام',
+                        7: 'قبل أسبوع',
+                        30: 'قبل شهر',
+                        if (!const {0, 1, 3, 7, 30}.contains(remindBeforeDays))
+                          remindBeforeDays:
+                              '${AppTr.tr('قبل')} $remindBeforeDays ${AppTr.tr('يوم')}',
+                        -1: 'مخصص',
+                      }.entries)
+                        DropdownMenuItem(
+                          value: entry.key,
+                          child: Text(entry.value),
+                        ),
+                    ],
+                    onChanged: (value) async {
+                      if (value != -1) {
+                        setSheetState(() => remindBeforeDays = value ?? 0);
+                        return;
+                      }
+                      final days = await _askCustomRemindDays(
+                        context,
+                        remindBeforeDays,
+                      );
+                      // يُعاد بناء الحقل بالقيمة الجديدة (أو القديمة إن أُلغي).
+                      setSheetState(
+                        () => remindBeforeDays = days ?? remindBeforeDays,
+                      );
+                    },
                   ),
                   const SizedBox(height: 10),
                   TextField(
@@ -509,6 +577,51 @@ class _SmartCalendarScreenState extends State<SmartCalendarScreen> {
     await _load();
   }
 
+  /// «مخصص»: عدد الأيام قبل الموعد يكتبه المستخدم.
+  Future<int?> _askCustomRemindDays(BuildContext context, int current) async {
+    final controller = TextEditingController(
+      text: current > 0 ? '$current' : '',
+    );
+    final days = await showDialog<int>(
+      context: context,
+      builder: (dialogContext) => Directionality(
+        textDirection: AppTr.uiDir,
+        child: AlertDialog(
+          title: const Text('تذكير مخصص'),
+          content: TextField(
+            controller: controller,
+            autofocus: true,
+            keyboardType: TextInputType.number,
+            decoration: InputDecoration(
+              labelText: AppTr.tr('عدد الأيام قبل الموعد'),
+              border: const OutlineInputBorder(),
+            ),
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext),
+              child: const Text('إلغاء'),
+            ),
+            FilledButton(
+              onPressed: () {
+                final n = int.tryParse(
+                  controller.text.trim().replaceAllMapped(
+                    RegExp('[٠-٩]'),
+                    (m) => '${m.group(0)!.codeUnitAt(0) - 0x0660}',
+                  ),
+                );
+                if (n == null || n < 0 || n > 365) return;
+                Navigator.pop(dialogContext, n);
+              },
+              child: const Text('حفظ'),
+            ),
+          ],
+        ),
+      ),
+    );
+    return days;
+  }
+
   Future<void> _toggleCompleted(CalendarRecord record) async {
     final completed = record.status == 'مكتملة';
     await CalendarItemsStore.upsert(
@@ -532,22 +645,24 @@ class _SmartCalendarScreenState extends State<SmartCalendarScreen> {
     // تنبيه نسبة صرف العهدة: معرّفه «custody_percent_» ثم معرّف العهدة.
     const custodyPrefix = 'custody_percent_';
     if (id.startsWith(custodyPrefix)) id = id.substring(custodyPrefix.length);
+    // بمعرّف: التفاصيل مباشرة (صفحة واحدة)، وبدونه القائمة.
+    Route<void> route(Widget page, bool direct) => direct
+        ? directOpenRoute<void>(page)
+        : MaterialPageRoute<void>(builder: (_) => page);
     if (item.module == 'الالتزامات الشخصية') {
       Navigator.of(context).push(
-        MaterialPageRoute(
-          builder: (_) => PersonalCommitmentsScreen(
-            openEntryId: id.isEmpty ? null : id,
-          ),
+        route(
+          PersonalCommitmentsScreen(openEntryId: id.isEmpty ? null : id),
+          id.isNotEmpty,
         ),
       );
       return;
     }
     if (item.module == 'الالتزامات المشتركة') {
       Navigator.of(context).push(
-        MaterialPageRoute(
-          builder: (_) => SharedCommitmentsScreen(
-            openEntryId: id.isEmpty ? null : id,
-          ),
+        route(
+          SharedCommitmentsScreen(openEntryId: id.isEmpty ? null : id),
+          id.isNotEmpty,
         ),
       );
       return;
@@ -558,14 +673,12 @@ class _SmartCalendarScreenState extends State<SmartCalendarScreen> {
       ).push(MaterialPageRoute(builder: (_) => const PeopleManagementScreen()));
       return;
     }
+    final assetDirect =
+        item.module == 'العقارات والأنشطة التجارية' && id.isNotEmpty;
     Navigator.of(context).push(
-      MaterialPageRoute(
-        builder: (_) => ProjectsActivitiesScreen(
-          openAssetId:
-              item.module == 'العقارات والأنشطة التجارية' && id.isNotEmpty
-              ? id
-              : null,
-        ),
+      route(
+        ProjectsActivitiesScreen(openAssetId: assetDirect ? id : null),
+        assetDirect,
       ),
     );
   }
@@ -1104,10 +1217,11 @@ class _SmartCalendarScreenState extends State<SmartCalendarScreen> {
         child: InkWell(
           borderRadius: BorderRadius.circular(AppTheme.rInner),
           onTap: () => setState(() => _subFilter = selected ? null : sub),
+          // الرقم بجانب الاسم في سطر واحد — المربعات أصغر.
           child: SizedBox(
-            height: 74,
+            height: 48,
             child: Container(
-              padding: const EdgeInsets.symmetric(horizontal: 3, vertical: 6),
+              padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 4),
               decoration: BoxDecoration(
                 color: selected
                     ? color.withValues(alpha: 0.18)
@@ -1122,25 +1236,27 @@ class _SmartCalendarScreenState extends State<SmartCalendarScreen> {
                   width: selected ? 1.5 : 1,
                 ),
               ),
-              child: Column(
+              child: Row(
                 mainAxisAlignment: MainAxisAlignment.center,
                 children: [
-                  Text(
-                    sub,
-                    textAlign: TextAlign.center,
-                    maxLines: 3,
-                    style: TextStyle(
-                      fontSize: 10.5,
-                      height: 1.2,
-                      fontWeight: FontWeight.w800,
-                      color: n == 0 ? const Color(0xFF8C9A97) : color,
+                  Flexible(
+                    child: Text(
+                      sub,
+                      textAlign: TextAlign.center,
+                      maxLines: 2,
+                      style: TextStyle(
+                        fontSize: 10.5,
+                        height: 1.2,
+                        fontWeight: FontWeight.w800,
+                        color: n == 0 ? const Color(0xFF8C9A97) : color,
+                      ),
                     ),
                   ),
-                  const SizedBox(height: 4),
+                  const SizedBox(width: 4),
                   Text(
                     '$n',
                     style: TextStyle(
-                      fontSize: 16,
+                      fontSize: 14,
                       fontWeight: FontWeight.w900,
                       color: n == 0 ? const Color(0xFF8C9A97) : color,
                     ),
@@ -1280,14 +1396,32 @@ class _SmartCalendarScreenState extends State<SmartCalendarScreen> {
     return Scaffold(
       backgroundColor: AppTheme.page,
       appBar: AppBar(
+        // سهم الرجوع نفسه في الكلندر والقرعة والتنبيهات.
         leading: IconButton(
-          tooltip: AppTr.tr('إغلاق'),
+          tooltip: AppTr.tr('رجوع'),
           onPressed: () => Navigator.pop(context),
-          icon: const Icon(Icons.close_rounded),
+          icon: const Icon(Icons.arrow_back_ios_new_rounded, size: 20),
         ),
-        title: const Text('الكلندر الذكي'),
+        title: widget.scopeLabel.isEmpty
+            ? const Text('الكلندر الذكي')
+            : Column(
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  const Text('الكلندر الذكي'),
+                  Text(
+                    widget.scopeLabel,
+                    style: const TextStyle(
+                      fontSize: 11.5,
+                      fontWeight: FontWeight.w700,
+                      color: AppTheme.muted,
+                    ),
+                  ),
+                ],
+              ),
         centerTitle: true,
         actions: [
+          // الإضافة في الكلندر العام (الرئيسية) — الداخلي يعرض القسم فقط.
+          if (widget.modules == null)
           Padding(
             padding: const EdgeInsets.only(right: 12),
             child: Material(

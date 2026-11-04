@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart' hide Text, Align;
 
 import '../data/requests_data.dart';
+import '../widgets/shared/module_shared_widgets.dart' show directOpenRoute;
 import '../l10n/app_language.dart';
 import '../l10n/tr_widgets.dart';
 import '../widgets/shared/app_design.dart';
@@ -173,8 +174,8 @@ class _RequestsScreenState extends State<RequestsScreen> {
       return;
     }
     await Navigator.of(context).push(
-      MaterialPageRoute<void>(
-        builder: (_) => entry.source == 'shared_entries'
+      directOpenRoute<void>(
+        entry.source == 'shared_entries'
             ? SharedCommitmentsScreen(openEntryId: entry.recordId)
             : PersonalCommitmentsScreen(openEntryId: entry.recordId),
       ),

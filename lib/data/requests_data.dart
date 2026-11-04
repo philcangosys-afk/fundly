@@ -55,10 +55,69 @@ class RequestEntry {
 class RequestsData {
   RequestsData._();
 
+  /// ردود تعني أن الطلب لم يعد ينتظر ردًا: يُغلق في النافذة ولا يعود.
+  static const closedMessages = <String>{
+    'سبق أن رددت على هذه الدعوة',
+    'لم يعد هذا الطلب قائمًا',
+    'انتهت صلاحية الدعوة (24 ساعة) — اطلب من المنشئ إعادتها',
+  };
+
   /// قبول طلب أو رفضه من نافذة «وصلك طلب جديد» مباشرة.
   /// يعيد null عند النجاح، أو رسالة توضح السبب.
   /// [signature]: توقيع الموافقة على سند قبض (خطوط JSON).
   static Future<String?> respond(
+    FundlyInboxItem item,
+    bool accept, {
+    String signature = '',
+    String name = '',
+  }) async {
+    final error = await _respond(
+      item,
+      accept,
+      signature: signature,
+      name: name,
+    );
+    // سبق الرد عليه أو لم يعد قائمًا: إشعاره لا يبقى «جديدًا» فيعود.
+    if (error != null && closedMessages.contains(error)) {
+      await FundlyAccount.markSeen([item.id]);
+    }
+    return error;
+  }
+
+  /// هل ما زال الطلب ينتظر ردي؟ ما رُد عليه (من هذا الجوال أو غيره) أو
+  /// لم يعد قائمًا لا يُعرض في النافذة. عند تعذّر التحقق يُعرض كما هو.
+  static Future<bool> stillAwaiting(FundlyInboxItem item) async {
+    final me = AppIdentity.id;
+    try {
+      switch (item.source) {
+        case 'personal_entries':
+          final fresh = await SupabasePersonalEntriesRepository().fetchOne(
+            item.recordId,
+          );
+          if (fresh == null) return false;
+          final assignment = CustodyAssignment.decode(fresh.details);
+          return assignment.isPending && assignment.holderId == me;
+        case 'shared_entries':
+          final fresh = await SupabaseSharedEntriesRepository().fetchOne(
+            item.recordId,
+          );
+          if (fresh == null) return false;
+          if (_acceptances(fresh.details).containsKey(me)) return false;
+          return SharedMemberState.inviteState(
+                fresh.details,
+                me,
+                createdAt: fresh.createdAt,
+              ) !=
+              'expired';
+        default:
+          return true;
+      }
+    } catch (_) {
+      return true;
+    }
+  }
+
+  static Future<String?> _respond(
     FundlyInboxItem item,
     bool accept, {
     String signature = '',

@@ -336,7 +336,7 @@ class _PeopleManagementScreenState extends State<PeopleManagementScreen> {
       badge: 'متابعة',
       badgeColor: const Color(0xFF34A894),
       statusNote: 'مستند ينتهي خلال 10 أيام',
-      extraNote: 'مفوّض (بناية الشامخة)',
+      extraNote: 'مفوّض (بناية سكنية)',
       typeKey: 'person_employee',
       categoryName: 'موظف',
       dueToYou: 0,
@@ -345,11 +345,9 @@ class _PeopleManagementScreenState extends State<PeopleManagementScreen> {
       documentsCount: 4,
       lastUpdate: '2/5/2025',
       createdAt: '8/8/2024',
-      sharedCommitments: ['رحلة دبي', 'اشتراك السكن'],
-      documents: ['إقامة', 'عقد عمل', 'رخصة قيادة'],
+      sharedCommitments: ['رحلة عائلية', 'اشتراك السكن'],
+      documents: ['هوية', 'عقد عمل', 'رخصة قيادة'],
       details: {
-        'رقم الهاتف': '0501234567',
-        'الجنسية': 'سعودي',
         'تاريخ الميلاد': '14/9/1991',
       },
     ),
@@ -372,8 +370,6 @@ class _PeopleManagementScreenState extends State<PeopleManagementScreen> {
       sharedCommitments: ['مصاريف المكتب المشتركة'],
       documents: ['هوية', 'عقد توظيف', 'تفويض بنكي'],
       details: {
-        'رقم الهاتف': '0559876543',
-        'الجنسية': 'سعودي',
         'تاريخ الميلاد': '2/3/1988',
       },
     ),
@@ -396,8 +392,6 @@ class _PeopleManagementScreenState extends State<PeopleManagementScreen> {
       sharedCommitments: ['التزام مصروف شهري'],
       documents: ['هوية', 'جواز سفر'],
       details: {
-        'رقم الهاتف': '0532221144',
-        'الجنسية': 'يمني',
         'تاريخ الميلاد': '20/1/1994',
       },
     ),
@@ -534,7 +528,12 @@ class _PeopleManagementScreenState extends State<PeopleManagementScreen> {
   void _openSmartCalendar() {
     Navigator.of(
       context,
-    ).push(MaterialPageRoute(builder: (_) => const SmartCalendarScreen()));
+    ).push(MaterialPageRoute(
+        builder: (_) => const SmartCalendarScreen(
+          modules: SmartCalendarScreen.peopleModules,
+          scopeLabel: 'الأفراد والجهات',
+        ),
+      ));
   }
 
   /// الأشخاص والجهات المؤرشفة — الأرشفة علامة داخل الملاحظة الإضافية.
@@ -712,9 +711,25 @@ class _PeopleManagementScreenState extends State<PeopleManagementScreen> {
       );
 
   /// السجلات الظاهرة — المخفي من «تخصيص الصفحات» لا يُعرض ولا يُعدّ.
+  // سجلات صاحب الحساب نفسه (أُضيف كمؤجر أو مستأجر أو موظف...) لا تتكرر
+  // في القائمة: تُدمج في بطاقة «أنا» أولها.
   List<_PersonItem> get _visiblePeople => _people
       .where((person) => !_typeKeyHidden(person.typeKey))
+      .where((person) => !_isMeRecord(person))
       .toList(growable: false);
+
+  /// سجل يخص صاحب الحساب: برقمه التعريفي، أو باسمه كما في الملف الشخصي.
+  static bool _isMeRecord(_PersonItem person) {
+    if (person.typeKey == 'person_self') return false;
+    final myId = AppIdentity.id.trim().toUpperCase();
+    final fnd = (person.details['الرقم التعريفي'] ?? '').trim().toUpperCase();
+    if (myId.isNotEmpty && fnd.isNotEmpty) return fnd == myId;
+    final name = person.fullName.trim();
+    if (name.isEmpty) return false;
+    final settings = AppSettings.instance;
+    final full = '${settings.givenName} ${settings.familyName}'.trim();
+    return settings.isMyName(name) || (full.isNotEmpty && name == full);
+  }
 
   int _countByType(String key) {
     final people = _visiblePeople;
@@ -955,6 +970,28 @@ class _PeopleManagementScreenState extends State<PeopleManagementScreen> {
   _PersonItem _selfRecord() {
     final settings = AppSettings.instance;
     final owner = settings.name.trim();
+    // صفاتي الأخرى (مؤجر، مستأجر، موظف...) من سجلاتي المدموجة تُكتب في
+    // سطر التصنيف وفي الملخص، ومستحقاتها ومستنداتها تُجمع هنا.
+    final mine = _people.where(_isMeRecord).toList(growable: false);
+    final roles = <String>{
+      for (final p in mine) ...[
+        p.categoryName,
+        ...p.additionalCategoryNames,
+        p.roleTitle,
+      ],
+    }.map((e) => e.trim()).where((e) => e.isNotEmpty && e != 'صاحب الحساب');
+    final mergedDetails = <String, String>{
+      for (final p in mine)
+        for (final entry in p.details.entries)
+          if (entry.value.trim().isNotEmpty) entry.key: entry.value,
+    };
+    final own = <String, String>{
+      'رقم الهاتف': settings.phone,
+      'البريد الإلكتروني': settings.email,
+      'تاريخ الميلاد': settings.birthday,
+      'العنوان': settings.city,
+      'معلومات إضافية': settings.social,
+    };
     return _PersonItem(
       fullName: 'أنا (${owner.isEmpty ? 'صاحب الحساب' : owner})',
       nickName: 'صاحب الحساب',
@@ -965,21 +1002,28 @@ class _PeopleManagementScreenState extends State<PeopleManagementScreen> {
       extraNote: '',
       typeKey: 'person_self',
       categoryName: 'صاحب الحساب',
-      dueToYou: 0,
-      dueOnYou: 0,
-      openTasks: 0,
-      documentsCount: 0,
+      additionalCategoryNames: roles.toSet().toList(growable: false),
+      dueToYou: mine.fold(0, (sum, p) => sum + p.dueToYou),
+      dueOnYou: mine.fold(0, (sum, p) => sum + p.dueOnYou),
+      openTasks: mine.fold(0, (sum, p) => sum + p.openTasks),
+      documentsCount: mine.fold(0, (sum, p) => sum + p.documentsCount),
       lastUpdate: _todayStamp(),
       createdAt: _todayStamp(),
-      sharedCommitments: const [],
-      documents: const [],
+      sharedCommitments: [
+        for (final p in mine) ...p.sharedCommitments,
+      ].toSet().toList(growable: false),
+      documents: [
+        for (final p in mine) ...p.documents,
+      ].toSet().toList(growable: false),
+      activityLog: [for (final p in mine) ...p.activityLog],
       isPinned: true,
+      // بيانات الملف الشخصي أولًا، وما ينقصها من سجلاتي المدموجة.
       details: {
-        'رقم الهاتف': settings.phone,
-        'البريد الإلكتروني': settings.email,
-        'تاريخ الميلاد': settings.birthday,
-        'العنوان': settings.city,
-        'معلومات إضافية': settings.social,
+        ...mergedDetails,
+        for (final entry in own.entries)
+          if (entry.value.trim().isNotEmpty ||
+              !mergedDetails.containsKey(entry.key))
+            entry.key: entry.value,
       },
     );
   }
@@ -2956,15 +3000,31 @@ class _PeopleManagementScreenState extends State<PeopleManagementScreen> {
                     subtitle: 'متابعة الأفراد والجهات',
                     accentColor: const Color(0xFF0E7161),
                     onMore: () => _openFollowUpSheet(_people),
-                    metrics: [
-                      for (final group in _followUpGroups(_people).take(3))
+                    // البنود الثلاثة نفسها بأيقوناتها في مراكز المتابعة
+                    // الأربعة: الطلبات، المتابعة والتخطيط، مستحقات مالية.
+                    metrics: () {
+                      final groups = _followUpGroups(_people);
+                      return [
                         ManagementMetricData(
-                          label: group.title,
-                          count: group.total,
-                          icon: group.icon,
-                          color: group.color,
+                          label: 'الطلبات',
+                          count: groups[0].total,
+                          icon: Icons.hourglass_top_rounded,
+                          color: const Color(0xFFA6691A),
                         ),
-                    ],
+                        ManagementMetricData(
+                          label: 'المتابعة والتخطيط',
+                          count: groups[1].total,
+                          icon: Icons.fact_check_outlined,
+                          color: const Color(0xFF0A5A50),
+                        ),
+                        ManagementMetricData(
+                          label: 'مستحقات مالية',
+                          count: groups[2].total,
+                          icon: Icons.account_balance_wallet_outlined,
+                          color: const Color(0xFF178F7B),
+                        ),
+                      ];
+                    }(),
                   ),
     const SizedBox(height: 8),
     // «الملخص الشامل» لهذا القسم وحده.
@@ -3926,6 +3986,430 @@ class _PersonDetailsScreenState extends State<PersonDetailsScreen> {
     );
   }
 
+  // ---------------------------------------------------------------------
+  // السجل: كل ما يخص الفرد من مصادره الحقيقية — بنود الالتزامات المرتبطة،
+  // وسندات القبض، والتفويضات وأحداثها، وما أُضيف من «+» هنا.
+  // ---------------------------------------------------------------------
+  final TextEditingController _logQuery = TextEditingController();
+  DateTime? _logFrom;
+  DateTime? _logTo;
+  String _logKind = 'الكل';
+
+  static const _logKinds = [
+    'الكل',
+    'مالية',
+    'متابعة وتخطيط',
+    'مستندات',
+    'تفويضات',
+    'أخرى',
+  ];
+
+  static final RegExp _logDay = RegExp(r'\b\d{1,2}/\d{1,2}/\d{4}\b');
+
+  static String _logDate(DateTime? d) =>
+      d == null ? AppTr.tr('بلا تاريخ') : '${d.day}/${d.month}/${d.year}';
+
+  List<_PersonLogEvent> _personLogEvents(_PersonItem person) {
+    final out = <_PersonLogEvent>[];
+    // بنود الالتزامات الشخصية المرتبطة بالفرد.
+    for (final r in _linked) {
+      final type = r.entryType;
+      final kind = _organizationEntryTypes.contains(type)
+          ? 'متابعة وتخطيط'
+          : type == 'مستند' || type == 'ضمانات'
+          ? 'مستندات'
+          : entryFinancialTypes.contains(type) || type == 'عهدة مالية'
+          ? 'مالية'
+          : 'أخرى';
+      final direction = (r.details[_moneyDirectionKey] ?? '').trim();
+      final debtType = (r.details['نوع الدين'] ?? '').trim();
+      final onMe = direction == 'عليه' ||
+          (direction.isEmpty &&
+              type == 'دين / قرض / سلفة' &&
+              debtType.startsWith('له'));
+      final closed = _closedStatuses.contains(r.status) ||
+          r.status == 'تمت التسوية';
+      out.add(
+        _PersonLogEvent(
+          kind: kind,
+          title: '${AppTr.tr(type)} — ${r.title}',
+          detail: [
+            if (kind == 'مالية' && direction.isNotEmpty) AppTr.tr(direction),
+            AppTr.tr(
+              r.status == 'ملغاة'
+                  ? 'ملغاة'
+                  : closed
+                  ? 'مكتملة'
+                  : 'نشطة',
+            ),
+          ].join(' · '),
+          date: entryParseDay(r.dueDate) ?? r.createdAt,
+          amount: kind == 'مستندات' ? 0 : r.amount.toDouble(),
+          currency: AppSettings.currencyOf(r.details['العملة']),
+          due: onMe && !closed,
+          icon: switch (kind) {
+            'مالية' => Icons.payments_outlined,
+            'متابعة وتخطيط' => Icons.event_note_outlined,
+            'مستندات' => Icons.description_outlined,
+            _ => Icons.label_outline_rounded,
+          },
+          onTap: r.id == null ? null : () => _openLinkedEntry(r.id!),
+        ),
+      );
+    }
+    // سندات القبض والرواتب.
+    for (final r in _salaryReceipts) {
+      out.add(
+        _PersonLogEvent(
+          kind: 'مالية',
+          title:
+              '${AppTr.tr(r.isSalary ? 'سند قبض راتب' : 'سند قبض')} — '
+              '${AppTr.tr(r.title)}',
+          detail: [
+            if (_isSelfPerson && r.ownerName.trim().isNotEmpty)
+              '${AppTr.tr('من')}: ${r.ownerName.trim()}',
+            AppTr.tr(r.status),
+          ].join(' · '),
+          date: entryParseDay(r.receiptDate) ?? r.createdAt,
+          amount: r.paid,
+          currency: r.currency.trim().isEmpty
+              ? AppSettings.currencySuffix
+              : r.currency.trim(),
+          icon: Icons.receipt_long_outlined,
+          onTap: r.id == null ? null : () => _openSalaryReceipt(r.id!),
+        ),
+      );
+    }
+    // التفويضات: منحها، ثم كل حدث في سجلها (قبول، تعديل، إيقاف...).
+    for (final record in _delegations) {
+      out.add(
+        _PersonLogEvent(
+          kind: 'تفويضات',
+          title: '${AppTr.tr('تفويض')} — ${AppTr.tr(record.scope)}',
+          detail: [
+            _permissionLevelLabel(record.permissions),
+            AppTr.tr(
+              record.isActive
+                  ? 'سارٍ'
+                  : record.isEnded
+                  ? 'منتهٍ'
+                  : 'موقوف',
+            ),
+          ].join(' · '),
+          date: record.startDate,
+          icon: Icons.how_to_reg_outlined,
+        ),
+      );
+      for (final (at, text) in DelegationRecord.logOf(record.permissions)) {
+        out.add(
+          _PersonLogEvent(
+            kind: 'تفويضات',
+            title: text,
+            detail: AppTr.tr(record.scope),
+            date: at,
+            icon: Icons.history_rounded,
+          ),
+        );
+      }
+    }
+    // ما أُضيف من «+» في تفاصيل الفرد (نص مركّب: القسم · النوع · ...).
+    const known = {'مالية', 'متابعة وتخطيط', 'مستندات'};
+    for (final line in person.activityLog) {
+      final parts = [
+        for (final p in line.split(' · '))
+          if (p.trim().isNotEmpty) p.trim(),
+      ];
+      if (parts.isEmpty) continue;
+      final dayText = _logDay.firstMatch(line)?.group(0);
+      final category = known.contains(parts.first) ? parts.first : '';
+      final rest = [
+        for (final p in category.isEmpty ? parts : parts.skip(1))
+          if (p != dayText) p,
+      ];
+      final title = rest.isEmpty ? (category.isEmpty ? line : category) : rest.first;
+      final kind = category.isNotEmpty
+          ? category
+          : line.contains('تفويض')
+          ? 'تفويضات'
+          : line.contains('سند') || line.contains('راتب')
+          ? 'مالية'
+          : 'أخرى';
+      out.add(
+        _PersonLogEvent(
+          kind: kind,
+          title: title,
+          detail: rest.skip(1).join(' · '),
+          date: dayText == null ? null : entryParseDay(dayText),
+          due: line.contains('· عليه ·'),
+          icon: switch (kind) {
+            'مالية' => Icons.payments_outlined,
+            'متابعة وتخطيط' => Icons.event_note_outlined,
+            'مستندات' => Icons.description_outlined,
+            'تفويضات' => Icons.how_to_reg_outlined,
+            _ => Icons.history_rounded,
+          },
+        ),
+      );
+    }
+    out.add(
+      _PersonLogEvent(
+        kind: 'أخرى',
+        title: AppTr.tr('تم إنشاء السجل'),
+        date: entryParseDay(person.createdAt),
+        icon: Icons.person_add_alt_outlined,
+      ),
+    );
+    // الأحدث أولًا، وما بلا تاريخ في الآخر.
+    out.sort((a, b) {
+      final da = a.date;
+      final db = b.date;
+      if (da == null && db == null) return 0;
+      if (da == null) return 1;
+      if (db == null) return -1;
+      return db.compareTo(da);
+    });
+    return out;
+  }
+
+  Future<void> _pickLogDate(bool from) async {
+    final now = DateTime.now();
+    final picked = await showDatePicker(
+      context: context,
+      initialDate: (from ? _logFrom : _logTo) ?? now,
+      firstDate: DateTime(2000),
+      lastDate: DateTime(now.year + 10),
+    );
+    if (picked == null || !mounted) return;
+    setState(() => from ? _logFrom = picked : _logTo = picked);
+  }
+
+  Widget _buildPersonLog(_PersonItem person, Color color) {
+    final all = _personLogEvents(person);
+    final kinds = [
+      for (final k in _logKinds)
+        if (k == 'الكل' || all.any((e) => e.kind == k)) k,
+    ];
+    if (!kinds.contains(_logKind)) _logKind = 'الكل';
+    final q = _logQuery.text.trim();
+    final from = _logFrom == null ? null : DateUtils.dateOnly(_logFrom!);
+    final to = _logTo == null ? null : DateUtils.dateOnly(_logTo!);
+    final shown = all.where((e) {
+      if (_logKind != 'الكل' && e.kind != _logKind) return false;
+      if (q.isNotEmpty &&
+          !matchesSearchQuery(query: q, fields: [e.title, e.detail])) {
+        return false;
+      }
+      if (from != null || to != null) {
+        final day = e.date == null ? null : DateUtils.dateOnly(e.date!);
+        if (day == null) return false;
+        if (from != null && day.isBefore(from)) return false;
+        if (to != null && day.isAfter(to)) return false;
+      }
+      return true;
+    }).toList(growable: false);
+
+    Widget dateButton(bool isFrom) {
+      final value = isFrom ? _logFrom : _logTo;
+      return Expanded(
+        child: OutlinedButton.icon(
+          onPressed: () => _pickLogDate(isFrom),
+          icon: const Icon(Icons.event_rounded, size: 16),
+          label: Text(
+            value == null
+                ? AppTr.tr(isFrom ? 'من تاريخ' : 'إلى تاريخ')
+                : _logDate(value),
+            style: const TextStyle(fontSize: 11.5),
+          ),
+          style: OutlinedButton.styleFrom(
+            foregroundColor: color,
+            backgroundColor: Colors.white,
+            side: BorderSide(color: color.withValues(alpha: 0.5)),
+          ),
+        ),
+      );
+    }
+
+    Widget row(_PersonLogEvent e) {
+      final tint = e.due ? AppTheme.danger : color;
+      final body = Padding(
+        padding: const EdgeInsets.symmetric(vertical: 9),
+        child: Row(
+          textDirection: AppTr.uiDir,
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Icon(e.icon, size: 19, color: tint),
+            const SizedBox(width: 8),
+            Expanded(
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.stretch,
+                children: [
+                  Text(
+                    e.title,
+                    textAlign: AppTr.alignEnd,
+                    maxLines: 2,
+                    softWrap: true,
+                    style: const TextStyle(
+                      fontSize: 12.5,
+                      fontWeight: FontWeight.w800,
+                      color: AppTheme.title,
+                    ),
+                  ),
+                  if (e.detail.isNotEmpty)
+                    Text(
+                      e.detail,
+                      textAlign: AppTr.alignEnd,
+                      maxLines: 3,
+                      softWrap: true,
+                      style: const TextStyle(
+                        fontSize: 11,
+                        fontWeight: FontWeight.w600,
+                        color: Color(0xFF5C6B68),
+                      ),
+                    ),
+                  Text(
+                    _logDate(e.date),
+                    textAlign: AppTr.alignEnd,
+                    style: const TextStyle(
+                      fontSize: 10.5,
+                      fontWeight: FontWeight.w600,
+                      color: AppTheme.muted,
+                    ),
+                  ),
+                ],
+              ),
+            ),
+            if (e.amount > 0.009) ...[
+              const SizedBox(width: 8),
+              Text(
+                '${_salaryAmount(e.amount)} ${e.currency}'.trim(),
+                style: TextStyle(
+                  fontSize: 11.5,
+                  fontWeight: FontWeight.w900,
+                  color: tint,
+                ),
+              ),
+            ],
+            if (e.onTap != null)
+              const Icon(
+                Icons.chevron_left_rounded,
+                size: 20,
+                color: Color(0xFF8C9A97),
+              ),
+          ],
+        ),
+      );
+      return e.onTap == null
+          ? body
+          : InkWell(
+              onTap: e.onTap,
+              borderRadius: BorderRadius.circular(AppTheme.rInner),
+              child: body,
+            );
+    }
+
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [
+        Container(
+          padding: const EdgeInsets.all(10),
+          decoration: BoxDecoration(
+            color: AppTheme.surface,
+            borderRadius: BorderRadius.circular(AppTheme.rInner),
+          ),
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              TextField(
+                controller: _logQuery,
+                textAlign: AppTr.alignEnd,
+                onChanged: (_) => setState(() {}),
+                decoration: InputDecoration(
+                  hintText: AppTr.tr('ابحث في السجل'),
+                  prefixIcon: const Icon(Icons.search_rounded, size: 20),
+                  isDense: true,
+                  filled: true,
+                  fillColor: Colors.white,
+                  border: OutlineInputBorder(
+                    borderRadius: BorderRadius.circular(AppTheme.rField),
+                    borderSide: BorderSide.none,
+                  ),
+                ),
+              ),
+              const SizedBox(height: 8),
+              Row(
+                children: [
+                  dateButton(true),
+                  const SizedBox(width: 8),
+                  dateButton(false),
+                  if (_logFrom != null || _logTo != null)
+                    IconButton(
+                      tooltip: AppTr.tr('مسح التاريخ'),
+                      onPressed: () => setState(() {
+                        _logFrom = null;
+                        _logTo = null;
+                      }),
+                      icon: Icon(Icons.close_rounded, color: color),
+                    ),
+                ],
+              ),
+              const SizedBox(height: 8),
+              Wrap(
+                spacing: 6,
+                runSpacing: 6,
+                children: [
+                  for (final kind in kinds)
+                    ChoiceChip(
+                      label: Text(
+                        kind == 'الكل' ? kind : '$kind (${all.where((e) => e.kind == kind).length})',
+                        style: const TextStyle(fontSize: 11.5),
+                      ),
+                      selected: _logKind == kind,
+                      selectedColor: color.withValues(alpha: 0.2),
+                      onSelected: (_) => setState(() => _logKind = kind),
+                    ),
+                ],
+              ),
+            ],
+          ),
+        ),
+        const SizedBox(height: 10),
+        Container(
+          padding: const EdgeInsets.symmetric(horizontal: 12, vertical: 4),
+          decoration: BoxDecoration(
+            color: AppTheme.surface,
+            borderRadius: BorderRadius.circular(AppTheme.rInner),
+          ),
+          child: shown.isEmpty
+              ? const Padding(
+                  padding: EdgeInsets.symmetric(vertical: 18),
+                  child: Text(
+                    'لا يوجد ما يطابق — غيّر البحث أو التاريخ أو النوع',
+                    textAlign: TextAlign.center,
+                    style: TextStyle(
+                      fontSize: 12,
+                      fontWeight: FontWeight.w700,
+                      color: AppTheme.muted,
+                    ),
+                  ),
+                )
+              : Column(
+                  crossAxisAlignment: CrossAxisAlignment.stretch,
+                  children: [
+                    for (var i = 0; i < shown.length; i++) ...[
+                      if (i > 0)
+                        Divider(
+                          height: 1,
+                          color: color.withValues(alpha: 0.12),
+                        ),
+                      row(shown[i]),
+                    ],
+                  ],
+                ),
+        ),
+      ],
+    );
+  }
+
   static const String _salaryOption = '__salary_receipt__';
 
   /// سندات قبض هذا الموظف (برقمه التعريفي، وإلا باسمه) — تظهر في «له».
@@ -3936,9 +4420,21 @@ class _PersonDetailsScreenState extends State<PersonDetailsScreen> {
 
   String get _personFnd => (_person.details['الرقم التعريفي'] ?? '').trim();
 
+  bool get _isSelfPerson => _person.typeKey == 'person_self';
+
+  /// «أنا»: الرواتب والسندات التي وصلتني. غيري: ما أصدرته له (موظفًا كان
+  /// أو غيره — «المسلّم والمستلم»).
   Future<void> _loadSalaryReceipts() async {
-    if (!_isEmployeePerson(_person)) return;
+    if (FundlyAuth.isGuest) return;
     try {
+      if (_isSelfPerson) {
+        final toMe = await SalaryReceiptsRepository().fetchSentToMe(
+          AppIdentity.id,
+        );
+        if (!mounted) return;
+        setState(() => _salaryReceipts = toMe);
+        return;
+      }
       final mine = await SalaryReceiptsRepository().fetchMine();
       if (!mounted) return;
       final fnd = _personFnd;
@@ -3962,7 +4458,10 @@ class _PersonDetailsScreenState extends State<PersonDetailsScreen> {
     for (final r in _salaryReceipts) {
       final row = [
         '${r.isSalary ? 'سند قبض راتب' : 'سند قبض'} — ${r.title}',
-        '${_salaryAmount(r.paid)} ${AppSettings.currencySuffix}',
+        if (_isSelfPerson && r.ownerName.trim().isNotEmpty)
+          '${AppTr.tr('من')}: ${r.ownerName.trim()}',
+        '${_salaryAmount(r.paid)} '
+            '${r.currency.trim().isEmpty ? AppSettings.currencySuffix : r.currency}',
         if (r.receiptDate.trim().isNotEmpty) r.receiptDate.trim(),
         r.status,
       ].join(' · ');
@@ -4000,11 +4499,14 @@ class _PersonDetailsScreenState extends State<PersonDetailsScreen> {
   Future<void> _openSalaryReceipt(String id) async {
     await Navigator.of(context).push(
       MaterialPageRoute<void>(
-        builder: (_) => SalaryReceiptsScreen(
-          employeeFnd: _personFnd,
-          employeeName: _person.fullName.trim(),
-          openId: id,
-        ),
+        // «أنا»: السند في «وصلني» من الشاشة العامة.
+        builder: (_) => _isSelfPerson
+            ? SalaryReceiptsScreen(openId: id)
+            : SalaryReceiptsScreen(
+                employeeFnd: _personFnd,
+                employeeName: _person.fullName.trim(),
+                openId: id,
+              ),
       ),
     );
     if (!mounted) return;
@@ -4031,9 +4533,7 @@ class _PersonDetailsScreenState extends State<PersonDetailsScreen> {
   /// تحميل ما يخص هذا الفرد.
   Future<void> _openLinkedEntry(String id) async {
     await Navigator.of(context).push(
-      MaterialPageRoute<void>(
-        builder: (_) => PersonalCommitmentsScreen(openEntryId: id),
-      ),
+      directOpenRoute<void>(PersonalCommitmentsScreen(openEntryId: id)),
     );
     await _loadLinked();
   }
@@ -5434,6 +5934,7 @@ class _PersonDetailsScreenState extends State<PersonDetailsScreen> {
   @override
   void dispose() {
     _searchController.dispose();
+    _logQuery.dispose();
     super.dispose();
   }
 
@@ -7487,14 +7988,9 @@ class _PersonDetailsScreenState extends State<PersonDetailsScreen> {
                     _buildDelegationSummaryLines(),
                   ],
                   // السجل الزمني صار تبويبًا مستقلًا.
-                  if (selectedTab == 'السجل')
-                    _ActivityLogCard(
-                      logs: [
-                        ...person.activityLog.reversed,
-                        'تم إنشاء السجل بتاريخ ${person.createdAt}',
-                        'آخر تحديث: ${person.lastUpdate}',
-                      ],
-                    ),
+                  // سجل مرتّب كسجل العقارات: بحث، من/إلى تاريخ، وتصفية حسب
+                  // النوع، وكل حدث بأيقونته وتاريخه ومبلغه.
+                  if (selectedTab == 'السجل') _buildPersonLog(person, color),
                   // مالية: له / عليه / عهدة مالية، ومع كل واحد فلتر المصدر
                   // وفلتر الحالة، وتحتهما البنود المرتبطة.
                   if (selectedTab == 'مالية') ...[
@@ -8770,73 +9266,32 @@ class _AlertSectionsCard extends StatelessWidget {
   }
 }
 
-class _ActivityLogCard extends StatelessWidget {
-  const _ActivityLogCard({required this.logs});
+/// حدث واحد في سجل الفرد.
+class _PersonLogEvent {
+  const _PersonLogEvent({
+    required this.kind,
+    required this.title,
+    this.detail = '',
+    this.date,
+    this.amount = 0,
+    this.currency = '',
+    this.due = false,
+    this.icon = Icons.history_rounded,
+    this.onTap,
+  });
 
-  final List<String> logs;
+  /// مالية / متابعة وتخطيط / مستندات / تفويضات / أخرى.
+  final String kind;
+  final String title;
+  final String detail;
+  final DateTime? date;
+  final double amount;
+  final String currency;
 
-  @override
-  Widget build(BuildContext context) {
-    return Container(
-      width: double.infinity,
-      padding: const EdgeInsets.all(12),
-      decoration: BoxDecoration(
-            color: AppTheme.surface,
-            borderRadius: BorderRadius.circular(AppTheme.rField),
-          ),
-      child: Column(
-        crossAxisAlignment: CrossAxisAlignment.start,
-        children: [
-          const Text(
-            'السجل الزمني',
-            style: TextStyle(
-              fontSize: 13,
-              fontWeight: FontWeight.w800,
-              color: Color(0xFF022E2A),
-            ),
-          ),
-          const SizedBox(height: 8),
-          ...(logs.isEmpty
-              ? [
-                  const Text(
-                    'لا توجد أحداث بعد',
-                    textAlign: TextAlign.right,
-                    style: TextStyle(color: Color(0xFF5C6B68), fontSize: 11),
-                  ),
-                ]
-              : logs
-                    .take(8)
-                    .map(
-                      (log) => Padding(
-                        padding: const EdgeInsets.only(bottom: 6),
-                        child: Row(
-                          textDirection: AppTr.uiDir,
-                          children: [
-                            const Icon(
-                              Icons.circle,
-                              size: 6,
-                              color: Color(0xFF04413B),
-                            ),
-                            const SizedBox(width: 8),
-                            Expanded(
-                              child: Text(
-                                log,
-                                textAlign: TextAlign.right,
-                                style: const TextStyle(
-                                  fontSize: 11,
-                                  color: Color(0xFF2C3B38),
-                                  fontWeight: FontWeight.w600,
-                                ),
-                              ),
-                            ),
-                          ],
-                        ),
-                      ),
-                    )),
-        ],
-      ),
-    );
-  }
+  /// مبلغ عليه (أحمر).
+  final bool due;
+  final IconData icon;
+  final VoidCallback? onTap;
 }
 
 class _HorizontalTabs extends StatelessWidget {

@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'dart:typed_data';
+import 'widgets/shared/module_shared_widgets.dart' show directOpenRoute;
 
 import 'package:flutter/material.dart' hide Text, Align;
 import 'l10n/tr_widgets.dart';
@@ -1534,7 +1535,12 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
         'people' => PeopleManagementScreen(openPersonName: itemKey),
         _ => ProjectsActivitiesScreen(openAssetId: itemKey),
       };
-      Navigator.of(context).push(MaterialPageRoute(builder: (_) => page));
+      // الالتزام أو الأصل يُفتح على تفاصيله مباشرة (صفحة واحدة).
+      Navigator.of(context).push(
+        moduleId == 'people'
+            ? MaterialPageRoute(builder: (_) => page)
+            : directOpenRoute(page),
+      );
       return;
     }
     if (moduleId == 'personal') {
@@ -3808,7 +3814,10 @@ class _ReportsArchiveHubPageState extends State<_ReportsArchiveHubPage> {
             mainAxisSize: MainAxisSize.min,
             children: [
               Text(
-                source,
+                // القسم يضم المركبات ووسائل النقل أيضًا.
+                source == ArchiveCenter.assetsSource
+                    ? 'العقارات والأنشطة والمركبات ووسائل النقل'
+                    : source,
                 style: TextStyle(
                   fontSize: 11.5,
                   fontWeight: FontWeight.w800,
@@ -4803,11 +4812,11 @@ class _ReportsArchiveHubPageState extends State<_ReportsArchiveHubPage> {
     );
   }
 
-  /// «ابحث في الفلتر أعلاه…» — سطر واحد صغير رمادي.
+  /// «ابحث أعلاه…» — سطر واحد صغير رمادي.
   Widget _searchHintLine() => const Padding(
     padding: EdgeInsets.only(bottom: 8),
     child: Text(
-      'ابحث في الفلتر أعلاه للوصول إلى ما تحتاجه',
+      'ابحث أعلاه للوصول إلى ما تحتاجه',
       maxLines: 3,
       style: TextStyle(
         fontSize: 11,

@@ -930,7 +930,8 @@ class _LanguageCurrencySettingsPageState
           // الإعداد" حُذف: تغيير اللغة يترجم الواجهة ويقلب الاتجاه فورًا.
           DropdownButtonFormField<String>(
             key: const ValueKey('settings-currency'),
-            initialValue: _settings.currency,
+            // لم تُختر بعد: الحقل فارغ يطلب الاختيار.
+            initialValue: _settings.hasCurrency ? _settings.currency : null,
             decoration: InputDecoration(
               labelText: AppTr.tr('العملة الافتراضية'),
               helperText: AppTr.tr('تظهر بجانب كل مبلغ في التطبيق'),
@@ -2112,20 +2113,20 @@ class SettingsHubPage extends StatelessWidget {
               onTap: () => openLoginScreen(context),
             )
           else ...[
-            _SettingsLinkRow(
-              title: 'تسجيل الخروج',
-              subtitle: 'الخروج من الحساب على هذا الجهاز',
-              icon: Icons.logout_rounded,
-              color: const Color(0xFFC4392E),
-              onTap: () => _confirmSignOut(context),
-            ),
-            // حذف الحساب مع تسجيل الخروج (كان في سياسة الخصوصية).
+            // حذف الحساب ثم تسجيل الخروج آخر شيء في القائمة.
             _SettingsLinkRow(
               title: 'حذف الحساب',
               subtitle: 'طلب حذف حسابك وكل بياناته نهائيًا',
               icon: Icons.delete_forever_outlined,
               color: AppTheme.danger,
               onTap: () => _requestAccountDeletion(context),
+            ),
+            _SettingsLinkRow(
+              title: 'تسجيل الخروج',
+              subtitle: 'الخروج من الحساب على هذا الجهاز',
+              icon: Icons.logout_rounded,
+              color: const Color(0xFFC4392E),
+              onTap: () => _confirmSignOut(context),
             ),
           ],
         ];

@@ -369,6 +369,27 @@ class EntityCard extends StatelessWidget {
   }
 }
 
+/// فتح بند بعينه من خارج قسمه (تنبيه، طلب، مثبّت...): شاشة القسم تُفتح
+/// شفافة وبلا حركة، فلا تظهر قائمتها قبل التفاصيل ولا بعدها — الرجوع
+/// من التفاصيل يعيد إلى الصفحة السابقة مباشرة (صفحة واحدة لا صفحتان).
+Route<T> directOpenRoute<T>(Widget page) => PageRouteBuilder<T>(
+  opaque: false,
+  transitionDuration: Duration.zero,
+  reverseTransitionDuration: Duration.zero,
+  pageBuilder: (_, _, _) => page,
+);
+
+/// ما يظهر من شاشة القسم أثناء جلب البند في الفتح المباشر.
+class DirectOpenPlaceholder extends StatelessWidget {
+  const DirectOpenPlaceholder({super.key});
+
+  @override
+  Widget build(BuildContext context) => const Material(
+    type: MaterialType.transparency,
+    child: Center(child: CircularProgressIndicator()),
+  );
+}
+
 class AddFab extends StatefulWidget {
   const AddFab({
     super.key,
@@ -448,6 +469,11 @@ class _AddFabState extends State<AddFab> {
 
   @override
   Widget build(BuildContext context) {
+    // أثناء الكتابة (البحث مثلًا) يختفي الزر حتى لا يغطي الحقل والنتائج،
+    // ويعود عند إغلاق لوحة المفاتيح.
+    if (MediaQuery.viewInsetsOf(context).bottom > 0) {
+      return const SizedBox.shrink();
+    }
     final viewport = MediaQuery.of(context).size;
     final currentOffset = _offset ?? widget.initialOffset;
     final visibleOffset = _clampOffset(currentOffset, viewport);

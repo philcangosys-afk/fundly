@@ -66,7 +66,11 @@ class AppSettings extends ChangeNotifier {
   static const _kExpiryNotifications = 'settings_expiry_notifications';
   static const _kLeadTimeDays = 'settings_default_lead_time_days';
 
-  static const defaultName = 'عبدالعزيز الهاجري';
+  /// بلا اسم افتراضي: يبقى فارغًا حتى يكتبه المستخدم (أو يُجلب من حسابه).
+  static const defaultName = '';
+
+  /// اسم افتراضي قديم كان يُحفظ لمن لم يكتب اسمه — يُمحى عند التحميل.
+  static const _legacyDefaultName = 'عبدالعزيز الهاجري';
 
   /// إصدار التطبيق كما في pubspec.yaml (version: 1.0.1+2).
   /// يُحدَّث هنا مع كل رفع للإصدار حتى لا تعرض شاشة "حول التطبيق" رقمًا
@@ -79,38 +83,39 @@ class AppSettings extends ChangeNotifier {
   // ===== العملات =====
   // كل عملة: التسمية الكاملة في الإعدادات، واللاحقة القصيرة التي تظهر
   // بجانب كل مبلغ داخل التطبيق.
+  // بالترتيب الأبجدي: لا عملة دولة بعينها أولًا.
   static const Map<String, String> currencies = {
-    'درهم إماراتي (AED)': 'درهم',
-    'ريال سعودي (SAR)': 'ريال',
-    'دولار أمريكي (USD)': 'دولار',
-    'دينار كويتي (KWD)': 'دينار',
-    'ريال قطري (QAR)': 'ريال قطري',
-    'دينار بحريني (BHD)': 'دينار بحريني',
-    'ريال عماني (OMR)': 'ريال عماني',
-    'يورو (EUR)': 'يورو',
-    'جنيه مصري (EGP)': 'جنيه مصري',
     'جنيه سوداني (SDG)': 'جنيه سوداني',
-    'يوان صيني (CNY)': 'يوان صيني',
-    'روبية هندية (INR)': 'روبية هندية',
+    'جنيه مصري (EGP)': 'جنيه مصري',
+    'درهم إماراتي (AED)': 'درهم',
+    'دولار أمريكي (USD)': 'دولار',
+    'دينار بحريني (BHD)': 'دينار بحريني',
+    'دينار كويتي (KWD)': 'دينار',
     'روبية باكستانية (PKR)': 'روبية باكستانية',
+    'روبية هندية (INR)': 'روبية هندية',
+    'ريال سعودي (SAR)': 'ريال',
+    'ريال عماني (OMR)': 'ريال عماني',
+    'ريال قطري (QAR)': 'ريال قطري',
+    'يوان صيني (CNY)': 'يوان صيني',
+    'يورو (EUR)': 'يورو',
   };
 
   /// لواحق العملات بالترتيب نفسه — خيارات «العملة» في كل نماذج التطبيق
   /// وفي الفلاتر.
   static const List<String> currencySuffixes = [
-    'درهم',
-    'ريال',
-    'دولار',
-    'دينار',
-    'ريال قطري',
-    'دينار بحريني',
-    'ريال عماني',
-    'يورو',
-    'جنيه مصري',
     'جنيه سوداني',
-    'يوان صيني',
-    'روبية هندية',
+    'جنيه مصري',
+    'درهم',
+    'دولار',
+    'دينار بحريني',
+    'دينار',
     'روبية باكستانية',
+    'روبية هندية',
+    'ريال',
+    'ريال عماني',
+    'ريال قطري',
+    'يوان صيني',
+    'يورو',
   ];
 
   /// عملة سجل بعينه: ما اختاره له المستخدم، وإلا العملة الافتراضية —
@@ -163,7 +168,9 @@ class AppSettings extends ChangeNotifier {
   String _social = '';
   Uint8List? _photo;
   String _language = 'العربية';
-  String _currency = 'درهم إماراتي (AED)';
+  /// فارغة حتى يختارها المستخدم (أول فتح أو الإعدادات) — لا عملة دولة
+  /// بعينها افتراضيًا.
+  String _currency = '';
   String _calendar = 'ميلادي';
   double _textScale = 1.0;
   bool _compactLists = false;
@@ -435,7 +442,10 @@ class AppSettings extends ChangeNotifier {
   ///
   /// تُقرأ ثابتةً (static) لأن آلاف المواضع تعرض المبالغ داخل نصوص
   /// مُدمَجة، وتمرير كائن الإعدادات إليها جميعًا غير عملي.
-  static String get currencySuffix => currencies[instance._currency] ?? 'درهم';
+  static String get currencySuffix => currencies[instance._currency] ?? '';
+
+  /// اختار المستخدم عملته الافتراضية؟
+  bool get hasCurrency => currencies.containsKey(_currency);
 
   /// المبالغ الحساسة تُخفى عند تفعيل "إخفاء المبالغ".
   static String maskAmount(String formatted) =>
@@ -446,6 +456,11 @@ class AppSettings extends ChangeNotifier {
     _name = prefs.getString(_kName) ?? defaultName;
     _givenName = prefs.getString(_kGivenName) ?? '';
     _familyName = prefs.getString(_kFamilyName) ?? '';
+    // الاسم القديم المحفوظ تلقائيًا (لا ما كتبه المستخدم في حقلي الاسم).
+    if (_name.trim() == _legacyDefaultName && _givenName.trim().isEmpty) {
+      _name = '';
+      await prefs.remove(_kName);
+    }
     final storedMode = prefs.getString(_kSharedNameMode);
     _sharedNameMode = _oneOf(
       // اسم الخيار قبل تعديله.
@@ -476,9 +491,19 @@ class AppSettings extends ChangeNotifier {
     _planYearly = prefs.getBool(_kPlanYearly) ?? false;
     _planGift = prefs.getBool(_kPlanGift) ?? false;
     await _applyPlanExpiry(prefs);
-    _currency = currencies.containsKey(prefs.getString(_kCurrency))
-        ? prefs.getString(_kCurrency)!
-        : 'درهم إماراتي (AED)';
+    final storedCurrency = prefs.getString(_kCurrency);
+    if (currencies.containsKey(storedCurrency)) {
+      _currency = storedCurrency!;
+    } else if (prefs.getBool('fundly_language_chosen') == true ||
+        prefs.containsKey(_kLanguage)) {
+      // مستخدم قديم لم يختر عملة: كانت مبالغه تُعرض بالدرهم — تبقى كذلك
+      // وتُحفظ، ويغيّرها من الإعدادات.
+      _currency = 'درهم إماراتي (AED)';
+      await prefs.setString(_kCurrency, _currency);
+    } else {
+      // تثبيت جديد: لا عملة حتى يختارها في أول فتح.
+      _currency = '';
+    }
     _calendar = _oneOf(prefs.getString(_kCalendar), calendars, 'ميلادي');
     _textScale = (prefs.getDouble(_kTextScale) ?? 1.0).clamp(
       minTextScale,

@@ -6,6 +6,7 @@ import 'package:pdf/widgets.dart' as pw;
 import 'package:printing/printing.dart';
 
 import '../l10n/app_language.dart';
+import 'app_settings.dart';
 import 'salary_receipts.dart';
 
 /// سند القبض / الراتب كملف PDF: صفحة A4 احترافية لكل سند (الأطراف، تفاصيل
@@ -123,7 +124,9 @@ pw.Widget _signature(SalaryReceipt r, double side) {
 }
 
 pw.Widget _page(SalaryReceipt r, bool rtl) {
-  final currency = _t(r.currency.isEmpty ? 'درهم' : r.currency);
+  final currency = _t(
+    r.currency.isEmpty ? AppSettings.currencySuffix : r.currency,
+  );
   String money(double v) => '${salaryMoney(v)} $currency';
   final title = _t(r.isSalary ? 'سند قبض راتب' : 'سند قبض');
   final subtitle = r.isSalary ? 'SALARY RECEIPT' : 'PAYMENT RECEIPT';
@@ -254,10 +257,10 @@ pw.Widget _page(SalaryReceipt r, bool rtl) {
       // الأطراف.
       pw.Row(
         children: [
-          infoCell('صاحب العمل', r.ownerName),
+          infoCell(r.payerLabel, r.ownerName),
           pw.SizedBox(width: 10),
           infoCell(
-            r.isSalary ? 'الموظف المستلم' : 'المستلم',
+            r.payeeLabel,
             r.employeeName,
             extra: r.employeeFnd,
           ),
@@ -389,7 +392,7 @@ pw.Widget _page(SalaryReceipt r, bool rtl) {
                   _txt(
                     _t(
                       r.signMode == SalaryReceipt.signHere
-                          ? 'وقّع على جوال صاحب العمل'
+                          ? r.signHereLabel
                           : 'أُرسل للاعتماد والتوقيع',
                     ),
                     size: 10,

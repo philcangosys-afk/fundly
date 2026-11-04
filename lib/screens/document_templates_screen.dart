@@ -7,6 +7,8 @@ import '../l10n/tr_widgets.dart';
 import '../l10n/app_language.dart';
 import 'package:flutter/rendering.dart';
 import 'package:share_plus/share_plus.dart';
+import 'package:pdf/pdf.dart' show PdfPageFormat;
+import 'package:printing/printing.dart' show Printing;
 import 'package:shared_preferences/shared_preferences.dart';
 
 import '../data/app_reminders_store.dart';
@@ -74,11 +76,13 @@ class _DocumentTemplatesScreenState extends State<DocumentTemplatesScreen> {
       '#بيانات المدين (المستلم)',
       'اسم المدين',
       'رقم هوية المدين',
+      'رقم جواز المدين',
       'هاتف المدين',
       'عنوان المدين',
       '#بيانات الدائن (صاحب المبلغ)',
       'اسم الدائن',
       'رقم هوية الدائن',
+      'رقم جواز الدائن',
       'هاتف الدائن',
       '#المبلغ',
       'نوع المبلغ',
@@ -106,6 +110,7 @@ class _DocumentTemplatesScreenState extends State<DocumentTemplatesScreen> {
       '#الطرف الأول (المؤجر)',
       'اسم المؤجر',
       'رقم هوية المؤجر',
+      'رقم جواز المؤجر',
       'جنسية المؤجر',
       'تاريخ انتهاء هوية المؤجر',
       'هاتف المؤجر',
@@ -114,6 +119,7 @@ class _DocumentTemplatesScreenState extends State<DocumentTemplatesScreen> {
       '#الطرف الثاني (المستأجر)',
       'اسم المستأجر',
       'رقم هوية المستأجر',
+      'رقم جواز المستأجر',
       'جنسية المستأجر',
       'تاريخ انتهاء هوية المستأجر',
       'هاتف المستأجر',
@@ -123,6 +129,7 @@ class _DocumentTemplatesScreenState extends State<DocumentTemplatesScreen> {
       'اسم ممثل المستأجر',
       'صفة الممثل',
       'رقم هوية الممثل',
+      'رقم جواز الممثل',
       'رقم الوكالة',
       'تاريخ انتهاء الوكالة',
       '#بيانات العقار',
@@ -162,6 +169,7 @@ class _DocumentTemplatesScreenState extends State<DocumentTemplatesScreen> {
       '#الطرف الأول (المؤجر)',
       'اسم المؤجر',
       'رقم هوية المؤجر',
+      'رقم جواز المؤجر',
       'جنسية المؤجر',
       'تاريخ انتهاء هوية المؤجر',
       'هاتف المؤجر',
@@ -170,6 +178,7 @@ class _DocumentTemplatesScreenState extends State<DocumentTemplatesScreen> {
       '#الطرف الثاني (المستأجر)',
       'اسم المستأجر',
       'رقم هوية المستأجر',
+      'رقم جواز المستأجر',
       'جنسية المستأجر',
       'هاتف المستأجر',
       'بريد المستأجر',
@@ -177,6 +186,7 @@ class _DocumentTemplatesScreenState extends State<DocumentTemplatesScreen> {
       'اسم ممثل المستأجر',
       'صفة الممثل',
       'رقم هوية الممثل',
+      'رقم جواز الممثل',
       'رقم الوكالة',
       'تاريخ انتهاء الوكالة',
       '#الرخصة والنشاط',
@@ -217,12 +227,14 @@ class _DocumentTemplatesScreenState extends State<DocumentTemplatesScreen> {
       '#الطرف الأول (المؤجر)',
       'اسم المؤجر',
       'رقم هوية المؤجر',
+      'رقم جواز المؤجر',
       'هاتف المؤجر',
       'بريد المؤجر',
       'عنوان المؤجر',
       '#الطرف الثاني (المستأجر)',
       'اسم المستأجر',
       'رقم هوية المستأجر',
+      'رقم جواز المستأجر',
       'جنسية المستأجر',
       'رقم رخصة القيادة',
       'تاريخ انتهاء رخصة القيادة',
@@ -269,10 +281,12 @@ class _DocumentTemplatesScreenState extends State<DocumentTemplatesScreen> {
       '#الطرف الأول',
       'الطرف الأول',
       'رقم هوية الطرف الأول',
+      'رقم جواز الطرف الأول',
       'هاتف الطرف الأول',
       '#الطرف الثاني',
       'الطرف الثاني',
       'رقم هوية الطرف الثاني',
+      'رقم جواز الطرف الثاني',
       'هاتف الطرف الثاني',
       '#موضوع العقد وقيمته',
       'موضوع العقد',
@@ -289,8 +303,10 @@ class _DocumentTemplatesScreenState extends State<DocumentTemplatesScreen> {
       '#الأطراف',
       'اسم المستلم',
       'رقم هوية المستلم',
+      'رقم جواز المستلم',
       'اسم المسلّم',
       'رقم هوية المسلّم',
+      'رقم جواز المسلّم',
       'مكان التسليم',
       'تاريخ التسليم',
       '#العناصر المسلّمة',
@@ -332,6 +348,7 @@ class _DocumentTemplatesScreenState extends State<DocumentTemplatesScreen> {
       '#المرسل إليه',
       'المرسل إليه',
       'رقم هوية المرسل إليه',
+      'رقم جواز المرسل إليه',
       'عنوان المرسل إليه',
       '#الموضوع',
       'سبب الإنذار',
@@ -509,10 +526,10 @@ class _DocumentTemplatesScreenState extends State<DocumentTemplatesScreen> {
 
   /// صيغة الإقرار في رأس المستند — {الحقل} يُستبدل بقيمته.
   static const Map<String, String> _templateIntro = {
+    // {@المدين}: رقم الهوية و/أو الجواز بين قوسين إن كُتب أيٌّ منهما.
     'إيصال أمانة':
-        'أقرّ أنا الموقّع أدناه {اسم المدين}، حامل الهوية رقم '
-        '{رقم هوية المدين}، بأنني استلمت من {اسم الدائن}، حامل الهوية رقم '
-        '{رقم هوية الدائن}، مبلغًا وقدره {المبلغ} ({المبلغ كتابةً}) على '
+        'أقرّ أنا الموقّع أدناه {اسم المدين}{@المدين}، بأنني استلمت من '
+        '{اسم الدائن}{@الدائن}، مبلغًا وقدره {المبلغ} ({المبلغ كتابةً}) على '
         'سبيل {نوع المبلغ}، وذلك بتاريخ {تاريخ الاستلام}.',
     'عقد إيجار عقار': _partiesIntro,
     'عقد إيجار نشاط تجاري': _partiesIntro,
@@ -667,16 +684,13 @@ class _DocumentTemplatesScreenState extends State<DocumentTemplatesScreen> {
   static const Map<String, List<String>> _requiredFields = {
     'إيصال أمانة': [
       'اسم المدين',
-      'رقم هوية المدين',
       'اسم الدائن',
       'المبلغ',
       'تاريخ الاستلام',
     ],
     'عقد إيجار عقار': [
       'اسم المؤجر',
-      'رقم هوية المؤجر',
       'اسم المستأجر',
-      'رقم هوية المستأجر',
       'اسم العقار',
       'تاريخ بداية العقد',
       'تاريخ نهاية العقد',
@@ -684,9 +698,7 @@ class _DocumentTemplatesScreenState extends State<DocumentTemplatesScreen> {
     ],
     'عقد إيجار نشاط تجاري': [
       'اسم المؤجر',
-      'رقم هوية المؤجر',
       'اسم المستأجر',
-      'رقم هوية المستأجر',
       'الاسم التجاري',
       'تاريخ بداية العقد',
       'تاريخ نهاية العقد',
@@ -695,7 +707,6 @@ class _DocumentTemplatesScreenState extends State<DocumentTemplatesScreen> {
     'عقد تأجير مركبة': [
       'اسم المؤجر',
       'اسم المستأجر',
-      'رقم هوية المستأجر',
       'رقم رخصة القيادة',
       'المركبة',
       'رقم اللوحة',
@@ -864,6 +875,9 @@ class _DocumentTemplatesScreenState extends State<DocumentTemplatesScreen> {
     await showModalBottomSheet<void>(
       context: context,
       isScrollControlled: true,
+      // النموذج الطويل لا يصعد تحت شريط الحالة والنتوء: زر الإغلاق يبقى
+      // في متناول الإصبع.
+      useSafeArea: true,
       backgroundColor: Colors.transparent,
       builder: (sheetContext) => StatefulBuilder(
         builder: (context, setSheetState) => SafeArea(
@@ -1226,8 +1240,8 @@ class _DocumentTemplatesScreenState extends State<DocumentTemplatesScreen> {
           draft
               ? 'حُفظت المسودة — افتحها من «النماذج المحفوظة» لإكمالها'
               : expiry == null
-              ? 'تم حفظ النموذج'
-              : 'تم حفظ النموذج وإضافة تذكير الانتهاء',
+              ? 'تم حفظ النموذج — اسحب الصفحة للأعلى لمشاهدة النماذج المحفوظة'
+              : 'تم حفظ النموذج وإضافة تذكير الانتهاء — اسحب الصفحة للأعلى لمشاهدة النماذج المحفوظة',
         ),
       ),
     );
@@ -1235,6 +1249,11 @@ class _DocumentTemplatesScreenState extends State<DocumentTemplatesScreen> {
   }
 
   Future<void> _shareRecord(DocumentRecordEntry record) async {
+    // النماذج المعروفة تُشارَك مستند PDF رسميًا (كالطباعة)، لا صورة.
+    if (_templateFields.containsKey(record.docType)) {
+      await _printRecord(record, shareOnly: true);
+      return;
+    }
     // تُستبعد الحقول الداخلية من المعاينة حتى لا تظهر أسطر مثل
     // "includeSignature: 1" داخل المستند المُشارَك.
     const internal = {'includeSignature', 'reminder', '__v', '__draft'};
@@ -1669,14 +1688,20 @@ class _DocumentTemplatesScreenState extends State<DocumentTemplatesScreen> {
   }
 
   /// طباعة نموذج محفوظ: ورقة A4 بكل خاناته (الفارغ لا يُطبع).
-  Future<void> _printRecord(DocumentRecordEntry record) async {
+  /// [shareOnly]: المستند نفسه PDF رسميًا يُشارَك مباشرة بلا شاشة الطباعة.
+  Future<void> _printRecord(
+    DocumentRecordEntry record, {
+    bool shareOnly = false,
+  }) async {
     final type = record.docType;
     final spec = _templateFields[type];
     if (spec == null) return;
     String val(String key) => (record.fields[key] ?? '').toString().trim();
     String fill(String template) =>
         AppTr.tr(template).replaceAllMapped(_slot, (match) {
-          final value = val(match.group(1)!);
+          final key = match.group(1)!;
+          if (key.startsWith('@')) return _idPhrase(val, key.substring(1));
+          final value = val(key);
           return value.isEmpty ? '..........' : value;
         });
     bool complete(String template) => _slot
@@ -1756,11 +1781,25 @@ class _DocumentTemplatesScreenState extends State<DocumentTemplatesScreen> {
       issued: record.issuedOn,
     );
     if (!mounted) return;
+    final fileName = '$type ${val(_primaryOf(type))}'.trim();
+    if (shareOnly) {
+      final messenger = ScaffoldMessenger.of(context);
+      try {
+        final bytes = await buildTemplatePdf(input, PdfPageFormat.a4);
+        await Printing.sharePdf(bytes: bytes, filename: '$fileName.pdf');
+      } catch (error) {
+        debugPrint('Template PDF failed: $error');
+        messenger.showSnackBar(
+          const SnackBar(content: Text('تعذّر تجهيز ملف PDF. حاول مرة أخرى.')),
+        );
+      }
+      return;
+    }
     await Navigator.of(context).push(
       MaterialPageRoute<void>(
         builder: (_) => TemplatePrintScreen(
           title: type,
-          fileName: '$type ${val(_primaryOf(type))}'.trim(),
+          fileName: fileName,
           buildPdf: (format) => buildTemplatePdf(input, format),
         ),
       ),
@@ -1769,6 +1808,17 @@ class _DocumentTemplatesScreenState extends State<DocumentTemplatesScreen> {
 
   static final RegExp _slot = RegExp(r'\{([^}]+)\}');
 
+  /// « (رقم الهوية: … · رقم الجواز: …)» للطرف — فارغ إن لم يُكتب أيٌّ منهما.
+  static String _idPhrase(String Function(String) val, String party) {
+    final parts = [
+      if (val('رقم هوية $party').isNotEmpty)
+        '${AppTr.tr('رقم الهوية')}: ${val('رقم هوية $party')}',
+      if (val('رقم جواز $party').isNotEmpty)
+        '${AppTr.tr('رقم الجواز')}: ${val('رقم جواز $party')}',
+    ];
+    return parts.isEmpty ? '' : ' (${parts.join(' · ')})';
+  }
+
   /// معاينة النموذج المحكم: الإقرار، ثم البيانات تحت أقسامها، ثم البنود
   /// مرقّمة، ثم الملاحظات وخانات التوقيع.
   List<Widget> _formalBody(DocumentRecordEntry record) {
@@ -1776,7 +1826,9 @@ class _DocumentTemplatesScreenState extends State<DocumentTemplatesScreen> {
     String val(String key) => (record.fields[key] ?? '').toString().trim();
     String fill(String template) =>
         AppTr.tr(template).replaceAllMapped(_slot, (match) {
-          final value = val(match.group(1)!);
+          final key = match.group(1)!;
+          if (key.startsWith('@')) return _idPhrase(val, key.substring(1));
+          final value = val(key);
           return value.isEmpty ? '..........' : value;
         });
     bool complete(String template) => _slot

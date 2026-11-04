@@ -33,6 +33,7 @@ class SalaryIncomeSync {
       ];
       if (approved.isEmpty) return 0;
       final prefs = await SharedPreferences.getInstance();
+      await _completeOldIncomes(prefs, user.id, existing);
       final doneKey = 'fundly_salary_income_${user.id}';
       final done = (prefs.getStringList(doneKey) ?? const <String>[]).toSet();
       final pending = approved.where((r) => !done.contains(r.id)).toList();
@@ -61,6 +62,29 @@ class SalaryIncomeSync {
     }
   }
 
+  /// مرة واحدة: إيرادات الرواتب التي سُجّلت سابقًا «نشطة» تصبح «مكتملة».
+  static Future<void> _completeOldIncomes(
+    SharedPreferences prefs,
+    String userId,
+    List<PersonalEntryRecord>? existing,
+  ) async {
+    final key = 'fundly_salary_income_completed_v1_$userId';
+    if (prefs.getBool(key) == true) return;
+    try {
+      final repo = SupabasePersonalEntriesRepository();
+      final records = existing ?? await repo.fetchAll();
+      for (final record in records) {
+        if (record.entryType != 'إيراد') continue;
+        if ((record.details[receiptKey] ?? '').isEmpty) continue;
+        if (record.status != 'نشطة') continue;
+        await repo.update(record.copyWith(status: 'مكتملة'));
+      }
+      await prefs.setBool(key, true);
+    } catch (_) {
+      // يُعاد في المرة القادمة.
+    }
+  }
+
   /// بند الإيراد عند المستلم.
   static PersonalEntryRecord incomeFor(SalaryReceipt r) {
     String plain(double v) => v.toStringAsFixed(v % 1 == 0 ? 0 : 2);
@@ -72,7 +96,8 @@ class SalaryIncomeSync {
       title: title,
       amount: r.paid.round(),
       dueDate: r.receiptDate,
-      status: 'نشطة',
+      // السند المعتمد استُلم فعلًا: «مكتملة».
+      status: 'مكتملة',
       details: {
         'المبلغ': plain(r.paid),
         'التصنيف الرئيسي': r.isSalary ? 'الراتب/معاش' : 'سند قبض',

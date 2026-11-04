@@ -1,5 +1,6 @@
 import 'package:flutter/material.dart' hide Text, Align;
 import '../l10n/tr_widgets.dart';
+import '../widgets/shared/module_shared_widgets.dart' show directOpenRoute;
 import '../l10n/app_language.dart';
 
 import '../data/app_settings.dart';
@@ -37,7 +38,22 @@ class _NotificationsCenterScreenState extends State<NotificationsCenterScreen> {
       _ => null,
     };
     if (page == null) return;
-    await Navigator.of(context).push(MaterialPageRoute(builder: (_) => page));
+    // التفاصيل مباشرة: الرجوع منها يعيد إلى التنبيهات (صفحة واحدة).
+    await Navigator.of(context).push(directOpenRoute(page));
+  }
+
+  /// مسح تنبيه واحد: يختفي من القائمة ولا يعود حتى يتجدد استحقاقه.
+  Future<void> _dismissOne(HomeCalendarItem item) async {
+    await _readStore.dismissAll([item]);
+    if (!mounted) return;
+    setState(() {
+      _alerts = _alerts
+          .where((a) => !identical(a, item))
+          .toList(growable: false);
+    });
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(content: Text('تم مسح التنبيه')),
+    );
   }
 
   final HomeDashboardService _dashboardService = HomeDashboardService();
@@ -175,6 +191,12 @@ class _NotificationsCenterScreenState extends State<NotificationsCenterScreen> {
     return Scaffold(
       backgroundColor: AppTheme.page,
       appBar: AppBar(
+        // سهم الرجوع نفسه في الكلندر والقرعة والتنبيهات.
+        leading: IconButton(
+          tooltip: AppTr.tr('رجوع'),
+          onPressed: () => Navigator.pop(context),
+          icon: const Icon(Icons.arrow_back_ios_new_rounded, size: 20),
+        ),
         title: const Text(HomeStrings.notifications),
         centerTitle: true,
         actions: [
@@ -267,7 +289,7 @@ class _NotificationsCenterScreenState extends State<NotificationsCenterScreen> {
                         ),
                         SizedBox(width: 8),
                         Text(
-                          'مسح الكل',
+                          'مسح الكل من التنبيهات',
                           style: TextStyle(color: AppTheme.danger),
                         ),
                       ],
@@ -410,21 +432,38 @@ class _NotificationsCenterScreenState extends State<NotificationsCenterScreen> {
                                 : const Color(0xFF5C6B68),
                           ),
                         ),
-                        trailing: IconButton(
-                          tooltip: isRead
-                              ? 'وضع كغير مقروء'
-                              : 'وضع كمقروء',
-                          icon: Icon(
-                            isRead
-                                ? Icons.mark_email_unread_outlined
-                                : Icons.done_rounded,
-                            size: 20,
-                            color: isRead
-                                ? AppTheme.muted
-                                : const Color(0xFF0E7161),
-                          ),
-                          onPressed: () =>
-                              _readStore.markRead(item, read: !isRead),
+                        // مقروء/غير مقروء، ومسح هذا التنبيه وحده.
+                        trailing: Row(
+                          mainAxisSize: MainAxisSize.min,
+                          children: [
+                            IconButton(
+                              tooltip: isRead
+                                  ? 'وضع كغير مقروء'
+                                  : 'وضع كمقروء',
+                              visualDensity: VisualDensity.compact,
+                              icon: Icon(
+                                isRead
+                                    ? Icons.mark_email_unread_outlined
+                                    : Icons.done_rounded,
+                                size: 20,
+                                color: isRead
+                                    ? AppTheme.muted
+                                    : const Color(0xFF0E7161),
+                              ),
+                              onPressed: () =>
+                                  _readStore.markRead(item, read: !isRead),
+                            ),
+                            IconButton(
+                              tooltip: AppTr.tr('مسح التنبيه'),
+                              visualDensity: VisualDensity.compact,
+                              icon: const Icon(
+                                Icons.delete_outline_rounded,
+                                size: 20,
+                                color: AppTheme.danger,
+                              ),
+                              onPressed: () => _dismissOne(item),
+                            ),
+                          ],
                         ),
                       ),
                     );

@@ -5,6 +5,10 @@ import '../l10n/tr_widgets.dart';
 import '../l10n/app_language.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:share_plus/share_plus.dart';
+import 'package:pdf/pdf.dart' show PdfPageFormat;
+import 'package:printing/printing.dart' show Printing;
+import '../data/template_print.dart' show buildRecordPdf, PrintSection;
+import '../widgets/shared/pdf_share.dart';
 import 'package:url_launcher/url_launcher.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import 'package:geolocator/geolocator.dart';
@@ -953,6 +957,8 @@ class PersonalCommitmentsScreen extends StatefulWidget {
 }
 
 class _PersonalCommitmentsScreenState extends State<PersonalCommitmentsScreen> {
+  /// فتح مباشر لبند: لا تُرسم القائمة خلف التفاصيل.
+  late final bool _directOpen = (widget.openEntryId ?? '').trim().isNotEmpty;
   final TextEditingController _searchController = TextEditingController();
   final FocusNode _searchFocusNode = FocusNode();
   late final PersonalEntriesRepository _repository;
@@ -1779,6 +1785,9 @@ class _PersonalCommitmentsScreenState extends State<PersonalCommitmentsScreen> {
         return item.status == 'ملغاة';
       case 'مجمّدة':
         return item.status == 'مجمّدة';
+      case 'مفوَّض بها أنا':
+      case 'فوّضت بها غيري':
+        return _custodyRoleLabel(item.details) == label;
       case 'اليوم':
       case 'غدًا':
       case 'بعد أسبوع':
@@ -1871,6 +1880,9 @@ class _PersonalCommitmentsScreenState extends State<PersonalCommitmentsScreen> {
           if (item.status != 'ملغاة') return false;
         case 'مؤرشف':
           if (item.status != 'مؤرشف') return false;
+        case 'مفوَّض بها أنا':
+        case 'فوّضت بها غيري':
+          if (_custodyRoleLabel(item.details) != _filter.status) return false;
       }
       if (!_filter.matchesAmount(item.amount)) return false;
       // اختصارات المبلغ: "لي" و"عليّ" تعتمدان على اتجاه الدين المسجَّل.
@@ -5110,6 +5122,7 @@ class _PersonalCommitmentsScreenState extends State<PersonalCommitmentsScreen> {
 
   @override
   Widget build(BuildContext context) {
+    if (_directOpen) return const DirectOpenPlaceholder();
     return Scaffold(
       backgroundColor: AppTheme.page,
       body: Directionality(
@@ -5299,7 +5312,12 @@ class _PersonalCommitmentsScreenState extends State<PersonalCommitmentsScreen> {
 
   void _openSmartCalendar() {
     Navigator.of(context).push(
-      MaterialPageRoute(builder: (_) => const SmartCalendarScreen()),
+      MaterialPageRoute(
+        builder: (_) => const SmartCalendarScreen(
+          modules: SmartCalendarScreen.personalModules,
+          scopeLabel: 'الالتزامات الشخصية',
+        ),
+      ),
     );
   }
 
@@ -5704,6 +5722,7 @@ class _PersonalCommitmentsScreenState extends State<PersonalCommitmentsScreen> {
       // الأقسام تتبع الفئة المختارة داخل الورقة نفسها.
       sections: _filterSectionsFor(_selectedEntryType),
       sectionsFor: _filterSectionsFor,
+      selectStatusesFor: _selectStatusesFor,
       currencies: _filterCurrencies,
       delegatesLabel: 'التفويض',
       placeLabel: 'مواقع وأماكن',
@@ -5714,6 +5733,18 @@ class _PersonalCommitmentsScreenState extends State<PersonalCommitmentsScreen> {
       }),
     );
   }
+
+  /// العهدة المالية: دوري فيها ضمن الحالات (هنا وفي فلتر الرئيسية).
+  static List<String> _selectStatusesFor(String main) => main == 'عهدة مالية'
+      ? const [
+          'الأحدث أولاً',
+          'نشط',
+          'مكتملة',
+          'ملغاة',
+          'مفوَّض بها أنا',
+          'فوّضت بها غيري',
+        ]
+      : kAppFilterSelectStatuses;
 
   static List<String> _subCategoriesFor(String main) => main == 'الكل'
       ? const <String>[]
@@ -5731,9 +5762,11 @@ class _PersonalCommitmentsScreenState extends State<PersonalCommitmentsScreen> {
     mainCategories: [for (final filter in _personalDashboardFilters) filter.$1],
     subCategoriesFor: _subCategoriesFor,
     sectionsFor: _filterSectionsFor,
+    selectStatusesFor: _selectStatusesFor,
     currencies: [
       ...kAppFilterCurrencies,
-      if (!kAppFilterCurrencies.contains(AppSettings.currencySuffix))
+      if (AppSettings.currencySuffix.isNotEmpty &&
+        !kAppFilterCurrencies.contains(AppSettings.currencySuffix))
         AppSettings.currencySuffix,
     ],
     delegatesLabel: 'التفويض',
@@ -6145,19 +6178,26 @@ class _PersonalCommitmentsScreenState extends State<PersonalCommitmentsScreen> {
     final organizationTotal = groups[1].total;
     final financialTotal = groups[2].total;
     const accent = Color(0xFF0A5A50);
-    // شريحتان فقط في البطاقة الخارجية، والاسم كاملًا بلا اختصار.
+    // البنود الثلاثة نفسها بأيقوناتها في مراكز المتابعة الأربعة: الطلبات،
+    // المتابعة والتخطيط، مستحقات مالية.
     final metrics = [
+      (
+        'الطلبات',
+        groups[0].total,
+        Icons.hourglass_top_rounded,
+        const Color(0xFFA6691A),
+      ),
       (
         'المتابعة والتخطيط',
         organizationTotal,
-        Icons.checklist_rounded,
-        const Color(0xFF0E7161),
+        Icons.fact_check_outlined,
+        const Color(0xFF0A5A50),
       ),
       (
-        'مستحقات',
+        'مستحقات مالية',
         financialTotal,
-        Icons.payments_outlined,
-        const Color(0xFF34A894),
+        Icons.account_balance_wallet_outlined,
+        const Color(0xFF178F7B),
       ),
     ];
 
@@ -6316,12 +6356,14 @@ class _PersonalCommitmentsScreenState extends State<PersonalCommitmentsScreen> {
         week,
       ],
       'مواقع وأماكن' => const [newest],
+      // العهدة: دوري فيها بدل «مجمّدة».
       'عهدة مالية' => const [
         newest,
         active,
         done,
         ('ملغاة', Icons.cancel_outlined),
-        ('مجمّدة', Icons.ac_unit_rounded),
+        ('مفوَّض بها أنا', Icons.assignment_ind_outlined),
+        ('فوّضت بها غيري', Icons.forward_to_inbox_outlined),
       ],
       _ => const [
         newest,
@@ -7230,24 +7272,65 @@ class _PersonalCommitmentDetailsScreenState
     }
   }
 
+  /// المشاركة مستند PDF (لا نصًا): يختار أولًا بترويسة Fundly أو بدونها.
   Future<void> _shareCommitment() async {
     final item = widget.item;
-    final box = context.findRenderObject() as RenderBox?;
-    await SharePlus.instance.share(
-      ShareParams(
-        subject: item.title,
-        text: [
-          item.title,
-          'النوع: ${item.entryType ?? 'التزام شخصي'}',
-          'المبلغ: ${item.totalAmount} ${widget.item.currency}',
-          'الاستحقاق: ${item.dueDate.isEmpty ? 'غير محدد' : item.dueDate}',
-          'الحالة: ${item.status}',
-        ].join('\n'),
-        sharePositionOrigin: box == null
-            ? null
-            : box.localToGlobal(Offset.zero) & box.size,
+    final letterhead = await askPdfLetterhead(context);
+    if (letterhead == null || !mounted) return;
+    final messenger = ScaffoldMessenger.of(context);
+    // التشكيل يُسقط سطور PDF العربية أحيانًا — يُحذف من القيم.
+    String safe(String s) => pdfSafeText(s);
+    final type = item.entryType ?? 'التزام شخصي';
+    String money(int v) => '$v ${item.currency}'.trim();
+    final pairs = <(String, String)>[
+      ('النوع', safe(AppTr.tr(type))),
+      ('المبلغ', money(item.totalAmount)),
+      if (item.paidAmount > 0) ('المدفوع', money(item.paidAmount)),
+      if (item.paidAmount > 0) ('المتبقي', money(item.amount)),
+      (
+        'الاستحقاق',
+        item.dueDate.isEmpty ? safe(AppTr.tr('غير محدد')) : item.dueDate,
       ),
-    );
+      ('الحالة', safe(AppTr.tr(item.status))),
+    ];
+    // بقية خانات النموذج المعبّأة (بلا السري والعناوين).
+    const skip = {'المبلغ', 'العملة', 'تاريخ الاستحقاق'};
+    final form = _financialEntryForms[type];
+    final extra = <(String, String)>[
+      if (form != null)
+        for (final field in form.fields)
+          if (!field.hidden &&
+              !skip.contains(field.label) &&
+              field.kind != _FinancialFieldKind.secret &&
+              field.kind != _FinancialFieldKind.header &&
+              field.kind != _FinancialFieldKind.toggle &&
+              (item.details[field.label] ?? '').trim().isNotEmpty)
+            (field.shown, safe(AppTr.tr(item.details[field.label]!.trim()))),
+    ];
+    try {
+      final bytes = await buildRecordPdf(
+        title: safe(item.title),
+        subtitle: 'COMMITMENT',
+        letterhead: letterhead,
+        format: PdfPageFormat.a4,
+        sections: [
+          PrintSection('البيانات', pairs: pairs),
+          if (extra.isNotEmpty) PrintSection('التفاصيل', pairs: extra),
+        ],
+      );
+      await Printing.sharePdf(
+        bytes: bytes,
+        filename: '${safe(item.title).isEmpty ? 'Fundly' : safe(item.title)}.pdf',
+      );
+    } catch (error) {
+      debugPrint('Commitment PDF failed: $error');
+      messenger.showSnackBar(
+        const SnackBar(
+          content: Text('تعذّر تجهيز ملف PDF. حاول مرة أخرى.'),
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+    }
   }
 
   Future<void> _archiveCommitment() async {
@@ -14182,7 +14265,10 @@ class _CommitmentCard extends StatelessWidget {
         if (_isDebtLike)
           'المتبقي : ${(item.totalAmount - item.paidAmount).toStringAsFixed(2)} '
               '${item.currency}'
-        else if (item.dueDate.isNotEmpty)
+        // تاريخ المستند هو تاريخ انتهائه: يُكتب مرة واحدة («ينتهي»).
+        else if (item.dueDate.isNotEmpty &&
+            item.dueDate.trim() !=
+                (item.details['تاريخ الانتهاء'] ?? '').trim())
           'التاريخ : ${item.dueDate}',
         // المستند يُعرف بتاريخ انتهائه، فيظهر على البطاقة من الخارج.
         if ((item.details['تاريخ الانتهاء'] ?? '').trim().isNotEmpty)

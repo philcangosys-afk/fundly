@@ -36,7 +36,13 @@ class SalaryReceipt {
     this.rejectReason = '',
     this.expenseId = '',
     this.createdAt,
+    this.parties = partiesEmployer,
   });
+
+  /// صفة الطرفين: «صاحب العمل والموظف» أو «المسلّم والمستلم» — ليس كل
+  /// سند بين صاحب عمل وموظف (من صديق لصديقه مثلًا).
+  static const partiesEmployer = 'employer';
+  static const partiesHandover = 'handover';
 
   static const kindSalary = 'راتب';
   static const kindGeneral = 'عام';
@@ -94,8 +100,21 @@ class SalaryReceipt {
   /// المصروف المسجَّل له في الالتزامات الشخصية.
   final String expenseId;
   final DateTime? createdAt;
+  final String parties;
 
   bool get isSalary => kind == kindSalary;
+  bool get isHandover => parties == partiesHandover;
+
+  /// اسم الطرف الذي دفع: «صاحب العمل» أو «المسلّم».
+  String get payerLabel => isHandover ? 'المسلّم' : 'صاحب العمل';
+
+  /// اسم الطرف الذي استلم.
+  String get payeeLabel =>
+      isSalary && !isHandover ? 'الموظف المستلم' : 'المستلم';
+
+  /// «وقّع على جوال صاحب العمل» / «وقّع على جوال المسلّم».
+  String get signHereLabel =>
+      isHandover ? 'وقّع على جوال المسلّم' : 'وقّع على جوال صاحب العمل';
   bool get isPending => status == statusPending;
   bool get isApproved => status == statusApproved;
   bool get isRejected => status == statusRejected;
@@ -186,6 +205,9 @@ class SalaryReceipt {
     rejectReason: '${j['reject_reason'] ?? ''}',
     expenseId: '${j['expense_id'] ?? ''}',
     createdAt: DateTime.tryParse('${j['created_at'] ?? ''}'),
+    parties: '${j['parties'] ?? ''}' == partiesHandover
+        ? partiesHandover
+        : partiesEmployer,
   );
 
   Map<String, dynamic> toRow() => {
@@ -211,6 +233,9 @@ class SalaryReceipt {
     'signed_at': signedAt?.toUtc().toIso8601String(),
     'reject_reason': rejectReason,
     'expense_id': expenseId,
+    // يُرسل فقط عند «المسلّم والمستلم» — فلا يتعطّل الحفظ قبل تشغيل SQL
+    // العمود الجديد لمن يستعمل الصفة الافتراضية.
+    if (isHandover) 'parties': parties,
   };
 
   SalaryReceipt copyWith({
@@ -248,6 +273,7 @@ class SalaryReceipt {
     rejectReason: rejectReason ?? this.rejectReason,
     expenseId: expenseId ?? this.expenseId,
     createdAt: createdAt,
+    parties: parties,
   );
 }
 
@@ -307,25 +333,46 @@ class SalaryReceiptsRepository {
 
   Future<SalaryReceipt> create(SalaryReceipt receipt) async {
     await AppSession.ensureSignedIn();
-    final row = await _client
-        .from(_table)
-        .insert(receipt.toRow())
-        .select()
-        .single()
-        .timeout(_timeout);
-    return SalaryReceipt.fromJson(row);
+    return _withPartiesFallback(receipt.toRow(), (row) async {
+      final saved = await _client
+          .from(_table)
+          .insert(row)
+          .select()
+          .single()
+          .timeout(_timeout);
+      return SalaryReceipt.fromJson(saved);
+    });
   }
 
   Future<SalaryReceipt> update(SalaryReceipt receipt) async {
     await AppSession.ensureSignedIn();
-    final row = await _client
-        .from(_table)
-        .update(receipt.toRow())
-        .eq('id', receipt.id!)
-        .select()
-        .single()
-        .timeout(_timeout);
-    return SalaryReceipt.fromJson(row);
+    return _withPartiesFallback(receipt.toRow(), (row) async {
+      final saved = await _client
+          .from(_table)
+          .update(row)
+          .eq('id', receipt.id!)
+          .select()
+          .single()
+          .timeout(_timeout);
+      return SalaryReceipt.fromJson(saved);
+    });
+  }
+
+  /// عمود «parties» لم يُضف بعد في الخادم: يُحفظ السند بدونه بدل أن
+  /// يفشل (وتعود صفة الطرفين إلى الافتراضية حتى يُشغَّل SQL).
+  Future<SalaryReceipt> _withPartiesFallback(
+    Map<String, dynamic> row,
+    Future<SalaryReceipt> Function(Map<String, dynamic> row) run,
+  ) async {
+    try {
+      return await run(row);
+    } on PostgrestException catch (error) {
+      if (!row.containsKey('parties') ||
+          !error.message.toLowerCase().contains('parties')) {
+        rethrow;
+      }
+      return run(Map<String, dynamic>.of(row)..remove('parties'));
+    }
   }
 
   Future<void> delete(String id) async {

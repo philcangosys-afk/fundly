@@ -84,7 +84,8 @@ AppFilterModuleConfig assetsFilterModuleConfig(String label) {
     ],
     currencies: [
       ...kAppFilterCurrencies,
-      if (!kAppFilterCurrencies.contains(AppSettings.currencySuffix))
+      if (AppSettings.currencySuffix.isNotEmpty &&
+        !kAppFilterCurrencies.contains(AppSettings.currencySuffix))
         AppSettings.currencySuffix,
     ],
     delegatesLabel: 'التفويض',
@@ -203,7 +204,10 @@ class _ProjectsActivitiesScreenState extends State<ProjectsActivitiesScreen> {
           (e) => e.id == openId || (e.id == null && e.title == openId),
         );
         // غير موجود: تبقى القائمة ظاهرة.
-        if (index < 0) return;
+        if (index < 0) {
+          setState(() => _directOpen = false);
+          return;
+        }
         await _openDetails(_items[index]);
         if (mounted) Navigator.of(context).pop();
       });
@@ -1654,8 +1658,15 @@ class _ProjectsActivitiesScreenState extends State<ProjectsActivitiesScreen> {
             ),
           ));
         }
-        // انتهاء العقود تذكيرات: تحت «تذكير» وحده.
-        if (kind != 'تذكير') continue;
+      }
+      return sorted(items);
+    }
+
+    // ---- المستندات ← العقود: عقد إيجار انتهى أو ينتهي قريبًا، وعقود الأصل
+    // الأخرى (صيانة، خدمات...) بتاريخ انتهائها. كانت تحت «تذكير».
+    List<FollowUpEntry> contracts(List<_AssetItem> scoped) {
+      final items = <(String, DateTime, FollowUpEntry)>[];
+      for (final item in scoped) {
         // عقد إيجار انتهى أو ينتهي خلال أسبوع: يحتاج تجديدًا أو إخلاءً.
         for (final contract in _contractsOf(item)) {
           // المُغلق (ملغي / مُجدَّد / منتهٍ بتسوية) والمسودة لا يُذكَّر بهما.
@@ -1847,6 +1858,12 @@ class _ProjectsActivitiesScreenState extends State<ProjectsActivitiesScreen> {
             indented: true,
             entries: documents(scoped, false),
           ),
+          FollowUpMetric(
+            label: 'العقود',
+            icon: Icons.handshake_outlined,
+            indented: true,
+            entries: contracts(scoped),
+          ),
           const FollowUpMetric(
             label: 'المتابعة والتخطيط',
             icon: Icons.event_note_outlined,
@@ -1915,12 +1932,13 @@ class _ProjectsActivitiesScreenState extends State<ProjectsActivitiesScreen> {
 
   /// مجاميع البنود الثلاثة من مجموعات مركز المتابعة نفسها، فتتطابق
   /// الأرقام بين البطاقة ونافذة «المزيد».
-  ({int requests, int dues, int docs}) _followUpTotals(
+  ({int requests, int dues, int docs, int plans}) _followUpTotals(
     List<_AssetItem> assets,
   ) {
     var requests = 0;
     var dues = 0;
     var docs = 0;
+    var plans = 0;
     for (final group in _followUpGroups(assets)) {
       var section = '';
       for (final metric in group.metrics) {
@@ -1935,10 +1953,12 @@ class _ProjectsActivitiesScreenState extends State<ProjectsActivitiesScreen> {
             docs += metric.count;
           case 'الطلبات':
             requests += metric.count;
+          case 'المتابعة والتخطيط':
+            plans += metric.count;
         }
       }
     }
-    return (requests: requests, dues: dues, docs: docs);
+    return (requests: requests, dues: dues, docs: docs, plans: plans);
   }
 
   void _openFollowUpSheet(List<_AssetItem> assets) {
@@ -2579,8 +2599,12 @@ class _ProjectsActivitiesScreenState extends State<ProjectsActivitiesScreen> {
     );
   }
 
+  /// فتح مباشر لأصل: لا تُرسم القائمة خلف التفاصيل (إلا إن لم يُعثر عليه).
+  late bool _directOpen = (widget.openAssetId ?? '').trim().isNotEmpty;
+
   @override
   Widget build(BuildContext context) {
+    if (_directOpen) return const DirectOpenPlaceholder();
     final filtered = _filteredItems();
     // الرجوع خطوة واحدة: فئة مفتوحة ← شاشة «اختر»، ثم خروج من الصفحة.
     return PopScope(
@@ -2657,25 +2681,27 @@ class _ProjectsActivitiesScreenState extends State<ProjectsActivitiesScreen> {
                     // والمستحقات، والمستندات — لكل الأصول، فلا تتبدل
                     // الأرقام مع كل ضغطة على فئة.
                     metrics: () {
+                      // البنود الثلاثة نفسها بأيقوناتها في مراكز المتابعة
+                      // الأربعة: الطلبات، المتابعة والتخطيط، مستحقات مالية.
                       final totals = _followUpTotals(_items);
                       return [
                         ManagementMetricData(
                           label: 'الطلبات',
                           count: totals.requests,
-                          icon: Icons.fact_check_outlined,
-                          color: const Color(0xFF6B5BA8),
-                        ),
-                        ManagementMetricData(
-                          label: 'مالية',
-                          count: totals.dues,
-                          icon: Icons.payments_outlined,
+                          icon: Icons.hourglass_top_rounded,
                           color: const Color(0xFFA6691A),
                         ),
                         ManagementMetricData(
-                          label: 'مستندات',
-                          count: totals.docs,
-                          icon: Icons.folder_outlined,
-                          color: const Color(0xFF0E7161),
+                          label: 'المتابعة والتخطيط',
+                          count: totals.plans,
+                          icon: Icons.fact_check_outlined,
+                          color: const Color(0xFF0A5A50),
+                        ),
+                        ManagementMetricData(
+                          label: 'مستحقات مالية',
+                          count: totals.dues,
+                          icon: Icons.account_balance_wallet_outlined,
+                          color: const Color(0xFF178F7B),
                         ),
                       ];
                     }(),
@@ -3086,7 +3112,12 @@ class _ProjectsActivitiesScreenState extends State<ProjectsActivitiesScreen> {
   void _openSmartCalendar() {
     Navigator.of(
       context,
-    ).push(MaterialPageRoute(builder: (_) => const SmartCalendarScreen()));
+    ).push(MaterialPageRoute(
+        builder: (_) => const SmartCalendarScreen(
+          modules: SmartCalendarScreen.assetModules,
+          scopeLabel: 'العقارات والأنشطة والمركبات',
+        ),
+      ));
   }
 }
 

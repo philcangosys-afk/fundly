@@ -171,7 +171,16 @@ class _RaffleScreenState extends State<RaffleScreen>
   Widget build(BuildContext context) {
     return Scaffold(
       backgroundColor: const Color(0xFFE9F4F1),
-      appBar: AppBar(title: const Text(HomeStrings.raffle), centerTitle: true),
+      appBar: AppBar(
+        // سهم الرجوع نفسه في الكلندر والقرعة والتنبيهات.
+        leading: IconButton(
+          tooltip: AppTr.tr('رجوع'),
+          onPressed: () => Navigator.pop(context),
+          icon: const Icon(Icons.arrow_back_ios_new_rounded, size: 20),
+        ),
+        title: const Text(HomeStrings.raffle),
+        centerTitle: true,
+      ),
       body: Directionality(
         textDirection: TextDirection.rtl,
         child: ListView(
@@ -213,6 +222,8 @@ class _RaffleScreenState extends State<RaffleScreen>
                         foregroundColor: Colors.white,
                         shape: const CircleBorder(),
                         elevation: 6,
+                        // الكلمة كاملة في سطر واحد داخل الدائرة.
+                        padding: const EdgeInsets.all(8),
                       ),
                       child: _isSpinning
                           ? const SizedBox(
@@ -223,11 +234,17 @@ class _RaffleScreenState extends State<RaffleScreen>
                                 color: Colors.white,
                               ),
                             )
-                          : const Text(
-                              'Spin',
-                              style: TextStyle(
-                                fontSize: 17,
-                                fontWeight: FontWeight.w900,
+                          // «دوران» بالعربية و«Spin» بالإنجليزية.
+                          : const FittedBox(
+                              fit: BoxFit.scaleDown,
+                              child: Text(
+                                'دوران',
+                                maxLines: 1,
+                                softWrap: false,
+                                style: TextStyle(
+                                  fontSize: 17,
+                                  fontWeight: FontWeight.w900,
+                                ),
                               ),
                             ),
                     ),

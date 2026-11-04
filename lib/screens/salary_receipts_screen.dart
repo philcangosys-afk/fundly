@@ -67,7 +67,8 @@ Future<String> _syncExpense(SalaryReceipt r) async {
     title: title,
     amount: r.paid.round(),
     dueDate: r.receiptDate,
-    status: 'نشطة',
+    // استُلم الراتب ووُقّع: المصروف «مكتملة» لا «نشطة».
+    status: r.isApproved ? 'مكتملة' : 'نشطة',
     details: details,
   );
   if (r.expenseId.isNotEmpty) {
@@ -83,19 +84,27 @@ Future<String> _syncExpense(SalaryReceipt r) async {
 }
 
 /// السند الذي رفضه المستلم («لم أستلم»): مصروفه المرتبط عند صاحب العمل
-/// يصبح «ملغاة» فلا يُحسب في مصروفاته.
+/// يصبح «ملغاة» فلا يُحسب في مصروفاته. والمعتمد (استلمه ووقّع) يصبح
+/// مصروفه «مكتملة».
 Future<void> _cancelRejectedExpenses(List<SalaryReceipt> mine) async {
-  final ids = {
+  final rejected = {
     for (final r in mine)
       if (r.isRejected && r.expenseId.isNotEmpty) r.expenseId,
   };
-  if (ids.isEmpty) return;
+  final approved = {
+    for (final r in mine)
+      if (r.isApproved && r.expenseId.isNotEmpty) r.expenseId,
+  };
+  if (rejected.isEmpty && approved.isEmpty) return;
   try {
     final repo = SupabasePersonalEntriesRepository();
     for (final record in await repo.fetchAll()) {
-      if (!ids.contains(record.id)) continue;
-      if (record.status == 'ملغاة' || record.status == 'محذوف') continue;
-      await repo.update(record.copyWith(status: 'ملغاة'));
+      if (rejected.contains(record.id)) {
+        if (record.status == 'ملغاة' || record.status == 'محذوف') continue;
+        await repo.update(record.copyWith(status: 'ملغاة'));
+      } else if (approved.contains(record.id) && record.status == 'نشطة') {
+        await repo.update(record.copyWith(status: 'مكتملة'));
+      }
     }
   } catch (_) {
     // يُعاد في التحميل التالي.
@@ -390,7 +399,7 @@ class _SalaryReceiptsScreenState extends State<SalaryReceiptsScreen> {
         'طريقة التوقيع',
         AppTr.tr(
           r.signMode == SalaryReceipt.signHere
-              ? 'وقّع على جوال صاحب العمل'
+              ? r.signHereLabel
               : 'أُرسل للاعتماد والتوقيع',
         ),
       ),
@@ -453,6 +462,8 @@ class _SalaryReceiptsScreenState extends State<SalaryReceiptsScreen> {
     return showModalBottomSheet<void>(
       context: context,
       isScrollControlled: true,
+      // لا يصعد تحت النتوء وشريط الحالة، وفيه زر إغلاق ظاهر.
+      useSafeArea: true,
       backgroundColor: AppTheme.page,
       shape: const RoundedRectangleBorder(
         borderRadius: BorderRadius.vertical(top: Radius.circular(AppTheme.rCard)),
@@ -468,17 +479,30 @@ class _SalaryReceiptsScreenState extends State<SalaryReceiptsScreen> {
               shrinkWrap: true,
               padding: const EdgeInsets.fromLTRB(16, 10, 16, 18),
               children: [
-                Center(
-                  child: Container(
-                    width: 42,
-                    height: 4,
-                    margin: const EdgeInsets.only(bottom: 12),
-                    decoration: BoxDecoration(
-                      color: AppTheme.hairline,
-                      borderRadius: BorderRadius.circular(99),
+                Row(
+                  children: [
+                    const SizedBox(width: 40),
+                    Expanded(
+                      child: Center(
+                        child: Container(
+                          width: 42,
+                          height: 4,
+                          decoration: BoxDecoration(
+                            color: AppTheme.hairline,
+                            borderRadius: BorderRadius.circular(99),
+                          ),
+                        ),
+                      ),
                     ),
-                  ),
+                    IconButton(
+                      tooltip: AppTr.tr('إغلاق'),
+                      visualDensity: VisualDensity.compact,
+                      onPressed: () => Navigator.of(sheetContext).pop(),
+                      icon: const Icon(Icons.close_rounded),
+                    ),
+                  ],
                 ),
+                const SizedBox(height: 4),
                 // الرأس: نوع السند وشهره وحالته، والمبلغ المدفوع بارزًا.
                 Container(
                   margin: const EdgeInsets.only(bottom: 10),
@@ -569,10 +593,10 @@ class _SalaryReceiptsScreenState extends State<SalaryReceiptsScreen> {
                 Row(
                   crossAxisAlignment: CrossAxisAlignment.start,
                   children: [
-                    party('صاحب العمل', r.ownerName, ''),
+                    party(r.payerLabel, r.ownerName, ''),
                     const SizedBox(width: 8),
                     party(
-                      r.isSalary ? 'الموظف المستلم' : 'المستلم',
+                      r.payeeLabel,
                       r.employeeName,
                       r.employeeFnd,
                     ),
@@ -1206,6 +1230,10 @@ class _SalaryReceiptFormScreenState extends State<SalaryReceiptFormScreen> {
   late int _month;
   late DateTime _date;
   late String _signMode;
+
+  /// صفة الطرفين، وعملة السند (لكل سند وحده).
+  late String _parties;
+  late String _currency;
   bool _paidTouched = false;
   bool _saving = false;
   String _error = '';
@@ -1240,6 +1268,10 @@ class _SalaryReceiptFormScreenState extends State<SalaryReceiptFormScreen> {
         : now.month;
     _date = _parseDay(e?.receiptDate ?? '') ?? now;
     _signMode = e?.signMode ?? SalaryReceipt.signHere;
+    _parties = e?.parties ?? SalaryReceipt.partiesEmployer;
+    _currency = (e?.currency ?? '').trim().isNotEmpty
+        ? e!.currency.trim()
+        : AppSettings.currencySuffix;
     // راتب الموظف السابق يُقترح للسند الجديد.
     if (e == null && widget.presetFnd.isNotEmpty) {
       for (final r in widget.others) {
@@ -1289,6 +1321,10 @@ class _SalaryReceiptFormScreenState extends State<SalaryReceiptFormScreen> {
       double.tryParse(c.text.trim().replaceAll(',', '')) ?? 0;
 
   bool get _isSalary => _kind == SalaryReceipt.kindSalary;
+
+  /// كلمات «الموظف» في الراتب بصفة «صاحب العمل والموظف» فقط.
+  bool get _employeeWords =>
+      _isSalary && _parties != SalaryReceipt.partiesHandover;
 
   double get _total {
     final t =
@@ -1488,9 +1524,11 @@ class _SalaryReceiptFormScreenState extends State<SalaryReceiptFormScreen> {
           ? 'انتظر حتى يظهر صاحب الرقم التعريفي'
           : 'لم يُعثر على صاحب هذا الرقم — تأكد منه';
     } else if (name.isEmpty) {
-      error = _isSalary ? 'اكتب اسم الموظف الحقيقي' : 'اكتب اسم المستلم';
+      error = _employeeWords ? 'اكتب اسم الموظف الحقيقي' : 'اكتب اسم المستلم';
     } else if (_isSalary && nameParts < 2) {
-      error = 'اكتب اسم الموظف الحقيقي من اسمين على الأقل';
+      error = _employeeWords
+          ? 'اكتب اسم الموظف الحقيقي من اسمين على الأقل'
+          : 'اكتب اسم المستلم من اسمين على الأقل';
     } else if (!_isSalary && _description.text.trim().isEmpty) {
       error = 'اكتب بيان السند';
     } else if (paid <= 0) {
@@ -1535,7 +1573,7 @@ class _SalaryReceiptFormScreenState extends State<SalaryReceiptFormScreen> {
         title: '${AppTr.tr('توقيع')} $name',
         subtitle:
             '${AppTr.tr('يوقّع المستلم بإصبعه على هذا الجوال تأكيدًا لاستلام')} '
-            '${_moneyOf(paid)}',
+            '${_moneyOf(paid, _currency)}',
       );
       if (strokes == null || strokes.isEmpty || !mounted) return;
       signature = SalaryReceipt.encodeStrokes(strokes);
@@ -1562,7 +1600,7 @@ class _SalaryReceiptFormScreenState extends State<SalaryReceiptFormScreen> {
         deductions: _isSalary ? _v(_deductions) : 0,
         total: _isSalary ? _total : paid,
         paid: paid,
-        currency: AppSettings.currencySuffix,
+        currency: _currency,
         description: _isSalary ? '' : _description.text.trim(),
         notes: _notes.text.trim(),
         signMode: _signMode,
@@ -1570,6 +1608,7 @@ class _SalaryReceiptFormScreenState extends State<SalaryReceiptFormScreen> {
         signature: signature,
         signedAt: signedAt,
         expenseId: widget.existing?.expenseId ?? '',
+        parties: _parties,
       );
       var saved = widget.existing == null
           ? await _repo.create(draft)
@@ -1585,9 +1624,9 @@ class _SalaryReceiptFormScreenState extends State<SalaryReceiptFormScreen> {
       if (hasFnd) {
         await PeopleDirectoryStore.upsert(
           fullName: name,
-          typeKey: _isSalary ? 'person_employee' : 'person_other',
-          categoryName: _isSalary ? 'موظف' : 'أخرى',
-          roleTitle: _isSalary ? 'موظف' : '',
+          typeKey: _employeeWords ? 'person_employee' : 'person_other',
+          categoryName: _employeeWords ? 'موظف' : 'أخرى',
+          roleTitle: _employeeWords ? 'موظف' : '',
           details: {'الرقم التعريفي': fnd},
           sourceNote: 'سند قبض',
         );
@@ -1636,7 +1675,7 @@ class _SalaryReceiptFormScreenState extends State<SalaryReceiptFormScreen> {
     controller: c,
     keyboardType: const TextInputType.numberWithOptions(decimal: true),
     onChanged: (_) => (onChanged ?? _recalc)(),
-    decoration: _decor(label).copyWith(suffixText: AppSettings.currencySuffix),
+    decoration: _decor(label).copyWith(suffixText: _currency),
   );
 
   Widget _section(String title) => Padding(
@@ -1698,6 +1737,41 @@ class _SalaryReceiptFormScreenState extends State<SalaryReceiptFormScreen> {
                   ? (s) => setState(() => _kind = s.first)
                   : null,
             ),
+            const SizedBox(height: 10),
+            // صفة الطرفين في السند ونسخته PDF.
+            SegmentedButton<String>(
+              showSelectedIcon: false,
+              segments: const [
+                ButtonSegment(
+                  value: SalaryReceipt.partiesEmployer,
+                  icon: Icon(Icons.business_center_outlined, size: 18),
+                  label: Text('صاحب العمل والموظف'),
+                ),
+                ButtonSegment(
+                  value: SalaryReceipt.partiesHandover,
+                  icon: Icon(Icons.handshake_outlined, size: 18),
+                  label: Text('المسلّم والمستلم'),
+                ),
+              ],
+              selected: {_parties},
+              onSelectionChanged: (s) => setState(() => _parties = s.first),
+            ),
+            const SizedBox(height: 10),
+            // عملة السند: الافتراضية من الإعدادات، وتُغيَّر لهذا السند وحده.
+            DropdownButtonFormField<String>(
+              initialValue: _currency.isEmpty ? null : _currency,
+              isExpanded: true,
+              decoration: _decor('العملة', icon: Icons.payments_outlined),
+              hint: const Text('اختر العملة'),
+              items: [
+                for (final c in {
+                  ...AppSettings.currencySuffixes,
+                  if (_currency.isNotEmpty) _currency,
+                })
+                  DropdownMenuItem(value: c, child: Text(c)),
+              ],
+              onChanged: (v) => setState(() => _currency = v ?? _currency),
+            ),
             // التوقيع أولًا: يحدد إن كان الرقم التعريفي إلزاميًا.
             _section('1. التوقيع'),
             _signOption(
@@ -1719,7 +1793,7 @@ class _SalaryReceiptFormScreenState extends State<SalaryReceiptFormScreen> {
                 children: [
                   Expanded(
                     child: Text(
-                      _isSalary ? '2. الموظف' : '2. المستلم',
+                      _employeeWords ? '2. الموظف' : '2. المستلم',
                       style: const TextStyle(
                         fontSize: 13,
                         fontWeight: FontWeight.w900,
@@ -1814,17 +1888,19 @@ class _SalaryReceiptFormScreenState extends State<SalaryReceiptFormScreen> {
               textDirection: AppTr.uiDir,
               onChanged: (_) => setState(() {}),
               decoration: _decor(
-                _isSalary ? 'اكتب اسم الموظف *' : 'اسم المستلم *',
+                _employeeWords ? 'اكتب اسم الموظف *' : 'اسم المستلم *',
                 icon: Icons.person_outline_rounded,
                 hint: _isSalary ? AppTr.tr('اسمين أو ثلاثة') : null,
               ),
             ),
             if (_isSalary)
-              const Padding(
-                padding: EdgeInsets.only(top: 5),
+              Padding(
+                padding: const EdgeInsets.only(top: 5),
                 child: Text(
-                  'إلزامي — اسمين على الأقل، ويظهر للموظف كما كتبته.',
-                  style: TextStyle(
+                  _employeeWords
+                      ? 'إلزامي — اسمين على الأقل، ويظهر للموظف كما كتبته.'
+                      : 'إلزامي — اسمين على الأقل، ويظهر للمستلم كما كتبته.',
+                  style: const TextStyle(
                     fontSize: 11,
                     height: 1.45,
                     fontWeight: FontWeight.w700,
@@ -1909,7 +1985,7 @@ class _SalaryReceiptFormScreenState extends State<SalaryReceiptFormScreen> {
                       ),
                     ),
                     Text(
-                      _moneyOf(_total),
+                      _moneyOf(_total, _currency),
                       style: const TextStyle(
                         fontSize: 13,
                         fontWeight: FontWeight.w900,

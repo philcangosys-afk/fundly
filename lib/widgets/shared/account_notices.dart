@@ -73,6 +73,18 @@ class AccountNotices {
               !(!item.isInfo && shownInvites.contains(item.id)))
             item,
       ];
+      // ما رُد عليه من قبل (من هذا الجوال أو غيره) أو لم يعد قائمًا لا
+      // يُعرض، ويُعلَّم في الخادم فلا يعود.
+      final answered = <FundlyInboxItem>[];
+      for (final item in items) {
+        if (item.isInfo || item.isHideNotice) continue;
+        if (!await RequestsData.stillAwaiting(item)) answered.add(item);
+      }
+      if (answered.isNotEmpty) {
+        _presented.addAll(answered.map((i) => i.id));
+        await FundlyAccount.markSeen([for (final i in answered) i.id]);
+        items.removeWhere(answered.contains);
+      }
       if (items.isEmpty || !context.mounted) return;
       _presented.addAll(items.map((i) => i.id));
       final inviteIds = [
@@ -85,6 +97,12 @@ class AccountNotices {
           _shownInvitesKey,
           kept.length > 300 ? kept.sublist(kept.length - 300) : kept,
         );
+        // النافذة تعرض الطلب مرة واحدة في كل الأجهزة: يُعلَّم في الخادم
+        // فور عرضه، ويبقى في «الطلبات» ومركز المتابعة حتى يُرد عليه.
+        await FundlyAccount.markSeen([
+          for (final item in items)
+            if (!item.isInfo && !item.isHideNotice) item.id,
+        ]);
       }
       final infoIds = [
         for (final item in items)
@@ -493,7 +511,10 @@ class AccountNotices {
               ),
             ),
           );
-          if (error == null) onDone();
+          // نجح الرد، أو سبق الرد عليه / لم يعد قائمًا: يُغلق ولا يعود.
+          if (error == null || RequestsData.closedMessages.contains(error)) {
+            onDone();
+          }
         }
 
         return Column(
@@ -546,7 +567,12 @@ class AccountNotices {
                     style: TextButton.styleFrom(
                       padding: const EdgeInsets.symmetric(horizontal: 6),
                     ),
-                    onPressed: busy ? null : onDone,
+                    onPressed: busy
+                        ? null
+                        : () {
+                            _laterNote(context);
+                            onDone();
+                          },
                     child: const Text('لاحقًا'),
                   ),
                 ),
@@ -555,6 +581,16 @@ class AccountNotices {
           ],
         );
       },
+    );
+  }
+
+  /// «لاحقًا»: النافذة لا تعود لهذا الطلب، ومكانه صفحة «الطلبات».
+  static void _laterNote(BuildContext context) {
+    ScaffoldMessenger.maybeOf(context)?.showSnackBar(
+      const SnackBar(
+        behavior: SnackBarBehavior.floating,
+        content: Text('تجد الطلب في «الطلبات» حتى ترد عليه'),
+      ),
     );
   }
 
@@ -818,7 +854,10 @@ class AccountNotices {
             if (rows.any((i) => !i.isInfo) &&
                 (rows.length > 1 || rows.any((i) => i.isHideNotice)))
               TextButton(
-                onPressed: () => Navigator.pop(dialogContext),
+                onPressed: () {
+                  _laterNote(dialogContext);
+                  Navigator.pop(dialogContext);
+                },
                 child: const Text('لاحقًا'),
               ),
             if (rows.any((i) => i.isInfo))

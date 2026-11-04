@@ -24,6 +24,10 @@ import 'smart_calendar_screen.dart';
 import '../widgets/shared/module_shared_widgets.dart';
 import '../widgets/shared/measured_pinned_header.dart';
 import 'package:share_plus/share_plus.dart';
+import 'package:pdf/pdf.dart' show PdfPageFormat;
+import 'package:printing/printing.dart' show Printing;
+import '../data/template_print.dart' show buildRecordPdf, PrintSection;
+import '../widgets/shared/pdf_share.dart';
 import 'package:image_picker/image_picker.dart';
 import 'package:shared_preferences/shared_preferences.dart';
 import '../data/custody_sharing.dart';
@@ -2108,7 +2112,8 @@ AppFilterModuleConfig sharedFilterModuleConfig() => AppFilterModuleConfig(
   selectStatusesFor: _sharedStatusOptionsFor,
   currencies: [
     ...kAppFilterCurrencies,
-    if (!kAppFilterCurrencies.contains(AppSettings.currencySuffix))
+    if (AppSettings.currencySuffix.isNotEmpty &&
+        !kAppFilterCurrencies.contains(AppSettings.currencySuffix))
       AppSettings.currencySuffix,
   ],
   delegatesLabel: 'التفويض',
@@ -2138,6 +2143,8 @@ class SharedCommitmentsScreen extends StatefulWidget {
 }
 
 class _SharedCommitmentsScreenState extends State<SharedCommitmentsScreen> {
+  /// فتح مباشر لالتزام: لا تُرسم القائمة خلف التفاصيل (إلا إن لم يُعثر عليه).
+  late bool _directOpen = (widget.openEntryId ?? '').trim().isNotEmpty;
   late final SharedEntriesRepository _repository;
   final TextEditingController _searchController = TextEditingController();
   final FocusNode _searchFocusNode = FocusNode();
@@ -2225,7 +2232,10 @@ class _SharedCommitmentsScreenState extends State<SharedCommitmentsScreen> {
     for (final item in _items) {
       if (item.id == id) found = item;
     }
-    if (found == null) return;
+    if (found == null) {
+      if (mounted) setState(() => _directOpen = false);
+      return;
+    }
     // دعوة لم أرد عليها: الأزرار أولًا.
     if (!await _inviteGate(found)) {
       if (mounted) Navigator.of(context).pop();
@@ -2899,6 +2909,7 @@ class _SharedCommitmentsScreenState extends State<SharedCommitmentsScreen> {
 
   @override
   Widget build(BuildContext context) {
+    if (_directOpen) return const DirectOpenPlaceholder();
     return Scaffold(
       backgroundColor: AppTheme.page,
       body: Directionality(
@@ -4233,7 +4244,12 @@ class _SharedCommitmentsScreenState extends State<SharedCommitmentsScreen> {
   void _openSmartCalendar() {
     Navigator.of(
       context,
-    ).push(MaterialPageRoute(builder: (_) => const SmartCalendarScreen()));
+    ).push(MaterialPageRoute(
+        builder: (_) => const SmartCalendarScreen(
+          modules: SmartCalendarScreen.sharedModules,
+          scopeLabel: 'الالتزامات المشتركة',
+        ),
+      ));
   }
 
   Widget _buildFollowUpCenter() {
@@ -4529,7 +4545,9 @@ Future<void> _openSharedEntryForm(
         selectValues[field.label] = existing.isNotEmpty
             ? existing
             // العملة تبدأ بالعملة الافتراضية للتطبيق، وتُغيَّر لهذا السجل وحده.
-            : (field.label == 'العملة' ? AppSettings.currencySuffix : null);
+            : (field.label == 'العملة' && AppSettings.currencySuffix.isNotEmpty
+                ? AppSettings.currencySuffix
+                : null);
       } else if (field.kind == _SharedFieldKind.people) {
         peopleValues[field.label] = existing.isNotEmpty ? existing.split('،').map((e) => e.trim()).where((e) => e.isNotEmpty).toList() : <String>[];
         controllers[field.label] = TextEditingController();
@@ -4606,6 +4624,60 @@ Future<void> _openSharedEntryForm(
     });
     final pristineDraft = draftJson();
     var lastDraft = pristineDraft;
+    // مسودة تستحق السؤال: فيها ما كتبه المستخدم فعلًا — لا اسمي الذي يُضاف
+    // تلقائيًا مسؤولًا ولا قيم النموذج الأولى. كانت «استكمال / بدء من جديد»
+    // تظهر في كل مرة وليس فيها إلا اسمي.
+    final pristineData = jsonDecode(pristineDraft) as Map;
+    final meEntry = _myTeamEntry();
+    bool isMe(String value) {
+      final v = value.trim();
+      if (v.isEmpty || v == meEntry) return true;
+      final id = AppIdentity.id;
+      return id.isNotEmpty && v.contains('($id)');
+    }
+
+    bool hasUserData(Object? decoded) {
+      if (decoded is! Map) return false;
+      final texts = decoded['c'];
+      final baseTexts = pristineData['c'];
+      if (texts is Map) {
+        for (final entry in texts.entries) {
+          final value = '${entry.value ?? ''}'.trim();
+          final base = baseTexts is Map
+              ? '${baseTexts[entry.key] ?? ''}'.trim()
+              : '';
+          if (value != base && !isMe(value)) return true;
+        }
+      }
+      final people = decoded['p'];
+      final basePeople = pristineData['p'];
+      if (people is Map) {
+        for (final entry in people.entries) {
+          final baseList = basePeople is Map ? basePeople[entry.key] : null;
+          final base = <String>{
+            if (baseList is List)
+              for (final name in baseList) '$name',
+          };
+          final list = entry.value;
+          if (list is List &&
+              list.any((name) => !base.contains('$name') && !isMe('$name'))) {
+            return true;
+          }
+        }
+      }
+      final selects = decoded['s'];
+      final baseSelects = pristineData['s'];
+      if (selects is Map) {
+        for (final entry in selects.entries) {
+          final value = '${entry.value ?? ''}';
+          final base = baseSelects is Map
+              ? '${baseSelects[entry.key] ?? ''}'
+              : '';
+          if (value != base) return true;
+        }
+      }
+      return false;
+    }
     var formSaved = false;
     var formDiscarded = false;
     Future<void> writeDraft() async {
@@ -4614,7 +4686,8 @@ Future<void> _openSharedEntryForm(
       lastDraft = now;
       try {
         final prefs = await SharedPreferences.getInstance();
-        if (now == pristineDraft) {
+        if (now == pristineDraft ||
+            (editing == null && !hasUserData(jsonDecode(now)))) {
           await prefs.remove(draftKey);
         } else {
           await prefs.setString(draftKey, now);
@@ -4631,7 +4704,15 @@ Future<void> _openSharedEntryForm(
 
     try {
       final prefs = await SharedPreferences.getInstance();
-      final raw = prefs.getString(draftKey);
+      var raw = prefs.getString(draftKey);
+      // مسودة ليس فيها إلا اسمي: تُمحى بلا سؤال.
+      if (raw != null &&
+          raw.trim().isNotEmpty &&
+          editing == null &&
+          !hasUserData(jsonDecode(raw))) {
+        await prefs.remove(draftKey);
+        raw = null;
+      }
       if (raw != null && raw.trim().isNotEmpty && outerContext.mounted) {
         final resume = await confirmAction(
           outerContext,
@@ -9075,21 +9156,145 @@ class _SharedCommitmentDetailsScreenState extends State<SharedCommitmentDetailsS
     );
   }
 
+  /// المشاركة مستند PDF (لا نصًا): بترويسة Fundly أو بدونها.
   Future<void> _shareCommitment() async {
-    final box = context.findRenderObject() as RenderBox?;
-    await SharePlus.instance.share(
-      ShareParams(
-        subject: item.title,
-        text: [
-          item.title,
-          'النوع: ${item.entryType}',
-          'المبلغ: ${item.amount} ${item.currency}',
-          'الاستحقاق: ${item.dueDate.isEmpty ? 'غير محدد' : item.dueDate}',
-          'الحالة: ${item.status}',
-        ].join('\n'),
-        sharePositionOrigin: box == null ? null : box.localToGlobal(Offset.zero) & box.size,
+    final letterhead = await askPdfLetterhead(context);
+    if (letterhead == null || !mounted) return;
+    final messenger = ScaffoldMessenger.of(context);
+    final budget = SharedLedger.hasBudget(item.details);
+    final pairs = <(String, String)>[
+      ('النوع', pdfSafeText(AppTr.tr(item.entryType))),
+      if (item.amount > 0) ('المبلغ', '${item.amount} ${item.currency}'),
+      (
+        'التاريخ',
+        item.dueDate.isEmpty ? pdfSafeText(AppTr.tr('غير محدد')) : item.dueDate,
       ),
-    );
+      ('الحالة', pdfSafeText(AppTr.tr(item.status))),
+      if (_managerName.isNotEmpty)
+        ('المسؤول', pdfSafeText(_shownName(_managerName))),
+      if (budget)
+        ('إجمالي المساهمة', _money(SharedLedger.budget(item.details))),
+      if (budget)
+        (
+          'المتبقي من المساهمة',
+          _money(SharedLedger.remaining(item.details)),
+        ),
+    ];
+    final members = [
+      for (final m in item.members)
+        if (m.name.trim().isNotEmpty)
+          [
+            pdfSafeText(_shownName(m.name)),
+            pdfSafeText(AppTr.tr(m.role)),
+            if (budget) _money(_memberMath(m.name).put),
+          ],
+    ];
+    try {
+      final bytes = await buildRecordPdf(
+        title: pdfSafeText(item.title),
+        subtitle: 'SHARED COMMITMENT',
+        letterhead: letterhead,
+        format: PdfPageFormat.a4,
+        sections: [
+          PrintSection('البيانات', pairs: pairs),
+          if (members.isNotEmpty)
+            PrintSection(
+              'الأعضاء',
+              heads: [
+                'العضو',
+                'الدور',
+                if (budget) 'المساهمة',
+              ],
+              rows: members,
+            ),
+        ],
+      );
+      await Printing.sharePdf(
+        bytes: bytes,
+        filename: '${pdfSafeText(item.title).isEmpty ? 'Fundly' : pdfSafeText(item.title)}.pdf',
+      );
+    } catch (error) {
+      debugPrint('Shared PDF failed: $error');
+      messenger.showSnackBar(
+        const SnackBar(
+          content: Text('تعذّر تجهيز ملف PDF. حاول مرة أخرى.'),
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+    }
+  }
+
+  /// مستند التسوية PDF رسميًا: التحويلات، وإجمالي المساهمة والمتبقي منها،
+  /// ومساهمة كل عضو.
+  Future<void> _shareSettlementPdf(
+    List<SharedTransfer> transfers,
+    String date,
+  ) async {
+    final messenger = ScaffoldMessenger.of(context);
+    final sum = transfers.fold<double>(0, (s, t) => s + t.amount);
+    final budget = SharedLedger.hasBudget(item.details);
+    try {
+      final bytes = await buildRecordPdf(
+        title: '${AppTr.tr('تسوية حساب')} — ${pdfSafeText(item.title)}',
+        subtitle: 'SETTLEMENT',
+        format: PdfPageFormat.a4,
+        sections: [
+          PrintSection(
+            'البيانات',
+            pairs: [
+              ('الالتزام', pdfSafeText(item.title)),
+              ('التاريخ', date),
+              ('مجموع التسوية', _money(sum)),
+              if (budget)
+                ('إجمالي المساهمة', _money(SharedLedger.budget(item.details))),
+              if (budget)
+                (
+                  'المتبقي من المساهمة',
+                  _money(SharedLedger.remaining(item.details)),
+                ),
+            ],
+          ),
+          if (transfers.isNotEmpty)
+            PrintSection(
+              'التحويلات',
+              heads: const ['من', 'إلى', 'المبلغ'],
+              rows: [
+                for (final t in transfers)
+                  [
+                    pdfSafeText(_shownName(t.from)),
+                    pdfSafeText(_shownName(t.to)),
+                    _money(t.amount),
+                  ],
+              ],
+            ),
+          if (budget)
+            PrintSection(
+              'مساهمة الأعضاء',
+              heads: const ['العضو', 'المساهمة', 'نصيبه من المصروفات'],
+              rows: [
+                for (final name in _ledgerMembers)
+                  [
+                    pdfSafeText(_shownName(name)),
+                    _money(_memberMath(name).put),
+                    _money(_memberMath(name).share),
+                  ],
+              ],
+            ),
+        ],
+      );
+      await Printing.sharePdf(
+        bytes: bytes,
+        filename: 'settlement-${pdfSafeText(item.title)}.pdf',
+      );
+    } catch (error) {
+      debugPrint('Settlement PDF failed: $error');
+      messenger.showSnackBar(
+        const SnackBar(
+          content: Text('تعذّر تجهيز ملف PDF. حاول مرة أخرى.'),
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+    }
   }
 
   /// الأرشفة أصبحت تبديلًا: كانت تُثبّت الحالة على "مؤرشف" بلا أي وسيلة
@@ -9596,7 +9801,12 @@ class _SharedCommitmentDetailsScreenState extends State<SharedCommitmentDetailsS
                     style: TextStyle(
                       fontSize: 10,
                       fontWeight: FontWeight.w800,
-                      color: dark ? const Color(0xFFB8C4C1) : AppTheme.muted,
+                      // المسؤول بلونه الذهبي نفسه في كل مكان.
+                      color: dark
+                          ? const Color(0xFFB8C4C1)
+                          : _isManagerHere
+                          ? AppTheme.goldDark
+                          : AppTheme.muted,
                     ),
                   ),
                 ],
@@ -13276,23 +13486,31 @@ class _SharedCommitmentDetailsScreenState extends State<SharedCommitmentDetailsS
                 ),
               ),
               if (role.isNotEmpty)
-                Container(
-                  padding: const EdgeInsets.symmetric(
-                    horizontal: 8,
-                    vertical: 3,
-                  ),
-                  decoration: BoxDecoration(
-                    color: AppTheme.goldSoft,
-                    borderRadius: BorderRadius.circular(AppTheme.rPill),
-                  ),
-                  child: Text(
-                    role,
-                    style: const TextStyle(
-                      fontSize: 10,
-                      fontWeight: FontWeight.w900,
-                      color: AppTheme.goldDark,
-                    ),
-                  ),
+                // لون الدور موحّد في كل مكان: المسؤول ونائبه ذهبي، والعضو
+                // رمادي — كبطاقة الجمعية.
+                Builder(
+                  builder: (context) {
+                    final member =
+                        role.split(' · ').first.trim() == AppTr.tr('عضو');
+                    return Container(
+                      padding: const EdgeInsets.symmetric(
+                        horizontal: 8,
+                        vertical: 3,
+                      ),
+                      decoration: BoxDecoration(
+                        color: member ? AppTheme.field : AppTheme.goldSoft,
+                        borderRadius: BorderRadius.circular(AppTheme.rPill),
+                      ),
+                      child: Text(
+                        role,
+                        style: TextStyle(
+                          fontSize: 10,
+                          fontWeight: FontWeight.w900,
+                          color: member ? AppTheme.body : AppTheme.goldDark,
+                        ),
+                      ),
+                    );
+                  },
                 ),
             ],
           ),
@@ -14964,12 +15182,8 @@ class _SharedCommitmentDetailsScreenState extends State<SharedCommitmentDetailsS
                         if (value == 'members') {
                           await _saveSettlementDocument(text, date);
                         } else {
-                          await SharePlus.instance.share(
-                            ShareParams(
-                              subject: 'تسوية حساب ${item.title}',
-                              text: text,
-                            ),
-                          );
+                          // مستند PDF رسمي بدل النص.
+                          await _shareSettlementPdf(transfers, date);
                         }
                       },
                       itemBuilder: (_) => const [
@@ -14983,8 +15197,8 @@ class _SharedCommitmentDetailsScreenState extends State<SharedCommitmentDetailsS
                         PopupMenuItem(
                           value: 'whatsapp',
                           child: _SharedCommitmentMenuItem(
-                            label: 'مشاركة عبر واتساب',
-                            icon: Icons.chat_outlined,
+                            label: 'مشاركة كمستند PDF',
+                            icon: Icons.picture_as_pdf_outlined,
                           ),
                         ),
                       ],

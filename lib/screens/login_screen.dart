@@ -193,12 +193,19 @@ class _FirstLanguageScreenState extends State<FirstLanguageScreen> {
                 const SizedBox(height: 12),
                 DropdownButtonFormField<String>(
                   key: const ValueKey('first-run-currency'),
-                  initialValue: AppSettings.currencies.containsKey(
-                    AppSettings.instance.currency,
-                  )
+                  initialValue: AppSettings.instance.hasCurrency
                       ? AppSettings.instance.currency
                       : null,
                   isExpanded: true,
+                  // لا عملة مختارة مسبقًا: يختارها المستخدم بنفسه.
+                  hint: const Text(
+                    'اختر العملة الافتراضية',
+                    style: TextStyle(
+                      fontSize: 14,
+                      fontWeight: FontWeight.w700,
+                      color: _kMuted,
+                    ),
+                  ),
                   decoration: InputDecoration(
                     filled: true,
                     fillColor: Colors.white,
@@ -250,7 +257,8 @@ class _FirstLanguageScreenState extends State<FirstLanguageScreen> {
                       borderRadius: BorderRadius.circular(16),
                     ),
                   ),
-                  onPressed: _busy
+                  // «متابعة» تُفعَّل بعد اختيار العملة.
+                  onPressed: _busy || !AppSettings.instance.hasCurrency
                       ? null
                       : () async {
                           setState(() => _busy = true);
@@ -362,17 +370,43 @@ class _LoginScreenState extends State<LoginScreen> {
   String? _busy;
   String? _error;
 
+  // مرتبة أبجديًا، بلا دولة مختارة مسبقًا.
   static const _codes = <(String, String, String)>[
     ('🇦🇪', '+971', 'الإمارات'),
+    ('🇧🇭', '+973', 'البحرين'),
     ('🇸🇦', '+966', 'السعودية'),
+    ('🇸🇩', '+249', 'السودان'),
     ('🇴🇲', '+968', 'عُمان'),
     ('🇶🇦', '+974', 'قطر'),
     ('🇰🇼', '+965', 'الكويت'),
-    ('🇧🇭', '+973', 'البحرين'),
-    ('🇸🇩', '+249', 'السودان'),
     ('🇪🇬', '+20', 'مصر'),
   ];
-  (String, String, String) _code = _codes.first;
+
+  /// رمز الدولة يبدأ من عملة المستخدم إن طابقت دولة، وإلا يبقى فارغًا
+  /// حتى يختاره — لا افتراض لدولة بعينها.
+  (String, String, String)? _code = _codeForCurrency();
+
+  static (String, String, String)? _codeForCurrency() {
+    final currency = AppSettings.instance.currency;
+    const byIso = {
+      'AED': '+971',
+      'BHD': '+973',
+      'SAR': '+966',
+      'SDG': '+249',
+      'OMR': '+968',
+      'QAR': '+974',
+      'KWD': '+965',
+      'EGP': '+20',
+    };
+    for (final entry in byIso.entries) {
+      if (currency.contains('(${entry.key})')) {
+        for (final code in _codes) {
+          if (code.$2 == entry.value) return code;
+        }
+      }
+    }
+    return null;
+  }
 
   @override
   void dispose() {
@@ -388,10 +422,16 @@ class _LoginScreenState extends State<LoginScreen> {
   Future<void> _signIn() async {
     if (_busy != null) return;
     FocusScope.of(context).unfocus();
+    if (_method == 'phone' &&
+        _code == null &&
+        _phoneCtrl.text.trim().isNotEmpty) {
+      setState(() => _error = 'اختر رمز الدولة');
+      return;
+    }
     final value = switch (_method) {
       'phone' => _phoneCtrl.text.trim().isEmpty
           ? ''
-          : '${_code.$2}${_phoneCtrl.text.trim()}',
+          : '${_code?.$2 ?? ''}${_phoneCtrl.text.trim()}',
       'id' => _idCtrl.text,
       _ => _emailCtrl.text,
     };
@@ -429,7 +469,7 @@ class _LoginScreenState extends State<LoginScreen> {
     final initial = switch (_method) {
       'phone' => _phoneCtrl.text.trim().isEmpty
           ? ''
-          : '${_code.$2}${_phoneCtrl.text.trim()}',
+          : '${_code?.$2 ?? ''}${_phoneCtrl.text.trim()}',
       'id' => _idCtrl.text,
       _ => _emailCtrl.text,
     };
@@ -973,7 +1013,7 @@ class _LoginScreenState extends State<LoginScreen> {
             keyboardType: TextInputType.phone,
             textDirection: TextDirection.ltr,
             textAlign: AppTr.isEnglish ? TextAlign.left : TextAlign.right,
-            decoration: _decoration('5X XXX XXXX', Icons.phone_rounded),
+            decoration: _decoration('رقم الهاتف', Icons.phone_rounded),
           ),
         ),
         const SizedBox(width: 8),
@@ -991,12 +1031,15 @@ class _LoginScreenState extends State<LoginScreen> {
             child: Row(
               mainAxisSize: MainAxisSize.min,
               children: [
-                Text(_code.$1, style: const TextStyle(fontSize: 18)),
+                Text(
+                  _code?.$1 ?? '🌐',
+                  style: const TextStyle(fontSize: 18),
+                ),
                 const SizedBox(width: 5),
                 Directionality(
                   textDirection: TextDirection.ltr,
                   child: Text(
-                    _code.$2,
+                    _code?.$2 ?? 'رمز',
                     style: const TextStyle(
                       fontSize: 12.5,
                       fontWeight: FontWeight.w900,

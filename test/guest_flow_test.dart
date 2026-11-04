@@ -52,6 +52,13 @@ void main() {
     expect(find.byType(FirstLanguageScreen), findsOneWidget);
     expect(find.text('HOME'), findsNothing);
 
+    // لا عملة افتراضية: «متابعة» معطّل حتى تُختار العملة.
+    await tapVisible(tester, find.text('متابعة'));
+    expect(find.text('HOME'), findsNothing);
+    await tapVisible(tester, find.byKey(const ValueKey('first-run-currency')));
+    await tester.tap(find.text('دولار أمريكي (USD)').last);
+    await tester.pumpAndSettle();
+
     await tapVisible(tester, find.text('متابعة'));
     expect(find.text('HOME'), findsOneWidget);
     expect(FundlyAuth.isGuest, isTrue);

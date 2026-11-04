@@ -1,6 +1,7 @@
 import 'package:flutter/material.dart' hide Text, Align;
 
 import '../data/app_settings.dart';
+import '../widgets/shared/module_shared_widgets.dart' show directOpenRoute;
 import '../data/delegation_targets.dart';
 import '../data/delegations_repository.dart';
 import '../l10n/app_language.dart';
@@ -484,9 +485,7 @@ class _DelegatedRecordsScreenState extends State<DelegatedRecordsScreen> {
     if (id.isEmpty || id == 'null') return;
     if (source == 'project_assets') {
       await Navigator.of(context).push(
-        MaterialPageRoute<void>(
-          builder: (_) => ProjectsActivitiesScreen(openAssetId: id),
-        ),
+        directOpenRoute<void>(ProjectsActivitiesScreen(openAssetId: id)),
       );
       return;
     }
