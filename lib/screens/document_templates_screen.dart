@@ -24,6 +24,8 @@ import '../widgets/shared/plan_gate.dart';
 import '../data/template_print.dart';
 import '../data/app_settings.dart';
 import 'template_print_screen.dart';
+import 'lease_contract_form_screen.dart' show LeaseContractFormScreen;
+import '../data/lease_contract_data.dart' show LeaseContractData, LeaseFieldSpec;
 import 'salary_receipts_screen.dart';
 
 class DocumentTemplatesScreen extends StatefulWidget {
@@ -870,10 +872,204 @@ class _DocumentTemplatesScreenState extends State<DocumentTemplatesScreen> {
   
   }
 
+  /// العقود الثلاثة بنموذج عقد الإيجار الأصلي (العقارات والأنشطة
+  /// والمركبات) نفسه. المحفوظ قبل هذا التغيير يُفتح بنموذجه القديم.
+  static const Set<String> _leaseDocTypes = {
+    'عقد إيجار عقار',
+    'عقد إيجار نشاط تجاري',
+    'عقد تأجير مركبة',
+  };
+
+  /// تصنيفات النشاط كما في «إضافة نشاط تجاري».
+  static const List<String> _leaseActivityClasses = [
+    'الخدمات',
+    'الأنشطة الفورية',
+    'زراعية',
+    'التكنولوجيا',
+    'الحرفية',
+    'المقاولات',
+    'المهنية',
+    'تجارة واستثمار',
+    'أخرى',
+  ];
+
+  /// بيانات المركبة في العقد (مكان «بيانات العقار») — تُكتب هنا لأن
+  /// العقد ليس مرتبطًا بمركبة مسجّلة.
+  static const List<LeaseFieldSpec> _leaseVehicleFields = [
+    LeaseFieldSpec('تصنيف المركبة', 'تصنيف المركبة'),
+    LeaseFieldSpec('نوع المركبة', 'نوع المركبة'),
+    LeaseFieldSpec('اسم المركبة', 'اسم المركبة'),
+    LeaseFieldSpec('الموديل', 'الموديل'),
+    LeaseFieldSpec('رقم اللوحة', 'رقم اللوحة'),
+    LeaseFieldSpec('رقم الشاصي', 'رقم الشاصي'),
+    LeaseFieldSpec('تاريخ انتهاء الملكية', 'تاريخ انتهاء الملكية', date: true),
+    LeaseFieldSpec('تاريخ انتهاء التأمين', 'تاريخ انتهاء التأمين', date: true),
+  ];
+
+  static bool _isLeaseRecord(DocumentRecordEntry record) =>
+      _leaseDocTypes.contains(record.docType) &&
+      (record.fields['__lease'] ?? '').isNotEmpty;
+
+  /// عقد إيجار من المستندات: صفحة عقد الإيجار الكاملة نفسها (بيانات العقد
+  /// ثم العقار/الرخصة/المركبة ثم الأطراف والدفعات)، ويُحفظ مستندًا.
+  Future<void> _openLeaseDocument(
+    String type, {
+    DocumentRecordEntry? existing,
+  }) async {
+    final activity = type == 'عقد إيجار نشاط تجاري';
+    final vehicle = type == 'عقد تأجير مركبة';
+    String? prefill = existing?.fields['__lease'];
+    if (prefill == null) {
+      // رقم العقد الجديد: يلي عدد عقود هذا النوع المحفوظة.
+      final count = _savedRecords.where((r) => r.docType == type).length;
+      final seed = LeaseContractData.decode(null);
+      seed.contract[LeaseContractData.kNewNo] = '${count + 1}'.padLeft(4, '0');
+      seed.contract[LeaseContractFormScreen.docCurrencyKey] =
+          AppSettings.currencySuffix;
+      if (widget.linkedProperty != null) {
+        seed.property['بيانات العين المؤجرة'] = widget.linkedProperty!;
+      }
+      prefill = seed.encode();
+    }
+    var savedId = existing?.id;
+    final saved = await Navigator.of(context).push<Object?>(
+      MaterialPageRoute(
+        builder: (_) => LeaseContractFormScreen(
+          repository: _assetsRepository,
+          assetId: '',
+          unitKey: '',
+          unitName: '',
+          propertyTitle: widget.linkedProperty ?? '',
+          title: type,
+          subjectLabel: activity
+              ? 'النشاط'
+              : vehicle
+              ? 'المركبة'
+              : 'الوحدة',
+          forActivity: activity,
+          activityClassOptions: activity ? _leaseActivityClasses : const [],
+          vehicleFields: vehicle ? _leaseVehicleFields : const [],
+          prefillNotes: prefill,
+          saveAsDocument: (data, {required draft}) async {
+            String day(String key) {
+              final at = DateTime.tryParse((data.contract[key] ?? '').trim());
+              return at == null ? '' : _formatDate(at);
+            }
+
+            final values = <String, String>{
+              '__lease': data.encode(),
+              '__v': '3',
+              'اسم المؤجر':
+                  (data.lessor[LeaseContractData.kName] ?? '').trim(),
+              'اسم المستأجر':
+                  (data.tenant[LeaseContractData.kName] ?? '').trim(),
+              'تاريخ الإصدار': day(LeaseContractData.kStartDate),
+              'تاريخ الانتهاء': day(LeaseContractData.kEndDate),
+              'reminder': 'قبل أسبوع',
+              if (draft) '__draft': '1',
+            };
+            final record = await _repository.upsertDocument(
+              DocumentRecordEntry(
+                id: savedId,
+                docType: type,
+                fields: values,
+                linkedKind: existing?.linkedKind,
+                linkedLabel: existing?.linkedLabel,
+                linkedId: existing?.linkedId,
+                issuedOn: existing?.issuedOn ?? DateTime.now(),
+              ),
+            );
+            savedId = record.id;
+            final expiry = draft
+                ? null
+                : AppRemindersStore.parseDisplayDate(
+                    values['تاريخ الانتهاء'] ?? '',
+                  );
+            if (expiry != null && record.id != null) {
+              await AppRemindersStore.upsert(
+                AppReminder(
+                  id: record.id!,
+                  title: '$type: ${values['اسم المستأجر']}',
+                  module: widget.linkedProperty == null
+                      ? 'النماذج والمستندات'
+                      : 'العقارات والأنشطة التجارية',
+                  expiryDate: expiry,
+                  remindBeforeDays: AppRemindersStore.reminderDaysFromLabel(
+                    'قبل أسبوع',
+                  ),
+                ),
+              );
+            }
+            return true;
+          },
+        ),
+      ),
+    );
+    await _load();
+    if (!mounted || saved != true) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      const SnackBar(
+        content: Text(
+          'تم حفظ العقد — اسحب الصفحة للأعلى لمشاهدة النماذج المحفوظة',
+        ),
+      ),
+    );
+  }
+
+  /// طباعة/مشاركة عقد محفوظ بنموذج عقد الإيجار: ورقة العقد نفسها.
+  Future<void> _printLeaseRecord(
+    DocumentRecordEntry record, {
+    bool shareOnly = false,
+  }) async {
+    final data = LeaseContractData.decode(record.fields['__lease']);
+    final type = record.docType;
+    final activity = type == 'عقد إيجار نشاط تجاري';
+    final tenant = (record.fields['اسم المستأجر'] ?? '').trim();
+    final fileName = '$type $tenant'.trim();
+    if (shareOnly) {
+      final messenger = ScaffoldMessenger.of(context);
+      try {
+        final bytes = await buildLeasePdf(
+          data,
+          PdfPageFormat.a4,
+          title: type,
+          activity: activity,
+        );
+        await Printing.sharePdf(bytes: bytes, filename: '$fileName.pdf');
+      } catch (error) {
+        debugPrint('Lease document PDF failed: $error');
+        messenger.showSnackBar(
+          const SnackBar(content: Text('تعذّر تجهيز ملف PDF. حاول مرة أخرى.')),
+        );
+      }
+      return;
+    }
+    await Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => TemplatePrintScreen(
+          title: type,
+          fileName: fileName,
+          buildPdf: (format) => buildLeasePdf(
+            data,
+            format,
+            title: type,
+            activity: activity,
+          ),
+        ),
+      ),
+    );
+  }
+
   Future<void> _openTemplate(
     String type, {
     DocumentRecordEntry? existing,
   }) async {
+    // العقود الثلاثة: نموذج عقد الإيجار الأصلي (الجديد، أو المحفوظ به).
+    if (_leaseDocTypes.contains(type) &&
+        (existing == null || _isLeaseRecord(existing))) {
+      await _openLeaseDocument(type, existing: existing);
+      return;
+    }
     final formal = _isFormal(type);
     final controllers = {
       for (final field in _inputsOf(type)) field: TextEditingController(),
@@ -1735,6 +1931,10 @@ class _DocumentTemplatesScreenState extends State<DocumentTemplatesScreen> {
     DocumentRecordEntry record, {
     bool shareOnly = false,
   }) async {
+    if (_isLeaseRecord(record)) {
+      await _printLeaseRecord(record, shareOnly: shareOnly);
+      return;
+    }
     final type = record.docType;
     if (_templateFields[type] == null) return;
     final spec = _fieldsOf(type);

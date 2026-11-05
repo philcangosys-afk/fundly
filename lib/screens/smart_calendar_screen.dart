@@ -1441,8 +1441,6 @@ class _SmartCalendarScreenState extends State<SmartCalendarScreen> {
               ),
         centerTitle: true,
         actions: [
-          // الإضافة في الكلندر العام (الرئيسية) — الداخلي يعرض القسم فقط.
-          if (widget.modules == null)
           Padding(
             padding: const EdgeInsets.only(right: 12),
             child: Material(

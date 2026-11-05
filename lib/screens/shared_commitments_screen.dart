@@ -9319,6 +9319,8 @@ class _SharedCommitmentDetailsScreenState extends State<SharedCommitmentDetailsS
       for (final cycle in plan.cycles)
         if (cycle.dueDate != null && cycle.dueDate!.isBefore(today))
           for (final member in cycle.unpaidOf(plan.members))
+            // صاحب الدور الذي استلم: حصته خُصمت من مبلغ الدورة.
+            if (!(cycle.isPaidOut && member == cycle.receiver))
             [
               pdfSafeText(_shownName(member)),
               '${cycle.index}',
@@ -10262,6 +10264,8 @@ class _SharedCommitmentDetailsScreenState extends State<SharedCommitmentDetailsS
     for (final cycle in plan.cycles) {
       final due = cycle.dueDate;
       if (due == null || DateUtils.dateOnly(due).isAfter(today)) continue;
+      // دورتي التي استلمت مبلغها: حصتي فيها خُصمت من المبلغ المستلم.
+      if (cycle.receiver == me && cycle.isPaidOut) continue;
       final left = cycle.shareOf(me) - cycle.paidBy(me);
       if (left > 0.01) {
         owe += left;

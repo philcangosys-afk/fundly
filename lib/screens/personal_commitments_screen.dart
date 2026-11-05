@@ -36,6 +36,7 @@ import '../widgets/management_dashboard_chrome.dart';
 import '../widgets/detail_page_chrome.dart';
 import '../widgets/shared/app_design.dart';
 import '../widgets/shared/maps_link_paste.dart';
+import '../widgets/shared/place_maps.dart';
 import '../widgets/shared/app_filter_sheet.dart';
 import '../widgets/shared/category_picker_sheet.dart';
 import '../widgets/shared/followup_center_sheet.dart';
@@ -584,6 +585,11 @@ bool _hasPendingFollowups(Map<String, String> details) {
   }
   if (!_personalClosedStatuses.contains(item.status) &&
       _personalEffectiveStatus(item) == 'منتهية') {
+    // المنتهية وفيها متبقٍّ لم يُسوَّ: تُقال صراحة.
+    final remaining = item.totalAmount - _custodyTotalSpent(item.details);
+    if (remaining > 0) {
+      return ('منتهية - تحتاج تسوية', const Color(0xFFC4392E));
+    }
     return ('منتهية', _personalStatusColor('منتهية'));
   }
   return _custodyStateLook(item.status);
@@ -11177,6 +11183,8 @@ class _PersonalCommitmentDetailsScreenState
                 ],
               ),
             ),
+            // المكان المحفوظ بلا حالة («نشطة» لا معنى لها هنا).
+            if (item.entryType != 'مواقع وأماكن')
             Container(
               padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
               decoration: BoxDecoration(
@@ -11230,13 +11238,133 @@ class _PersonalCommitmentDetailsScreenState
     }
     if (label == 'المستندات') return _buildDocumentsSection(item, color);
     if (label == 'السجل') return _HistoryDetailsCard(item: item, color: color);
-    return _SummaryDetailsCard(
+    final summary = _SummaryDetailsCard(
       item: item,
       color: color,
       expanded: _showAllDetails,
       isSensitive: _isSensitiveDetail,
       onToggleExpanded: () =>
           setState(() => _showAllDetails = !_showAllDetails),
+    );
+    // المكان المحفوظ: أزرار الوصول إليه فوق معلوماته.
+    if (item.entryType == 'مواقع وأماكن') {
+      return Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [_placeActionsCard(item), summary],
+      );
+    }
+    return summary;
+  }
+
+  /// المكان المحفوظ: «فتح الخرائط» في تطبيقات الجهاز (Google / Apple /
+  /// Waze / تطبيقات أندرويد) مع حفظ الاختيار لهذا المكان، ونسخ رابطه،
+  /// ومشاركته.
+  Widget _placeActionsCard(_CommitmentItem item) {
+    final value = (item.details['الموقع أو الرابط'] ?? '').trim().isNotEmpty
+        ? item.details['الموقع أو الرابط']!.trim()
+        : (item.details['العنوان'] ?? '').trim();
+    if (value.isEmpty) return const SizedBox.shrink();
+    final remembered = (item.details[PlaceMaps.appKey] ?? '').trim();
+    Future<void> remember(String app) async {
+      await _persistDetails({...item.details, PlaceMaps.appKey: app});
+    }
+
+    Widget action(
+      IconData icon,
+      String label,
+      VoidCallback onTap, {
+      bool primary = false,
+    }) => Expanded(
+      child: Material(
+        color: primary
+            ? AppTheme.brand.withValues(alpha: 0.12)
+            : AppTheme.surface,
+        borderRadius: BorderRadius.circular(AppTheme.rInner),
+        child: InkWell(
+          borderRadius: BorderRadius.circular(AppTheme.rInner),
+          onTap: onTap,
+          child: Padding(
+            padding: const EdgeInsets.symmetric(vertical: 12, horizontal: 4),
+            child: Column(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(icon, size: 22, color: AppTheme.brand),
+                const SizedBox(height: 4),
+                Text(
+                  label,
+                  textAlign: TextAlign.center,
+                  maxLines: 2,
+                  style: const TextStyle(
+                    fontSize: 11.5,
+                    fontWeight: FontWeight.w800,
+                    color: AppTheme.title,
+                  ),
+                ),
+              ],
+            ),
+          ),
+        ),
+      ),
+    );
+
+    return Padding(
+      padding: const EdgeInsets.only(bottom: 10),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.stretch,
+        children: [
+          Row(
+            textDirection: AppTr.uiDir,
+            children: [
+              action(
+                Icons.map_rounded,
+                'فتح الخرائط',
+                () => PlaceMaps.open(
+                  context,
+                  value: value,
+                  label: item.title,
+                  remembered: remembered,
+                  onRemember: remember,
+                ),
+                primary: true,
+              ),
+              const SizedBox(width: 8),
+              action(
+                Icons.copy_rounded,
+                'نسخ الرابط',
+                () => PlaceMaps.copyLink(context, value),
+              ),
+              const SizedBox(width: 8),
+              action(
+                Icons.share_outlined,
+                'مشاركة',
+                () => SharePlus.instance.share(
+                  ShareParams(
+                    subject: item.title,
+                    text: '${item.title}\n${PlaceMaps.linkOf(value)}',
+                  ),
+                ),
+              ),
+            ],
+          ),
+          // التطبيق المحفوظ لهذا المكان، مع إمكانية تغييره.
+          if (remembered.isNotEmpty)
+            TextButton(
+              onPressed: () => PlaceMaps.open(
+                context,
+                value: value,
+                label: item.title,
+                forceChooser: true,
+                onRemember: remember,
+              ),
+              child: Text(
+                '${AppTr.tr('يفتح في')}: '
+                '${AppTr.tr(PlaceMaps.appLabel(remembered))} — '
+                '${AppTr.tr('تغيير')}',
+                style: const TextStyle(fontSize: 11.5),
+              ),
+            ),
+        ],
+      ),
     );
   }
 
@@ -11861,15 +11989,32 @@ class _PersonalCommitmentDetailsScreenState
                         color: color,
                       ),
                       const SizedBox(width: 10),
-                      const Expanded(
-                        child: Text(
-                          'سند القبض PDF',
-                          textAlign: TextAlign.right,
-                          style: TextStyle(
-                            fontSize: 12.5,
-                            fontWeight: FontWeight.w900,
-                            color: AppTheme.title,
-                          ),
+                      // اسم السند نفسه (سند قبض — عنوانه) ليُعرف قبل فتحه.
+                      Expanded(
+                        child: Column(
+                          crossAxisAlignment: CrossAxisAlignment.stretch,
+                          children: [
+                            Text(
+                              '${AppTr.tr('سند قبض')} — ${widget.item.title}',
+                              textAlign: TextAlign.right,
+                              maxLines: 2,
+                              softWrap: true,
+                              style: const TextStyle(
+                                fontSize: 12.5,
+                                fontWeight: FontWeight.w900,
+                                color: AppTheme.title,
+                              ),
+                            ),
+                            const Text(
+                              'PDF',
+                              textAlign: TextAlign.right,
+                              style: TextStyle(
+                                fontSize: 10.5,
+                                fontWeight: FontWeight.w700,
+                                color: AppTheme.muted,
+                              ),
+                            ),
+                          ],
                         ),
                       ),
                       const Icon(
@@ -13196,7 +13341,7 @@ class _CompactCommitmentHeader extends StatelessWidget {
               ),
               if (item.entryType == 'عهدة مالية')
                 _custodyStateColumn()
-              else
+              else if (item.entryType != 'مواقع وأماكن')
               Container(
                 padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
                 decoration: BoxDecoration(
@@ -13240,15 +13385,6 @@ class _CompactCommitmentHeader extends StatelessWidget {
                       child: _CommitmentMenuItem(
                         label: 'بدء كورس جديد',
                         icon: Icons.restart_alt_rounded,
-                      ),
-                    ),
-                  // دواء آخر صرفه الطبيب في الزيارة نفسها.
-                  if (item.entryType == 'أدوية')
-                    const PopupMenuItem(
-                      value: _CommitmentMenuAction.samePrescription,
-                      child: _CommitmentMenuItem(
-                        label: 'دواء آخر من نفس الوصفة',
-                        icon: Icons.medication_liquid_outlined,
                       ),
                     ),
                   // العهدة: عهدة جديدة بنفس البيانات — لصاحبها فقط.
@@ -13687,6 +13823,8 @@ class _SummaryDetailsCard extends StatelessWidget {
                 // معرّف السند داخلي — السند نفسه في «المستندات».
                 SalaryIncomeSync.receiptKey,
                 _editLogKey,
+                // تطبيق الخرائط المحفوظ للمكان — إعداد لا معلومة.
+                PlaceMaps.appKey,
               }.contains(entry.key) &&
               !CustodyAssignment.keys.contains(entry.key) &&
               !TrashStore.keys.contains(entry.key),
@@ -13705,12 +13843,13 @@ class _SummaryDetailsCard extends StatelessWidget {
           value: item.entryType ?? 'التزام شخصي',
           icon: Icons.category_outlined,
         ),
-        _UnifiedInfoRow(
-          label: 'الحالة',
-          value: _shownStatus(item),
-          icon: Icons.verified_user_outlined,
-          valueColor: _shownStatusColor(item),
-        ),
+        if (item.entryType != 'مواقع وأماكن')
+          _UnifiedInfoRow(
+            label: 'الحالة',
+            value: _shownStatus(item),
+            icon: Icons.verified_user_outlined,
+            valueColor: _shownStatusColor(item),
+          ),
         // العهدة: تاريخها هو «تاريخ التسليم» نفسه — يُكتب مرة واحدة.
         if (item.entryType != 'عهدة مالية')
           _UnifiedInfoRow(
@@ -14434,7 +14573,12 @@ class _CommitmentCard extends StatelessWidget {
         else if (item.dueDate.isNotEmpty &&
             item.dueDate.trim() !=
                 (item.details['تاريخ الانتهاء'] ?? '').trim())
-          'التاريخ : ${item.dueDate}',
+          // الدواء بتاريخ انتهائه، والمناسبة بتاريخها — ليُعرف معنى التاريخ.
+          '${switch (item.entryType) {
+            'أدوية' => 'تاريخ الانتهاء',
+            'مناسبة' => 'تاريخ المناسبة',
+            _ => 'التاريخ',
+          }} : ${item.dueDate}',
         // المستند يُعرف بتاريخ انتهائه، فيظهر على البطاقة من الخارج.
         if ((item.details['تاريخ الانتهاء'] ?? '').trim().isNotEmpty)
           'ينتهي : ${item.details['تاريخ الانتهاء']!.trim()}',

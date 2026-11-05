@@ -16919,9 +16919,10 @@ class _DetailSideNav extends StatelessWidget {
                             fontWeight: selectedIndex == i
                                 ? FontWeight.w900
                                 : FontWeight.w700,
+                            // الاسم بالأسود، و«يحتاج متابعة» تحته بالأحمر.
                             color: tintAlertLabels &&
                                     alertLabels.contains(tabs[i].label)
-                                ? AppTheme.danger
+                                ? AppTheme.title
                                 : selectedIndex == i
                                 ? color
                                 : AppTheme.title,
@@ -32040,6 +32041,8 @@ child: ListView(
               ),
             ],
           ),
+          // من «السجل التاريخي»: العقد أُلغي/انتهى أصلًا، فلا تجديد ولا إلغاء.
+          if (!_isArchiveView) ...[
           const SizedBox(height: 14),
           // تمديد / تعديل / إلغاء (أو تجديد / إلغاء بعد الانتهاء): مربعات
           // بمقاس واحد، الأيقونة فوق الاسم.
@@ -32073,6 +32076,7 @@ child: ListView(
               ),
             ],
           ),
+          ],
         ], icon: Icons.calendar_month_outlined),
 
         // ===== صندوق واحد: الإيجار والرسوم الإدارية والتأمين =====

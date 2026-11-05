@@ -5,6 +5,7 @@ import 'package:printing/printing.dart' show Printing;
 import '../l10n/tr_widgets.dart';
 import '../l10n/app_language.dart';
 import '../data/lease_contract_data.dart';
+import '../data/app_settings.dart' show AppSettings;
 import '../data/people_directory_store.dart';
 import '../data/project_assets_repository.dart';
 import '../data/document_store.dart';
@@ -47,6 +48,7 @@ class LeaseContractFormScreen extends StatefulWidget {
     this.renewOldNo,
     this.forActivity = false,
     this.prefillNotes,
+    this.saveAsDocument,
     this.createActivity,
     this.activityClassOptions = const <String>[],
     this.propertyType = '',
@@ -78,6 +80,15 @@ class LeaseContractFormScreen extends StatefulWidget {
 
   /// بيانات تُبدأ بها النسخة الجديدة كما هي (من شاشة إضافة النشاط).
   final String? prefillNotes;
+
+  /// من «نماذج المستندات والإيصالات»: نفس العقد بكل أقسامه بلا أصل
+  /// مرتبط، ويُعاد للمستدعي ليحفظه مستندًا بدل جدول عقود الوحدات (فلا
+  /// تُولَّد دفعات ولا تذكيرات أصل). يعيد true عند نجاح الحفظ.
+  final Future<bool> Function(LeaseContractData data, {required bool draft})?
+      saveAsDocument;
+
+  /// عملة العقد في «المستندات» (تختار لكل عقد) — مفتاحها في بيانات العقد.
+  static const String docCurrencyKey = 'العملة';
 
   /// تجديد عقد منتهٍ: مدة العقد الجديد ورقماه (الجديد والقديم) معبّأة،
   /// وبقية بياناته من العقد السابق ([templateNotes]).
@@ -1214,6 +1225,15 @@ class _LeaseContractFormScreenState extends State<LeaseContractFormScreen> {
           _act('contract', c, LeaseContractData.kNewNo, 'رقم العقد الجديد'),
           _act('contract', c, LeaseContractData.kOldNo, 'رقم العقد المنتهي'),
         ),
+        // عقد من «المستندات»: عملته تُختار له.
+        if (widget.saveAsDocument != null)
+          _act(
+            'contract',
+            c,
+            LeaseContractFormScreen.docCurrencyKey,
+            'العملة',
+            options: AppSettings.currencySuffixes,
+          ),
         _pair(
           _act(
             'contract',
@@ -3531,6 +3551,29 @@ class _LeaseContractFormScreenState extends State<LeaseContractFormScreen> {
     // لكل سطر معرّف قبل الحفظ، فيرتبط بسجلّه في جدول الدفعات ولا يتكرر.
     _data.ensureRowIds();
 
+    // عقد من «المستندات»: يُحفظ مستندًا، ومن فيه يُضاف للأفراد كالأصل.
+    if (widget.saveAsDocument != null) {
+      setState(() => _saving = true);
+      try {
+        final ok = await widget.saveAsDocument!(_data, draft: draft);
+        if (!ok) throw StateError('تعذّر حفظ المستند');
+        await _syncPeopleDirectory();
+        if (!mounted) return;
+        Navigator.of(context).pop(true);
+      } catch (error) {
+        if (!mounted) return;
+        setState(() => _saving = false);
+        ScaffoldMessenger.of(context).showSnackBar(
+          SnackBar(
+            content: Text('تعذّر حفظ العقد: $error'),
+            duration: const Duration(seconds: 8),
+            behavior: SnackBarBehavior.floating,
+          ),
+        );
+      }
+      return;
+    }
+
     setState(() => _saving = true);
     try {
       final start = DateTime.tryParse(
@@ -4306,9 +4349,18 @@ class _LeaseContractFormScreenState extends State<LeaseContractFormScreen> {
               icon: Icons.assignment_rounded,
               scope: 'contract',
               store: _data.contract,
-              fields: widget.isVehicle
-                  ? LeaseContractData.vehicleContractFields
-                  : LeaseContractData.contractFields,
+              fields: [
+                ...(widget.isVehicle
+                    ? LeaseContractData.vehicleContractFields
+                    : LeaseContractData.contractFields),
+                // عقد من «المستندات»: عملته تُختار له.
+                if (widget.saveAsDocument != null)
+                  const LeaseFieldSpec(
+                    LeaseContractFormScreen.docCurrencyKey,
+                    'العملة',
+                    options: AppSettings.currencySuffixes,
+                  ),
+              ],
               // المركبة: بسائق أو بدون سائق بجانب العنوان.
               action: widget.isVehicle ? _driverPicker() : null,
             ),

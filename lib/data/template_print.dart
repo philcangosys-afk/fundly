@@ -1675,9 +1675,12 @@ Future<Uint8List> buildLeasePdf(
 }) async {
   final vehicle = data.isVehicle;
   final doc = _Doc();
-  final currency = _tr(AppSettings.currencySuffix);
   final c = data.contract;
   String cv(String key) => (c[key] ?? '').trim();
+  // عقد من «المستندات» قد تكون له عملته؛ وإلا عملة التطبيق.
+  final currency = _tr(
+    cv('العملة').isEmpty ? AppSettings.currencySuffix : cv('العملة'),
+  );
   final body = <pw.Widget>[];
 
   final contractSpecs = vehicle

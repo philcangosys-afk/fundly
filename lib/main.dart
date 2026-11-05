@@ -1,6 +1,7 @@
 import 'dart:convert';
 import 'dart:typed_data';
 import 'widgets/shared/module_shared_widgets.dart' show directOpenRoute;
+import 'widgets/management_dashboard_chrome.dart' show moduleTintFill;
 
 import 'package:flutter/material.dart' hide Text, Align;
 import 'l10n/tr_widgets.dart';
@@ -1016,17 +1017,8 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
     );
   }
 
-  String _formatArabicNumber(int value) {
-    // بالإنجليزية تُعرض الأرقام الغربية كما هي.
-    if (AppTr.isEnglish) return value.toString();
-    const western = ['0', '1', '2', '3', '4', '5', '6', '7', '8', '9'];
-    const arabic = ['٠', '١', '٢', '٣', '٤', '٥', '٦', '٧', '٨', '٩'];
-    var output = value.toString();
-    for (var i = 0; i < western.length; i++) {
-      output = output.replaceAll(western[i], arabic[i]);
-    }
-    return output;
-  }
+  /// الأرقام في الرئيسية بالإنجليزية (0-9) في كل اللغات، مثل بقية التطبيق.
+  String _formatArabicNumber(int value) => value.toString();
 
   /// المبالغ تُخفى عند تفعيل "إخفاء المبالغ الحساسة" في الإعدادات — كان
   /// ذلك الإعداد يُحفظ ولا يؤثر في شيء.
@@ -2200,7 +2192,8 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
       (
         HomeStrings.moduleShared,
         Icons.groups_2_outlined,
-        const Color(0xFF34A894),
+        // لون الوحدة نفسه في ترويسة صفحتها (tint).
+        const Color(0xFF2B8CB0),
         [
           (
             'مالية تحتاج متابعة: ${_formatArabicNumber(_metrics.sharedMoneyFollowup)}',
@@ -2217,7 +2210,7 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
       (
         'إدارة الأشخاص والجهات',
         Icons.people_alt_outlined,
-        const Color(0xFF5C6B68),
+        const Color(0xFF6B6FC7),
         [
           (
             'مالية تحتاج متابعة: ${_formatArabicNumber(_metrics.peopleMoneyFollowup)}',
@@ -2234,7 +2227,7 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
       (
         'العقارات/الأنشطة التجارية/المعدات وأخرى',
         Icons.apartment_rounded,
-        const Color(0xFFF2A93F),
+        const Color(0xFFD9902A),
         [
           (
             'مالية تحتاج متابعة: ${_formatArabicNumber(_metrics.assetsMoneyFollowup)}',
@@ -2392,19 +2385,13 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            // شريط العنوان الملوّن: أيقونة كبيرة والعنوان بخط أوضح.
+            // شريط العنوان: نفس لون ترويسة صفحة الوحدة من الداخل
+            // (moduleTintFill بلون الوحدة)، فيبقى اللون واحدًا خارجها وداخلها.
             Container(
               height: 56,
               padding: const EdgeInsets.symmetric(horizontal: 8),
               decoration: BoxDecoration(
-                gradient: LinearGradient(
-                  colors: [
-                    color.withValues(alpha: 0.20),
-                    color.withValues(alpha: 0.07),
-                  ],
-                  begin: AlignmentDirectional.centerStart,
-                  end: AlignmentDirectional.centerEnd,
-                ),
+                color: moduleTintFill(color),
                 borderRadius: BorderRadius.circular(AppTheme.rInner),
               ),
               child: Row(
