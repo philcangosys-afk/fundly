@@ -157,7 +157,12 @@ class AssetRecordsScreen extends StatefulWidget {
     this.archiveItems,
     this.assetType = '',
     this.unitDetails,
+    this.openArchiveUnit,
   });
+
+  /// وحدة ملغاة: صفحتها بشكل صفحة التفاصيل الأساسية (يعيد true إن فُتحت)،
+  /// وإلا صفحة السجل المعتادة.
+  final Future<bool> Function(AssetArchiveItem item)? openArchiveUnit;
 
   /// بيانات الوحدة نفسها (النوع، الرقم، المساحة، العدادات...) وقوائمها
   /// المسجّلة فيها (الصيانة، المرافق، الملاحظات...) — لصفحة عنصر السجل.
@@ -775,6 +780,14 @@ class _AssetRecordsScreenState extends State<AssetRecordsScreen> {
   }
 
   Future<void> _openArchiveItem(AssetArchiveItem item) async {
+    final openUnit = widget.openArchiveUnit;
+    if (openUnit != null && !item.isAsset && item.contractId != null) {
+      if (await openUnit(item)) {
+        if (mounted) setState(() {});
+        return;
+      }
+      if (!mounted) return;
+    }
     await Navigator.of(context).push(
       MaterialPageRoute<void>(
         builder: (_) => _ArchiveItemPage(item: item, screen: widget),

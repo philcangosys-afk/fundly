@@ -939,6 +939,19 @@ const _titles = <String, (String, String)>{
   'إنذار': ('إنذار رسمي', 'FORMAL NOTICE'),
 };
 
+/// خانات المبالغ في النماذج: تُطبع بجانبها عملة النموذج.
+const Set<String> _templateMoneyKeys = {
+  'المبلغ',
+  'قيمة القسط',
+  'قيمة الإيجار السنوي',
+  'قيمة الإيجار',
+  'مبلغ التأمين',
+  'رسوم الكيلومتر الإضافي',
+  'رأس المال',
+  'قيمة العقد',
+  'المبلغ المطالب به',
+};
+
 String _rateLabel(double rate) =>
     rate.toStringAsFixed(rate == rate.roundToDouble() ? 0 : 1);
 
@@ -949,7 +962,10 @@ Future<Uint8List> buildTemplatePdf(
 ) async {
   final f = input.fields;
   String v(String key) => (f[key] ?? '').trim();
-  final currency = _tr(AppSettings.currencySuffix);
+  // عملة النموذج كما اختيرت فيه، وإلا العملة الافتراضية للتطبيق.
+  final currency = _tr(
+    v('العملة').isEmpty ? AppSettings.currencySuffix : v('العملة'),
+  );
   final doc = _Doc();
   final issued =
       _parseDate(v('تاريخ تحرير العقد')) ??
@@ -1097,21 +1113,9 @@ Future<Uint8List> buildTemplatePdf(
       signatureSvg: signature,
       stamp: stamp,
     ));
-    body.add(pw.SizedBox(height: 18));
-    body.add(
-      pw.Row(
-        children: [
-          pw.Expanded(child: pw.Container(height: 0.8, color: _line)),
-        ],
-      ),
-    );
-    body.add(pw.SizedBox(height: 6));
-    body.add(_text(
-      '${_tr('إقرار استلام الإنذار')} — ${_tr('استلمت أصل هذا الإنذار بتاريخ')}'
-      ' ____/____/______   ${_tr('الاسم')}: ________________   '
-      '${_tr('التوقيع')}: ____________',
-      size: 8.5,
-    ));
+    // لا سطر «إقرار استلام» مطبوع: يُضعف قوة الإنذار. المستلم يوقّع تحته
+    // ويكتب الاستلام بخط يده في هذه المساحة الفارغة.
+    body.add(pw.SizedBox(height: 40));
     return _render(
       _Page(
         title: title,
@@ -1416,13 +1420,19 @@ Future<Uint8List> buildTemplatePdf(
     final pairs = <(String, String)>[];
     final tables = <pw.Widget>[];
     for (final key in keys) {
-      if (consumed.contains(key)) continue;
+      // العملة تُكتب بجانب كل مبلغ، فلا سطر مستقل لها.
+      if (consumed.contains(key) || key == 'العملة') continue;
       final columns = input.tables[key];
       if (columns != null) {
         tables.addAll(_tableFor(doc, key, columns, v(key), f));
         continue;
       }
-      pairs.add((key, _showDate(v(key))));
+      pairs.add((
+        key,
+        _templateMoneyKeys.contains(key) && v(key).isNotEmpty
+            ? '${v(key)} $currency'
+            : _showDate(v(key)),
+      ));
     }
     // محضر الاستلام القديم: عنصر واحد بلا جدول.
     if (type == 'إيصال استلام وتسليم' &&

@@ -368,7 +368,8 @@ class _SmartCalendarScreenState extends State<SmartCalendarScreen> {
                     ],
                   ),
                   const SizedBox(height: 12),
-                  // مهمة، موعد، عادة، تذكير، ملاحظات — الخمسة في سطر واحد.
+                  // مهمة، موعد، عادة، تذكير، ملاحظات — الخمسة في سطر واحد
+                  // وبمقاس واحد: الأيقونة فوق الاسم.
                   Row(
                     children: [
                       for (final option in const [
@@ -381,38 +382,50 @@ class _SmartCalendarScreenState extends State<SmartCalendarScreen> {
                         Expanded(
                           child: Padding(
                             padding: const EdgeInsets.symmetric(horizontal: 2),
-                            child: FittedBox(
-                              fit: BoxFit.scaleDown,
-                              child: ChoiceChip(
-                          avatar: Icon(
-                            option.$2,
-                            size: 16,
-                            color: type == option.$1
-                                ? Colors.white
-                                : const Color(0xFF0A5A50),
-                          ),
-                          label: Text(option.$1),
-                          selected: type == option.$1,
-                          showCheckmark: false,
-                          // مدمجة لتتسع الخمسة في سطر واحد.
-                          visualDensity: VisualDensity.compact,
-                          materialTapTargetSize:
-                              MaterialTapTargetSize.shrinkWrap,
-                          padding: const EdgeInsets.symmetric(horizontal: 4),
-                          labelPadding: const EdgeInsetsDirectional.only(
-                            start: 2,
-                            end: 4,
-                          ),
-                          selectedColor: const Color(0xFF0A5A50),
-                          labelStyle: TextStyle(
-                            fontSize: 12,
-                            fontWeight: FontWeight.w800,
-                            color: type == option.$1
-                                ? Colors.white
-                                : const Color(0xFF2C3B38),
-                          ),
-                          onSelected: (_) =>
-                              setSheetState(() => type = option.$1),
+                            child: InkWell(
+                              borderRadius: BorderRadius.circular(
+                                AppTheme.rPill,
+                              ),
+                              onTap: () =>
+                                  setSheetState(() => type = option.$1),
+                              child: Container(
+                                height: 50,
+                                decoration: BoxDecoration(
+                                  color: type == option.$1
+                                      ? const Color(0xFF0A5A50)
+                                      : Colors.white,
+                                  borderRadius: BorderRadius.circular(14),
+                                  border: Border.all(
+                                    color: type == option.$1
+                                        ? const Color(0xFF0A5A50)
+                                        : const Color(0xFFD5DEDB),
+                                  ),
+                                ),
+                                child: Column(
+                                  mainAxisAlignment: MainAxisAlignment.center,
+                                  children: [
+                                    Icon(
+                                      option.$2,
+                                      size: 16,
+                                      color: type == option.$1
+                                          ? Colors.white
+                                          : const Color(0xFF0A5A50),
+                                    ),
+                                    const SizedBox(height: 3),
+                                    Text(
+                                      option.$1,
+                                      maxLines: 1,
+                                      softWrap: false,
+                                      style: TextStyle(
+                                        fontSize: 11,
+                                        fontWeight: FontWeight.w800,
+                                        color: type == option.$1
+                                            ? Colors.white
+                                            : const Color(0xFF2C3B38),
+                                      ),
+                                    ),
+                                  ],
+                                ),
                               ),
                             ),
                           ),
@@ -1210,16 +1223,37 @@ class _SmartCalendarScreenState extends State<SmartCalendarScreen> {
     final day = _itemsOfSelectedDay();
     int count(String sub) =>
         day.where((i) => !_isDone(i) && _subOf(i) == sub).length;
-    Widget tile(String sub, Color color) {
+    /// [stacked]: الرقم تحت الاسم (مربعات «متابعة وتخطيط» الخمسة)، وإلا
+    /// بجانبه.
+    Widget tile(String sub, Color color, {bool stacked = false}) {
       final n = count(sub);
       final selected = _subFilter == sub;
+      final label = Text(
+        sub,
+        textAlign: TextAlign.center,
+        maxLines: 2,
+        style: TextStyle(
+          fontSize: 10.5,
+          height: 1.2,
+          fontWeight: FontWeight.w800,
+          color: n == 0 ? const Color(0xFF8C9A97) : color,
+        ),
+      );
+      final number = Text(
+        '$n',
+        style: TextStyle(
+          fontSize: 14,
+          fontWeight: FontWeight.w900,
+          color: n == 0 ? const Color(0xFF8C9A97) : color,
+        ),
+      );
       return Expanded(
         child: InkWell(
           borderRadius: BorderRadius.circular(AppTheme.rInner),
           onTap: () => setState(() => _subFilter = selected ? null : sub),
           // الرقم بجانب الاسم في سطر واحد — المربعات أصغر.
           child: SizedBox(
-            height: 48,
+            height: stacked ? 58 : 48,
             child: Container(
               padding: const EdgeInsets.symmetric(horizontal: 4, vertical: 4),
               decoration: BoxDecoration(
@@ -1236,33 +1270,19 @@ class _SmartCalendarScreenState extends State<SmartCalendarScreen> {
                   width: selected ? 1.5 : 1,
                 ),
               ),
-              child: Row(
-                mainAxisAlignment: MainAxisAlignment.center,
-                children: [
-                  Flexible(
-                    child: Text(
-                      sub,
-                      textAlign: TextAlign.center,
-                      maxLines: 2,
-                      style: TextStyle(
-                        fontSize: 10.5,
-                        height: 1.2,
-                        fontWeight: FontWeight.w800,
-                        color: n == 0 ? const Color(0xFF8C9A97) : color,
-                      ),
+              child: stacked
+                  ? Column(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [label, const SizedBox(height: 2), number],
+                    )
+                  : Row(
+                      mainAxisAlignment: MainAxisAlignment.center,
+                      children: [
+                        Flexible(child: label),
+                        const SizedBox(width: 4),
+                        number,
+                      ],
                     ),
-                  ),
-                  const SizedBox(width: 4),
-                  Text(
-                    '$n',
-                    style: TextStyle(
-                      fontSize: 14,
-                      fontWeight: FontWeight.w900,
-                      color: n == 0 ? const Color(0xFF8C9A97) : color,
-                    ),
-                  ),
-                ],
-              ),
             ),
           ),
         ),
@@ -1362,7 +1382,8 @@ class _SmartCalendarScreenState extends State<SmartCalendarScreen> {
         crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
           section(_gFollow, _cFollow, [
-            for (final kind in _followKinds) tile(kind, _cFollow),
+            for (final kind in _followKinds)
+              tile(kind, _cFollow, stacked: true),
           ]),
           section('مستندات', _cExpiry, [
             tile(_docsExpired, _cOverdue),

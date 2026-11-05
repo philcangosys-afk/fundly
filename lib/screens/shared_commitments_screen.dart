@@ -2075,8 +2075,56 @@ Color _sharedStatusColor(String status) => switch (status) {
   'نشطة' => const Color(0xFF0A5A50),
   'مكتملة' => const Color(0xFF1E2725),
   'مؤرشف' => const Color(0xFF8C9A97),
+  'متأخرة' => const Color(0xFFC4392E),
+  'منتهية' => const Color(0xFF8A5A12),
   _ => const Color(0xFF5C6B68),
 };
+
+/// تحديد الأدوار: موعد آخر دورة (من تاريخ البداية والتكرار وعدد الأعضاء).
+DateTime? _roscaLastCycleDate(Map<String, String> details) {
+  if (roscaParseDate(details['تاريخ البداية'] ?? '') == null) return null;
+  final names = <String>[];
+  for (final member in _parseSharedMembers(details)) {
+    final name = member.name.trim();
+    if (name.isNotEmpty && !names.contains(name)) names.add(name);
+  }
+  DateTime? last;
+  for (final cycle in RoscaLedger.plan(details, names).cycles) {
+    final due = cycle.dueDate;
+    if (due != null && (last == null || due.isAfter(last))) last = due;
+  }
+  return last;
+}
+
+/// النهاية مربوطة بالدورات: لا يستلم أحد بعد نهاية تحديد الأدوار. إن
+/// سبقت النهاية المحفوظة آخر دورة (أُضيف عضو بعد الإنشاء مثلًا) تصير
+/// النهاية موعد آخر دورة. بلا نهاية محفوظة لا يتغيّر شيء.
+Map<String, String> _roscaWithEnoughEnd(Map<String, String> details) {
+  final end = roscaParseDate(details['تاريخ النهاية'] ?? '');
+  if (end == null) return details;
+  final last = _roscaLastCycleDate(details);
+  if (last == null || !end.isBefore(last)) return details;
+  return {...details, 'تاريخ النهاية': roscaFormatDate(last)};
+}
+
+/// «نشطة» تجاوزت نهايتها لا تبقى «نشطة»: تحديد الأدوار «متأخرة» (دورات لم
+/// تكتمل بعد آخر موعد)، وغيره «منتهية» حتى يُسوّى فيصير «مكتملة».
+/// للعرض فقط — الحالة المحفوظة لا تتغير.
+String _sharedTimedStatus(
+  String status,
+  String entryType,
+  Map<String, String> details,
+) {
+  if (status != _sharedStatusActive) return status;
+  final rosca = _sharedCanonicalType(entryType) == 'جمعية مالية';
+  final end = roscaParseDate(
+    (rosca ? _roscaWithEnoughEnd(details) : details)['تاريخ النهاية'] ?? '',
+  );
+  if (end == null) return status;
+  final now = DateTime.now();
+  if (!end.isBefore(DateTime(now.year, now.month, now.day))) return status;
+  return rosca ? 'متأخرة' : 'منتهية';
+}
 
 // ---------------------------------------------------------------------------
 /// أقسام الفلتر الكبير للالتزامات المشتركة — بنفس شكل الالتزامات الشخصية.
@@ -7766,9 +7814,15 @@ class _SharedCommitmentCard extends StatelessWidget {
         ? ('مؤرشفة', const Color(0xFF8C9A97))
         : awaiting != null && item.status == _sharedStatusActive
         ? (awaiting, const Color(0xFFA6691A))
-        : switch (item.status) {
+        : switch (_sharedTimedStatus(
+            item.status,
+            item.entryType,
+            item.details,
+          )) {
             'مكتملة' => ('مكتملة', const Color(0xFF1E2725)),
             'ملغاة' || 'ملغية' => ('ملغاة', const Color(0xFFC4392E)),
+            'متأخرة' => ('متأخرة', const Color(0xFFC4392E)),
+            'منتهية' => ('منتهية', const Color(0xFF8A5A12)),
             _ => ('نشطة', const Color(0xFF178F7B)),
           };
     return Container(
@@ -8149,7 +8203,9 @@ class _SharedCommitmentDetailsScreenState extends State<SharedCommitmentDetailsS
   Future<void> _syncStatus() async {
     if (!mounted) return;
     final wanted = _resolvedStatus(item.details, item.status);
-    if (wanted == item.status) return;
+    // تحديد الأدوار المحفوظ بنهاية قبل آخر دورة: تُصحَّح النهاية أيضًا.
+    final fixed = _isRosca ? _roscaWithEnoughEnd(item.details) : item.details;
+    if (wanted == item.status && identical(fixed, item.details)) return;
     try {
       final saved = await widget.repository.update(
         SharedEntryRecord(
@@ -8159,7 +8215,7 @@ class _SharedCommitmentDetailsScreenState extends State<SharedCommitmentDetailsS
           amount: item.amount,
           dueDate: item.dueDate,
           status: wanted,
-          details: item.details,
+          details: fixed,
         ),
       );
       final updated = _SharedItem.fromRecord(saved);
@@ -8706,6 +8762,8 @@ class _SharedCommitmentDetailsScreenState extends State<SharedCommitmentDetailsS
       );
       if (!confirmed || !mounted) return false;
     }
+    // إضافة عضو أو حذفه تغيّر عدد الدورات: النهاية تتبع آخر دورة.
+    if (_isRosca) details = _roscaWithEnoughEnd(details);
     final record = SharedEntryRecord(
       id: item.id,
       entryType: item.entryType,
@@ -9169,9 +9227,23 @@ class _SharedCommitmentDetailsScreenState extends State<SharedCommitmentDetailsS
         'التاريخ',
         item.dueDate.isEmpty ? pdfSafeText(AppTr.tr('غير محدد')) : item.dueDate,
       ),
-      ('الحالة', pdfSafeText(AppTr.tr(item.status))),
+      ('الحالة', pdfSafeText(AppTr.tr(_shownStatus))),
       if (_managerName.isNotEmpty)
         ('المسؤول', pdfSafeText(_shownName(_managerName))),
+      // تحديد الأدوار: المدة والتكرار والحصة، والنهاية مربوطة بآخر دورة.
+      if (_isRosca)
+        for (final key in const [
+          'تاريخ البداية',
+          'تاريخ النهاية',
+          'تكرار المساهمة',
+        ])
+          if ((_roscaWithEnoughEnd(item.details)[key] ?? '').trim().isNotEmpty)
+            (
+              key,
+              pdfSafeText(
+                AppTr.tr(_roscaWithEnoughEnd(item.details)[key]!.trim()),
+              ),
+            ),
       if (budget)
         ('إجمالي المساهمة', _money(SharedLedger.budget(item.details))),
       if (budget)
@@ -9207,6 +9279,7 @@ class _SharedCommitmentDetailsScreenState extends State<SharedCommitmentDetailsS
               ],
               rows: members,
             ),
+          ..._roscaPdfSections(),
         ],
       );
       await Printing.sharePdf(
@@ -9222,6 +9295,69 @@ class _SharedCommitmentDetailsScreenState extends State<SharedCommitmentDetailsS
         ),
       );
     }
+  }
+
+  /// تحديد الأدوار في PDF: كل دورة بصاحب دورها وتاريخ استلامه وما جُمع
+  /// وحالتها، ثم المساهمات التي فات موعدها ولم تُدفع.
+  List<PrintSection> _roscaPdfSections() {
+    if (!_isRosca) return const [];
+    final plan = _roscaPlan;
+    if (plan.cycles.isEmpty) return const [];
+    String cycleState(RoscaCycle cycle) {
+      if (cycle.isPaidOut) return 'استلم حصته';
+      return switch (plan.statusOf(cycle)) {
+        RoscaCycle.statusDone => 'مكتملة',
+        RoscaCycle.statusLate => 'متأخرة',
+        RoscaCycle.statusOpen => 'نشطة',
+        _ => 'قادمة',
+      };
+    }
+
+    final now = DateTime.now();
+    final today = DateTime(now.year, now.month, now.day);
+    final late = <List<String>>[
+      for (final cycle in plan.cycles)
+        if (cycle.dueDate != null && cycle.dueDate!.isBefore(today))
+          for (final member in cycle.unpaidOf(plan.members))
+            [
+              pdfSafeText(_shownName(member)),
+              '${cycle.index}',
+              cycle.dueText,
+              _money(cycle.shareOf(member) - cycle.paidBy(member)),
+            ],
+    ];
+    return [
+      PrintSection(
+        'الدورات',
+        heads: const [
+          'الدورة',
+          'صاحب الدور',
+          'تاريخ الاستلام',
+          'مبلغ الدورة',
+          'المحصّل',
+          'الحالة',
+        ],
+        rows: [
+          for (final cycle in plan.cycles)
+            [
+              '${cycle.index}',
+              cycle.receiver.trim().isEmpty
+                  ? '—'
+                  : pdfSafeText(_shownName(cycle.receiver)),
+              cycle.dueText,
+              _money(cycle.target),
+              _money(cycle.collected),
+              pdfSafeText(AppTr.tr(cycleState(cycle))),
+            ],
+        ],
+      ),
+      if (late.isNotEmpty)
+        PrintSection(
+          'مساهمات متأخرة',
+          heads: const ['العضو', 'الدورة', 'الموعد', 'المتبقي'],
+          rows: late,
+        ),
+    ];
   }
 
   /// مستند التسوية PDF رسميًا: التحويلات، وإجمالي المساهمة والمتبقي منها،
@@ -9300,8 +9436,9 @@ class _SharedCommitmentDetailsScreenState extends State<SharedCommitmentDetailsS
   /// الأرشفة أصبحت تبديلًا: كانت تُثبّت الحالة على "مؤرشف" بلا أي وسيلة
   /// للتراجع، فيخرج الالتزام نهائيًا من كل الحسابات والقوائم المفتوحة.
   /// الحالة الظاهرة لي: «مؤرشف» إن أرشفته عندي.
-  String get _shownStatus =>
-      _archivedForMe(item) ? _sharedStatusArchived : item.status;
+  String get _shownStatus => _archivedForMe(item)
+      ? _sharedStatusArchived
+      : _sharedTimedStatus(item.status, item.entryType, item.details);
 
   Future<void> _archiveCommitment() async {
     // فيه أعضاء آخرون بأرقامهم: الأرشفة عندي وحدي ويصلهم إشعار.
@@ -9795,18 +9932,32 @@ class _SharedCommitmentDetailsScreenState extends State<SharedCommitmentDetailsS
                     child: Text(shown, style: TextStyle(fontSize: 10, fontWeight: FontWeight.w900, color: dark ? Colors.white : color)),
                   ),
                   const SizedBox(height: 4),
-                  // دوري في الالتزام.
-                  Text(
-                    _isManagerHere ? 'المسؤول' : 'عضو',
-                    style: TextStyle(
-                      fontSize: 10,
-                      fontWeight: FontWeight.w800,
-                      // المسؤول بلونه الذهبي نفسه في كل مكان.
+                  // دوري في الالتزام: الكلمة والشارة نفسها التي في بطاقات
+                  // الأعضاء («مسؤول» ذهبية، «عضو» رمادية).
+                  Container(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 8,
+                      vertical: 3,
+                    ),
+                    decoration: BoxDecoration(
                       color: dark
-                          ? const Color(0xFFB8C4C1)
+                          ? Colors.white.withValues(alpha: 0.14)
                           : _isManagerHere
-                          ? AppTheme.goldDark
-                          : AppTheme.muted,
+                          ? AppTheme.goldSoft
+                          : AppTheme.field,
+                      borderRadius: BorderRadius.circular(AppTheme.rPill),
+                    ),
+                    child: Text(
+                      _isManagerHere ? 'مسؤول' : 'عضو',
+                      style: TextStyle(
+                        fontSize: 10,
+                        fontWeight: FontWeight.w900,
+                        color: dark
+                            ? Colors.white
+                            : _isManagerHere
+                            ? AppTheme.goldDark
+                            : AppTheme.body,
+                      ),
                     ),
                   ),
                 ],
@@ -10100,6 +10251,73 @@ class _SharedCommitmentDetailsScreenState extends State<SharedCommitmentDetailsS
   );
 
   /// تبويب الجمعية: خطة الدورات، الدورة الجارية، كل الدورات، ثم الأعضاء.
+  /// مبلغي في الجمعية: مساهماتي في الدورات التي حلّ موعدها ولم أدفعها
+  /// (عليّ)، أو مبلغ الدورة الجارية إن كان دوري ولم يُسلَّم (لي).
+  Widget? _roscaMyMoneyCard(RoscaPlan plan) {
+    final me = _myMemberName;
+    if (me == null) return null;
+    final today = DateUtils.dateOnly(DateTime.now());
+    var owe = 0.0;
+    final cycles = <int>[];
+    for (final cycle in plan.cycles) {
+      final due = cycle.dueDate;
+      if (due == null || DateUtils.dateOnly(due).isAfter(today)) continue;
+      final left = cycle.shareOf(me) - cycle.paidBy(me);
+      if (left > 0.01) {
+        owe += left;
+        cycles.add(cycle.index);
+      }
+    }
+    final current = plan.current;
+    final mine = owe <= 0.01 &&
+        current != null &&
+        current.receiver == me &&
+        !current.isPaidOut;
+    if (owe <= 0.01 && !mine) return null;
+    final color = owe > 0.01 ? AppTheme.danger : AppTheme.brandMid;
+    final text = owe > 0.01
+        ? '${AppTr.tr('عليك')}: ${_money(owe)} — '
+              '${AppTr.tr('مساهمتك في الدورة')} ${cycles.join('، ')} '
+              '${AppTr.tr('التي حلّ موعدها ولم تُدفع')}'
+        : '${AppTr.tr('لك')}: ${_money(plan.cycleTotal)} — '
+              '${AppTr.tr('مبلغ الدورة')} ${current!.index} '
+              '${AppTr.tr('ولم يُسلَّم بعد')}';
+    return Container(
+      margin: const EdgeInsets.only(bottom: 12),
+      padding: const EdgeInsets.all(12),
+      decoration: BoxDecoration(
+        color: color.withValues(alpha: 0.08),
+        borderRadius: BorderRadius.circular(AppTheme.rInner),
+        border: Border.all(color: color.withValues(alpha: 0.35)),
+      ),
+      child: Row(
+        textDirection: AppTr.uiDir,
+        children: [
+          Icon(
+            owe > 0.01
+                ? Icons.error_outline_rounded
+                : Icons.account_balance_wallet_outlined,
+            size: 20,
+            color: color,
+          ),
+          const SizedBox(width: 8),
+          Expanded(
+            child: Text(
+              text,
+              textAlign: AppTr.alignEnd,
+              style: TextStyle(
+                fontSize: 12.5,
+                height: 1.45,
+                fontWeight: FontWeight.w900,
+                color: color,
+              ),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
   Widget _buildRoscaTab() {
     final members = _ledgerMembers;
     final plan = _roscaPlan;
@@ -10141,6 +10359,8 @@ class _SharedCommitmentDetailsScreenState extends State<SharedCommitmentDetailsS
         const SizedBox(height: 12),
         _buildRoscaSummaryCard(plan),
         const SizedBox(height: 12),
+        // ما عليّ / ما لي هنا — نفس رقم «مبالغ عليّ / لي» في مركز المتابعة.
+        if (_roscaMyMoneyCard(plan) case final card?) card,
         // المساهمات الإضافية بانتظار موافقة المسؤول.
         _buildPendingRequests(),
         Padding(
@@ -15647,14 +15867,16 @@ class _SharedCommitmentDetailsScreenState extends State<SharedCommitmentDetailsS
     // الميزانية أول ما يُقرأ تحت اسم الالتزام، ولا تظهر إطلاقًا إن لم
     // تكن هناك ميزانية أصلًا («دفع فردي»).
     final budget = SharedLedger.budget(item.details);
+    // النهاية كما تُحسب من الدورات حتى قبل حفظ التصحيح.
+    final shown = _isRosca ? _roscaWithEnoughEnd(item.details) : item.details;
     final rows = <(String, String, IconData)>[
       // مساهمات الأعضاء مع الإضافية المعتمدة.
       if (budget > 0.01)
         ('إجمالي المساهمات', _money(budget), Icons.account_balance_wallet_outlined),
       if (item.lastUpdate.isNotEmpty) ('تاريخ إنشاء الالتزام', item.lastUpdate, Icons.event_available_outlined),
       for (final field in form?.fields ?? const <_SharedField>[])
-        if ((item.details[field.label] ?? '').isNotEmpty && field.kind != _SharedFieldKind.people)
-          (field.label, item.details[field.label]!, field.icon),
+        if ((shown[field.label] ?? '').isNotEmpty && field.kind != _SharedFieldKind.people)
+          (field.label, shown[field.label]!, field.icon),
     ];
     return Column(
       crossAxisAlignment: CrossAxisAlignment.stretch,

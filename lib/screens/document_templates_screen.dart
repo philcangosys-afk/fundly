@@ -22,6 +22,7 @@ import '../widgets/shared/app_design.dart';
 import '../data/subscription_plans.dart';
 import '../widgets/shared/plan_gate.dart';
 import '../data/template_print.dart';
+import '../data/app_settings.dart';
 import 'template_print_screen.dart';
 import 'salary_receipts_screen.dart';
 
@@ -401,12 +402,22 @@ class _DocumentTemplatesScreenState extends State<DocumentTemplatesScreen> {
     'عقد': Icons.handshake_outlined,
     'إنذار': Icons.warning_amber_rounded,
     'عقد إيجار عقار': Icons.apartment_rounded,
-    'عقد إيجار نشاط تجاري': Icons.storefront_outlined,
-    'عقد تأجير مركبة': Icons.directions_car_outlined,
+    'عقد إيجار نشاط تجاري': Icons.storefront_rounded,
+    'عقد تأجير مركبة': Icons.directions_car_rounded,
     'عقد عام': Icons.handshake_outlined,
   };
 
+  /// ألوان أنواع العقود: نفس ألوان أقسامها في التطبيق (العقار، النشاط
+  /// التجاري، المركبات) — والعقد العام بلونه الخاص لأنه ليس قسمًا.
+  static const _contractColors = {
+    'عقد إيجار عقار': Color(0xFF34A894),
+    'عقد إيجار نشاط تجاري': Color(0xFFCE8422),
+    'عقد تأجير مركبة': Color(0xFF0E7161),
+    'عقد عام': Color(0xFF46607A),
+  };
+
   static const Map<String, List<String>> _optionFields = {
+    'العملة': AppSettings.currencySuffixes,
     'نوع المبلغ': ['دين (قرض)', 'أمانة', 'سلفة'],
     'طريقة السداد': ['دفعة واحدة', 'أقساط شهرية', 'أقساط حسب الاتفاق'],
     'نوع العقار': [
@@ -672,9 +683,38 @@ class _DocumentTemplatesScreenState extends State<DocumentTemplatesScreen> {
   /// نموذج محكم: بإقرار وبنود وخانات توقيع.
   static bool _isFormal(String type) => _templateClauses.containsKey(type);
 
-  static List<String> _inputsOf(String type) => _templateFields[type]!
+  static List<String> _inputsOf(String type) => _fieldsOf(type)
       .where((field) => !field.startsWith('#'))
       .toList(growable: false);
+
+  /// خانات المبالغ: تُكتب العملة المختارة بجانبها في المستند.
+  static const Set<String> _moneyFields = {
+    'المبلغ',
+    'قيمة القسط',
+    'قيمة الإيجار السنوي',
+    'قيمة الإيجار',
+    'مبلغ التأمين',
+    'رسوم الكيلومتر الإضافي',
+    'رأس المال',
+    'قيمة العقد',
+    'المبلغ المطالب به',
+  };
+
+  /// أول خانة مبلغ (أو جدول مبالغ) في النموذج: «العملة» توضع قبلها.
+  static const Set<String> _currencyAnchors = {
+    ..._moneyFields,
+    'بنود الفاتورة',
+    'التفصيل الشهري',
+  };
+
+  /// خانات النموذج بترتيبها مع «العملة» قبل أول مبلغ — النموذج بلا مبالغ
+  /// (إيصال استلام وتسليم) يبقى كما هو.
+  static List<String> _fieldsOf(String type) {
+    final fields = _templateFields[type]!;
+    final at = fields.indexWhere(_currencyAnchors.contains);
+    if (at < 0 || fields.contains('العملة')) return fields;
+    return [...fields.sublist(0, at), 'العملة', ...fields.sublist(at)];
+  }
 
   static String _primaryOf(String type) =>
       _primaryField[type] ?? _inputsOf(type).first;
@@ -849,6 +889,8 @@ class _DocumentTemplatesScreenState extends State<DocumentTemplatesScreen> {
       controllers['تاريخ تحرير العقد']?.text = _formatDate(DateTime.now());
       controllers['تاريخ الاستلام']?.text = _formatDate(DateTime.now());
     }
+    // العملة: الافتراضية من الإعدادات، وتُغيَّر لهذا النموذج وحده.
+    controllers['العملة']?.text = AppSettings.currencySuffix;
     if (widget.linkedProperty != null) {
       controllers[_linkField[type] ?? _inputsOf(type).first]!.text =
           widget.linkedProperty!;
@@ -933,7 +975,7 @@ class _DocumentTemplatesScreenState extends State<DocumentTemplatesScreen> {
                       ],
                     ),
                     const SizedBox(height: 8),
-                    for (final field in _templateFields[type]!)
+                    for (final field in _fieldsOf(type))
                       if (field.startsWith('#'))
                         Padding(
                           padding: const EdgeInsets.only(top: 4, bottom: 8),
@@ -1694,15 +1736,19 @@ class _DocumentTemplatesScreenState extends State<DocumentTemplatesScreen> {
     bool shareOnly = false,
   }) async {
     final type = record.docType;
-    final spec = _templateFields[type];
-    if (spec == null) return;
+    if (_templateFields[type] == null) return;
+    final spec = _fieldsOf(type);
     String val(String key) => (record.fields[key] ?? '').toString().trim();
+    final currency = AppTr.tr(
+      val('العملة').isEmpty ? AppSettings.currencySuffix : val('العملة'),
+    );
     String fill(String template) =>
         AppTr.tr(template).replaceAllMapped(_slot, (match) {
           final key = match.group(1)!;
           if (key.startsWith('@')) return _idPhrase(val, key.substring(1));
           final value = val(key);
-          return value.isEmpty ? '..........' : value;
+          if (value.isEmpty) return '..........';
+          return _moneyFields.contains(key) ? '$value $currency' : value;
         });
     bool complete(String template) => _slot
         .allMatches(template)
@@ -1824,12 +1870,16 @@ class _DocumentTemplatesScreenState extends State<DocumentTemplatesScreen> {
   List<Widget> _formalBody(DocumentRecordEntry record) {
     final type = record.docType;
     String val(String key) => (record.fields[key] ?? '').toString().trim();
+    final currency = AppTr.tr(
+      val('العملة').isEmpty ? AppSettings.currencySuffix : val('العملة'),
+    );
     String fill(String template) =>
         AppTr.tr(template).replaceAllMapped(_slot, (match) {
           final key = match.group(1)!;
           if (key.startsWith('@')) return _idPhrase(val, key.substring(1));
           final value = val(key);
-          return value.isEmpty ? '..........' : value;
+          if (value.isEmpty) return '..........';
+          return _moneyFields.contains(key) ? '$value $currency' : value;
         });
     bool complete(String template) => _slot
         .allMatches(template)
@@ -1863,17 +1913,19 @@ class _DocumentTemplatesScreenState extends State<DocumentTemplatesScreen> {
     // البيانات تحت عناوين أقسامها — الفارغ لا يظهر، والنصوص الطويلة
     // في البنود.
     String? heading;
-    for (final field in _templateFields[type]!) {
+    for (final field in _fieldsOf(type)) {
       if (field.startsWith('#')) {
         heading = field.substring(1);
         continue;
       }
-      final value = val(field);
-      if (value.isEmpty ||
+      final raw = val(field);
+      if (raw.isEmpty ||
+          field == 'العملة' ||
           _multiFields.contains(field) ||
           _tableFields.containsKey(field)) {
         continue;
       }
+      final value = _moneyFields.contains(field) ? '$raw $currency' : raw;
       if (heading != null) {
         body.add(title(heading));
         heading = null;
@@ -1983,9 +2035,18 @@ class _DocumentTemplatesScreenState extends State<DocumentTemplatesScreen> {
                 for (final type in _contractTypes)
                   ListTile(
                     contentPadding: EdgeInsets.zero,
-                    leading: Icon(
-                      _templateIcons[type],
-                      color: const Color(0xFF0A5A50),
+                    leading: Container(
+                      width: 40,
+                      height: 40,
+                      decoration: BoxDecoration(
+                        color: (_contractColors[type] ?? AppTheme.brand)
+                            .withValues(alpha: 0.12),
+                        borderRadius: BorderRadius.circular(AppTheme.rInner),
+                      ),
+                      child: Icon(
+                        _templateIcons[type],
+                        color: _contractColors[type] ?? AppTheme.brand,
+                      ),
                     ),
                     title: Text(
                       type,

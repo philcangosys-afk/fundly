@@ -368,10 +368,9 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
     }
     if (!mounted) return;
     setState(() {
-      // يفتح التطبيق دائمًا على المربعات الأربعة (كل اثنين في صف)؛ زر
-      // التبديل يغيّر العرض أثناء الاستعمال فقط.
-      if (persistedLayout == false) prefs.setBool(_layoutPrefsKey, true);
-      _showCategoriesInTwoColumns = true;
+      // العرض كما اختاره المستخدم آخر مرة: مربعان في الصف أو أربعة
+      // مستطيلات تحت بعض — والافتراضي المربعان.
+      _showCategoriesInTwoColumns = persistedLayout ?? true;
       _pinnedShortcuts = shortcuts;
       _metrics = metrics;
       _metricsError = loadError;
@@ -2326,11 +2325,9 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
           crossAxisCount: _showCategoriesInTwoColumns ? 2 : 1,
           crossAxisSpacing: AppTheme.cardGap,
           mainAxisSpacing: AppTheme.cardGap,
-          // ارتفاع محسوب على المحتوى الفعلي:
-          //   عمودان: حشوة (24) + ترويسة (36) + فاصل (8) + مقتطفان
-          //           (28 + 6 + 28) = 130.
-          //   عمود واحد: حشوة (24) + ترويسة (40) + فاصل (8) + شريط (32).
-          mainAxisExtent: _showCategoriesInTwoColumns ? 134 : 106,
+          // ارتفاع متوسط محسوب على المحتوى: حشوة (20) + شريط العنوان
+          // (56) + فاصل (6) + رقما المتابعة (46) — في الوضعين.
+          mainAxisExtent: _showCategoriesInTwoColumns ? 134 : 128,
         ),
         itemBuilder: (context, index) {
           final category = filteredCategories[index];
@@ -2383,7 +2380,7 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
                 _openPriorityScreen(title);
               },
               child: Padding(
-                padding: const EdgeInsets.fromLTRB(14, 12, 14, 12),
+                padding: const EdgeInsets.all(10),
                 child: child,
               ),
             ),
@@ -2395,98 +2392,121 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
         child: Column(
           crossAxisAlignment: CrossAxisAlignment.stretch,
           children: [
-            Row(
-              children: [
-                AppIconTile(
-                  icon: icon,
-                  color: color,
-                  size: compact ? 36 : 40,
-                  iconSize: compact ? 18 : 20,
+            // شريط العنوان الملوّن: أيقونة كبيرة والعنوان بخط أوضح.
+            Container(
+              height: 56,
+              padding: const EdgeInsets.symmetric(horizontal: 8),
+              decoration: BoxDecoration(
+                gradient: LinearGradient(
+                  colors: [
+                    color.withValues(alpha: 0.20),
+                    color.withValues(alpha: 0.07),
+                  ],
+                  begin: AlignmentDirectional.centerStart,
+                  end: AlignmentDirectional.centerEnd,
                 ),
-                const SizedBox(width: AppTheme.sSm),
-                Expanded(
-                  // العنوان كاملًا على أي هاتف: سطران، ويصغر الخط بدل القص.
-                  child: Text(
-                    key: ValueKey('home-category-title-$categoryIndex'),
-                    switch (title) {
-                      'العقارات/الأنشطة التجارية/المعدات وأخرى' =>
-                        'العقارات والأنشطة والمركبات',
-                      'إدارة الأشخاص والجهات' => 'الأفراد والجهات',
-                      _ => title,
-                    },
-                    maxLines: 4,
-                    softWrap: true,
-                    style: TextStyle(
-                      fontSize: compact ? 11.5 : 15,
-                      height: 1.25,
-                      fontWeight: FontWeight.w800,
-                      color: AppTheme.title,
+                borderRadius: BorderRadius.circular(AppTheme.rInner),
+              ),
+              child: Row(
+                children: [
+                  Container(
+                    width: compact ? 38 : 42,
+                    height: compact ? 38 : 42,
+                    decoration: BoxDecoration(
+                      gradient: LinearGradient(
+                        colors: [color, Color.lerp(color, Colors.black, 0.18)!],
+                        begin: Alignment.topCenter,
+                        end: Alignment.bottomCenter,
+                      ),
+                      borderRadius: BorderRadius.circular(12),
+                      boxShadow: [
+                        BoxShadow(
+                          color: color.withValues(alpha: 0.28),
+                          blurRadius: 8,
+                          offset: const Offset(0, 3),
+                        ),
+                      ],
+                    ),
+                    child: Icon(
+                      icon,
+                      color: Colors.white,
+                      size: compact ? 21 : 23,
                     ),
                   ),
-                ),
-                const SizedBox(width: AppTheme.sXs),
-                const AppChevron(size: 22),
-              ],
+                  const SizedBox(width: AppTheme.sSm),
+                  Expanded(
+                    // العنوان كاملًا: سطران في المربع، وسطر واحد في
+                    // المستطيل يصغر خطه بدل القص.
+                    child: () {
+                      final shown = switch (title) {
+                        'العقارات/الأنشطة التجارية/المعدات وأخرى' =>
+                          'العقارات والأنشطة والمركبات',
+                        'إدارة الأشخاص والجهات' => 'الأفراد والجهات',
+                        _ => title,
+                      };
+                      final style = TextStyle(
+                        fontSize: compact ? 13 : 15.5,
+                        height: compact ? 1.15 : 1.25,
+                        fontWeight: FontWeight.w900,
+                        color: AppTheme.title,
+                      );
+                      final key = ValueKey('home-category-title-$categoryIndex');
+                      if (compact) {
+                        return Text(
+                          key: key,
+                          shown,
+                          maxLines: 3,
+                          softWrap: true,
+                          overflow: TextOverflow.ellipsis,
+                          style: style,
+                        );
+                      }
+                      return FittedBox(
+                        fit: BoxFit.scaleDown,
+                        alignment: AlignmentDirectional.centerStart,
+                        child: Text(
+                          key: key,
+                          shown,
+                          maxLines: 1,
+                          softWrap: false,
+                          style: style,
+                        ),
+                      );
+                    }(),
+                  ),
+                  const SizedBox(width: AppTheme.sXs),
+                  const AppChevron(size: 22),
+                ],
+              ),
             ),
-            const SizedBox(height: AppTheme.sSm),
-            // في عرض المربعين: مقتطفان تحت بعضهما بعرض المربع كاملًا، بدل
-            // شريط أفقي يُخفي ما بعد المقتطف الأول ويتطلّب سحبًا لرؤيته.
-            if (compact)
-              Column(
-                crossAxisAlignment: CrossAxisAlignment.stretch,
+            const SizedBox(height: 6),
+            // رقما المتابعة: الكلمة فوق، والأيقونة والرقم بخط كبير تحتها،
+            // بينهما خط فاصل رفيع.
+            Expanded(
+              child: Row(
                 children: [
                   for (
                     var index = 0;
-                    index < (items.length < 2 ? items.length : 2);
+                    index < (items.length < 3 ? items.length : 3);
                     index++
                   ) ...[
-                    if (index > 0) const SizedBox(height: 6),
-                    SizedBox(
-                      height: 28,
-                      child: _HomeCategoryMetric(
+                    if (index > 0)
+                      Container(
+                        width: 1,
+                        margin: const EdgeInsets.symmetric(vertical: 6),
+                        color: AppTheme.hairline,
+                      ),
+                    Expanded(
+                      child: _HomeCategoryStat(
                         label: items[index].$1,
                         icon: items[index].$2,
                         color: items[index].$3,
-                        compact: true,
+                        large: !compact,
                       ),
                     ),
                   ],
                 ],
-              )
-            else
-              SizedBox(
-                height: 32,
-                child: items.length > 3
-                  ? ListView.separated(
-                      scrollDirection: Axis.horizontal,
-                      padding: EdgeInsets.zero,
-                      itemCount: items.length,
-                      separatorBuilder: (_, _) => const SizedBox(width: 7),
-                      itemBuilder: (context, index) => SizedBox(
-                        width: 152,
-                        child: _HomeCategoryMetric(
-                          label: items[index].$1,
-                          icon: items[index].$2,
-                          color: items[index].$3,
-                          compact: false,
-                        ),
-                      ),
-                    )
-                  : Row(
-                      children: [
-                        for (var index = 0; index < items.length; index++) ...[
-                          if (index > 0) const SizedBox(width: 7),
-                          Expanded(
-                            child: _HomeCategoryMetric(
-                              label: items[index].$1,
-                              icon: items[index].$2,
-                              color: items[index].$3,
-                              compact: false,
-                            ),
-                          ),
-                        ],
-                      ],
-                    ),
+              ),
             ),
           ],
         ),
@@ -2909,55 +2929,80 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
   }
 }
 
-class _HomeCategoryMetric extends StatelessWidget {
-  const _HomeCategoryMetric({
+/// رقم متابعة في مربع القسم: الكلمة في سطر، وتحتها الأيقونة والرقم بخط
+/// كبير. النص يأتي «الكلمة: الرقم» فيُفصل عند آخر نقطتين.
+class _HomeCategoryStat extends StatelessWidget {
+  const _HomeCategoryStat({
     required this.label,
     required this.icon,
     required this.color,
-    required this.compact,
+    required this.large,
   });
 
   final String label;
   final IconData icon;
   final Color color;
-  final bool compact;
+  final bool large;
 
   @override
   Widget build(BuildContext context) {
-    // بلا صندوق حول المقتطف: أيقونة ونص فقط. الصندوق الأبيض داخل بطاقة
-    // رمادية كان يُضاعف الإطارات ويضيّق النص بلا فائدة.
+    final at = label.lastIndexOf(':');
+    final name = at > 0 ? label.substring(0, at).trim() : label;
+    final value = at > 0 ? label.substring(at + 1).trim() : '';
     return Padding(
-      padding: EdgeInsets.symmetric(
-        horizontal: compact ? 2 : 3,
-        vertical: compact ? 5 : 6,
-      ),
-      child: Row(
-        textDirection: AppTr.uiDir,
+      padding: const EdgeInsets.symmetric(horizontal: 6),
+      child: Column(
+        mainAxisAlignment: MainAxisAlignment.center,
+        crossAxisAlignment: CrossAxisAlignment.stretch,
         children: [
-          Icon(icon, color: color, size: compact ? 14 : 16),
-          SizedBox(width: compact ? 5 : 7),
-          Expanded(
-            child: Align(
-              alignment: Alignment.centerRight,
-              child: FittedBox(
-                fit: BoxFit.scaleDown,
-                alignment: Alignment.centerRight,
-                child: Text(
-                  label,
-                  maxLines: 3,
-                  style: TextStyle(
-                    fontSize: compact ? 11 : 12,
-                    fontWeight: FontWeight.w700,
-                    height: 1.15,
-                    color: color,
-                    fontFamilyFallback: const [
-                      'Cairo',
-                      'Noto Kufi Arabic',
-                      'Tahoma',
-                    ],
-                  ),
+          // في المربع الكلمة على سطرين بدل أن تصغر جدًا؛ وفي المستطيل سطر.
+          if (large)
+            FittedBox(
+              fit: BoxFit.scaleDown,
+              alignment: AlignmentDirectional.centerStart,
+              child: Text(
+                name,
+                maxLines: 1,
+                style: const TextStyle(
+                  fontSize: 11.5,
+                  fontWeight: FontWeight.w700,
+                  color: AppTheme.muted,
                 ),
               ),
+            )
+          else
+            Text(
+              name,
+              maxLines: 2,
+              softWrap: true,
+              overflow: TextOverflow.ellipsis,
+              style: const TextStyle(
+                fontSize: 10,
+                height: 1.15,
+                fontWeight: FontWeight.w700,
+                color: AppTheme.muted,
+              ),
+            ),
+          const SizedBox(height: 2),
+          FittedBox(
+            fit: BoxFit.scaleDown,
+            alignment: AlignmentDirectional.centerStart,
+            child: Row(
+              mainAxisSize: MainAxisSize.min,
+              children: [
+                Icon(icon, color: color, size: large ? 20 : 18),
+                const SizedBox(width: 5),
+                Text(
+                  value,
+                  maxLines: 1,
+                  style: TextStyle(
+                    fontSize: large ? 21 : 19,
+                    height: 1.1,
+                    fontWeight: FontWeight.w900,
+                    color: color,
+                  ),
+                ),
+              ],
             ),
           ),
         ],

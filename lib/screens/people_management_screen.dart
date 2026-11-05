@@ -724,9 +724,26 @@ class _PeopleManagementScreenState extends State<PeopleManagementScreen> {
     final myId = AppIdentity.id.trim().toUpperCase();
     final fnd = (person.details['الرقم التعريفي'] ?? '').trim().toUpperCase();
     if (myId.isNotEmpty && fnd.isNotEmpty) return fnd == myId;
+    final settings = AppSettings.instance;
+    // نفس رقم هاتفي أو بريدي = أنا، ولو كُتب اسمي بلغة أخرى (مؤجر أُدخل
+    // باسمي العربي والملف الشخصي بالإنجليزي مثلًا).
+    String lastDigits(String value) {
+      final digits = value.replaceAll(RegExp(r'[^0-9]'), '');
+      return digits.length > 9 ? digits.substring(digits.length - 9) : digits;
+    }
+    final myPhone = lastDigits(settings.phone);
+    if (myPhone.length >= 7 &&
+        lastDigits(person.details['رقم الهاتف'] ?? '') == myPhone) {
+      return true;
+    }
+    final myEmail = settings.email.trim().toLowerCase();
+    if (myEmail.contains('@') &&
+        (person.details['البريد الإلكتروني'] ?? '').trim().toLowerCase() ==
+            myEmail) {
+      return true;
+    }
     final name = person.fullName.trim();
     if (name.isEmpty) return false;
-    final settings = AppSettings.instance;
     final full = '${settings.givenName} ${settings.familyName}'.trim();
     return settings.isMyName(name) || (full.isNotEmpty && name == full);
   }
@@ -3611,18 +3628,44 @@ class _PersonDetailsScreenState extends State<PersonDetailsScreen> {
                 Icon(icon, size: 17, color: const Color(0xFF0E7161)),
                 const SizedBox(width: 8),
                 Expanded(
-                  child: Text(
-                    row,
-                    textAlign: AppTr.alignEnd,
-                    maxLines: 3,
-                    softWrap: true,
-                    style: const TextStyle(
+                  child: () {
+                    const style = TextStyle(
                       fontSize: 12.5,
                       height: 1.35,
                       fontWeight: FontWeight.w800,
                       color: Color(0xFF0F1F1C),
-                    ),
-                  ),
+                    );
+                    // سند القبض: حالته شارة بلون الحالة نفسها في التطبيق.
+                    final status = _salaryRowStatus[row];
+                    if (status == null ||
+                        status.isEmpty ||
+                        !row.endsWith(' · $status')) {
+                      return Text(
+                        row,
+                        textAlign: AppTr.alignEnd,
+                        maxLines: 3,
+                        softWrap: true,
+                        style: style,
+                      );
+                    }
+                    return Column(
+                      crossAxisAlignment: CrossAxisAlignment.stretch,
+                      children: [
+                        Text(
+                          row.substring(0, row.length - status.length - 3),
+                          textAlign: AppTr.alignEnd,
+                          maxLines: 3,
+                          softWrap: true,
+                          style: style,
+                        ),
+                        const SizedBox(height: 4),
+                        Align(
+                          alignment: Alignment.centerRight,
+                          child: _salaryStatusPill(status),
+                        ),
+                      ],
+                    );
+                  }(),
                 ),
                 // المرفق يُفتح من الصف نفسه: صورة المستند أو الفاتورة.
                 if ((files[row] ?? '').isNotEmpty) ...[
@@ -3995,6 +4038,11 @@ class _PersonDetailsScreenState extends State<PersonDetailsScreen> {
   DateTime? _logTo;
   String _logKind = 'الكل';
 
+  /// تحت «مالية»: الكل / الرواتب / غير الرواتب.
+  String _logFinance = 'الكل';
+
+  static const _logFinanceKinds = ['الكل', 'الرواتب', 'غير الرواتب'];
+
   static const _logKinds = [
     'الكل',
     'مالية',
@@ -4068,8 +4116,9 @@ class _PersonDetailsScreenState extends State<PersonDetailsScreen> {
           detail: [
             if (_isSelfPerson && r.ownerName.trim().isNotEmpty)
               '${AppTr.tr('من')}: ${r.ownerName.trim()}',
-            AppTr.tr(r.status),
           ].join(' · '),
+          salary: r.isSalary,
+          status: r.status,
           date: entryParseDay(r.receiptDate) ?? r.createdAt,
           amount: r.paid,
           currency: r.currency.trim().isEmpty
@@ -4195,6 +4244,9 @@ class _PersonDetailsScreenState extends State<PersonDetailsScreen> {
     final to = _logTo == null ? null : DateUtils.dateOnly(_logTo!);
     final shown = all.where((e) {
       if (_logKind != 'الكل' && e.kind != _logKind) return false;
+      if (_logKind == 'مالية' && _logFinance != 'الكل') {
+        if ((_logFinance == 'الرواتب') != e.salary) return false;
+      }
       if (q.isNotEmpty &&
           !matchesSearchQuery(query: q, fields: [e.title, e.detail])) {
         return false;
@@ -4264,6 +4316,14 @@ class _PersonDetailsScreenState extends State<PersonDetailsScreen> {
                         fontSize: 11,
                         fontWeight: FontWeight.w600,
                         color: Color(0xFF5C6B68),
+                      ),
+                    ),
+                  if (e.status.isNotEmpty)
+                    Padding(
+                      padding: const EdgeInsets.symmetric(vertical: 3),
+                      child: Align(
+                        alignment: Alignment.centerRight,
+                        child: _salaryStatusPill(e.status),
                       ),
                     ),
                   Text(
@@ -4365,10 +4425,37 @@ class _PersonDetailsScreenState extends State<PersonDetailsScreen> {
                       ),
                       selected: _logKind == kind,
                       selectedColor: color.withValues(alpha: 0.2),
-                      onSelected: (_) => setState(() => _logKind = kind),
+                      onSelected: (_) => setState(() {
+                        _logKind = kind;
+                        _logFinance = 'الكل';
+                      }),
                     ),
                 ],
               ),
+              // «مالية»: الرواتب وحدها أو غيرها.
+              if (_logKind == 'مالية' &&
+                  all.any((e) => e.kind == 'مالية' && e.salary)) ...[
+                const SizedBox(height: 6),
+                Wrap(
+                  spacing: 6,
+                  runSpacing: 6,
+                  children: [
+                    for (final sub in _logFinanceKinds)
+                      ChoiceChip(
+                        label: Text(
+                          sub == 'الكل'
+                              ? sub
+                              : '$sub (${all.where((e) => e.kind == 'مالية' && e.salary == (sub == 'الرواتب')).length})',
+                          style: const TextStyle(fontSize: 11),
+                        ),
+                        visualDensity: VisualDensity.compact,
+                        selected: _logFinance == sub,
+                        selectedColor: color.withValues(alpha: 0.14),
+                        onSelected: (_) => setState(() => _logFinance = sub),
+                      ),
+                  ],
+                ),
+              ],
             ],
           ),
         ),
@@ -4417,6 +4504,9 @@ class _PersonDetailsScreenState extends State<PersonDetailsScreen> {
 
   /// نص الصف ← معرّف السند (لفتحه بالضغط).
   final Map<String, String> _salaryRowIds = {};
+
+  /// نص الصف ← حالة السند (تُعرض شارة بلونها بدل كلمة بلا لون).
+  final Map<String, String> _salaryRowStatus = {};
 
   String get _personFnd => (_person.details['الرقم التعريفي'] ?? '').trim();
 
@@ -4467,6 +4557,7 @@ class _PersonDetailsScreenState extends State<PersonDetailsScreen> {
       ].join(' · ');
       rows.add(row);
       if (r.id != null) _salaryRowIds[row] = r.id!;
+      _salaryRowStatus[row] = r.status;
     }
     return rows;
   }
@@ -8976,11 +9067,21 @@ class _SummaryPanel extends StatelessWidget {
     }
 
     final isEntity = _isEntityKind(person.typeKey);
+    final isSelf = person.typeKey == 'person_self';
     final notes = person.extraNote.trim();
+    final nameLabel = isEntity ? 'اسم الجهة' : 'الاسم';
     // نفس حقول نموذج «إضافة فرد/جهة» وبترتيبها، فيظهر هنا ما أُدخل هناك.
     final rows = [
       (isEntity ? 'نوع الجهة' : 'النوع', person.categoryName, Icons.category_outlined),
-      (isEntity ? 'اسم الجهة' : 'الاسم', person.fullName, Icons.person_outline_rounded),
+      (nameLabel, person.fullName, Icons.person_outline_rounded),
+      // صاحب الحساب مسجّل أيضًا بصفة أخرى (مؤجر مثلًا): سجلٌّ واحد له،
+      // وصفاته الأخرى هنا بدل أن يظهر في الأفراد مرتين.
+      if (isSelf && person.additionalCategoryNames.isNotEmpty)
+        (
+          'صاحب الحساب هو أيضًا',
+          person.additionalCategoryNames.map(AppTr.tr).join('، '),
+          Icons.how_to_reg_outlined,
+        ),
       (
         'رقم الهاتف',
         detailValue(const ['رقم الهاتف'], fallback: 'غير متوفر'),
@@ -9004,13 +9105,14 @@ class _SummaryPanel extends StatelessWidget {
         detailValue(const ['الموقع على الخريطة']),
         Icons.place_outlined,
       ),
-      (
-        'تصنيفات إضافية',
-        person.additionalCategoryNames.isEmpty
-            ? '-'
-            : person.additionalCategoryNames.join('، '),
-        Icons.label_outline_rounded,
-      ),
+      if (!isSelf)
+        (
+          'تصنيفات إضافية',
+          person.additionalCategoryNames.isEmpty
+              ? '-'
+              : person.additionalCategoryNames.join('، '),
+          Icons.label_outline_rounded,
+        ),
       (
         'ملاحظات',
         notes.isEmpty || notes == 'بانتظار استكمال البيانات' ? '-' : notes,
@@ -9055,9 +9157,38 @@ class _SummaryPanel extends StatelessWidget {
         // شريط الأرقام (المستحق له/عليه، المهام، المستندات) حُذف من ذيل
         // الملخص: نفس الأرقام تظهر في شريط أبرز البيانات وفي تبويب مالية.
         for (final row in rows)
-          AppDetailRow(label: row.$1, value: row.$2, icon: row.$3),
+          if (row.$1 == nameLabel)
+            // الاسم في سطر واحد، واتجاهه من حروفه: العربي من اليمين،
+            // واللاتيني من اليسار.
+            AppDetailRow(
+              label: row.$1,
+              value: row.$2,
+              icon: row.$3,
+              singleLine: true,
+              valueDirection: _nameDirection(row.$2),
+            )
+          else
+            AppDetailRow(label: row.$1, value: row.$2, icon: row.$3),
       ],
     );
+  }
+
+  /// اتجاه الاسم من أول حرف فيه (بعد «أنا (…)» في سجل صاحب الحساب).
+  static TextDirection _nameDirection(String name) {
+    var core = name.trim();
+    final self = RegExp(r'^أنا\s*\((.*)\)$').firstMatch(core);
+    if (self != null) core = self.group(1)!.trim();
+    for (final rune in core.runes) {
+      final arabic = (rune >= 0x0600 && rune <= 0x08FF) ||
+          (rune >= 0xFB50 && rune <= 0xFDFF) ||
+          (rune >= 0xFE70 && rune <= 0xFEFF);
+      if (arabic) return TextDirection.rtl;
+      final latin = (rune >= 0x41 && rune <= 0x5A) ||
+          (rune >= 0x61 && rune <= 0x7A) ||
+          (rune >= 0xC0 && rune <= 0x24F);
+      if (latin) return TextDirection.ltr;
+    }
+    return AppTr.uiDir;
   }
 }
 
@@ -9267,6 +9398,31 @@ class _AlertSectionsCard extends StatelessWidget {
 }
 
 /// حدث واحد في سجل الفرد.
+/// شارة حالة سند القبض بنفس ألوان صفحة سندات القبض: معتمد أخضر، مرفوض
+/// أحمر، بانتظار الاعتماد برتقالي.
+Widget _salaryStatusPill(String status) {
+  final color = switch (status) {
+    SalaryReceipt.statusApproved => const Color(0xFF178F7B),
+    SalaryReceipt.statusRejected => AppTheme.danger,
+    _ => const Color(0xFFA6691A),
+  };
+  return Container(
+    padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 3),
+    decoration: BoxDecoration(
+      color: color.withValues(alpha: 0.12),
+      borderRadius: BorderRadius.circular(AppTheme.rPill),
+    ),
+    child: Text(
+      status,
+      style: TextStyle(
+        fontSize: 10,
+        fontWeight: FontWeight.w900,
+        color: color,
+      ),
+    ),
+  );
+}
+
 class _PersonLogEvent {
   const _PersonLogEvent({
     required this.kind,
@@ -9278,7 +9434,15 @@ class _PersonLogEvent {
     this.due = false,
     this.icon = Icons.history_rounded,
     this.onTap,
+    this.salary = false,
+    this.status = '',
   });
+
+  /// سند قبض راتب (لفلتر «الرواتب / غير الرواتب» تحت «مالية»).
+  final bool salary;
+
+  /// حالة تُعرض شارة ملوّنة بلون الحالة في التطبيق (معتمد أخضر...).
+  final String status;
 
   /// مالية / متابعة وتخطيط / مستندات / تفويضات / أخرى.
   final String kind;

@@ -885,6 +885,8 @@ class AppDetailRow extends StatelessWidget {
     required this.icon,
     this.valueColor,
     this.showDivider = true,
+    this.singleLine = false,
+    this.valueDirection,
   });
 
   final String label;
@@ -892,6 +894,12 @@ class AppDetailRow extends StatelessWidget {
   final IconData icon;
   final Color? valueColor;
   final bool showDivider;
+
+  /// القيمة في سطر واحد تصغر لتتسع (الاسم مثلًا) بدل أن تنكسر لسطرين.
+  final bool singleLine;
+
+  /// اتجاه القيمة نفسها (اسم عربي من اليمين، ولاتيني من اليسار).
+  final TextDirection? valueDirection;
 
   @override
   Widget build(BuildContext context) {
@@ -919,17 +927,38 @@ class AppDetailRow extends StatelessWidget {
             ),
           ),
           const SizedBox(width: 10),
-          Flexible(
-            child: Text(
-              value,
-              textAlign: TextAlign.end,
-              style: TextStyle(
-                color: valueColor ?? const Color(0xFF1C2C29),
-                fontSize: 12,
-                fontWeight: FontWeight.w900,
+          if (singleLine)
+            Expanded(
+              flex: 2,
+              child: FittedBox(
+                fit: BoxFit.scaleDown,
+                alignment: AlignmentDirectional.centerEnd,
+                child: Text(
+                  value,
+                  maxLines: 1,
+                  softWrap: false,
+                  textDirection: valueDirection,
+                  style: TextStyle(
+                    color: valueColor ?? const Color(0xFF1C2C29),
+                    fontSize: 12,
+                    fontWeight: FontWeight.w900,
+                  ),
+                ),
+              ),
+            )
+          else
+            Flexible(
+              child: Text(
+                value,
+                textAlign: TextAlign.end,
+                textDirection: valueDirection,
+                style: TextStyle(
+                  color: valueColor ?? const Color(0xFF1C2C29),
+                  fontSize: 12,
+                  fontWeight: FontWeight.w900,
+                ),
               ),
             ),
-          ),
         ],
       ),
     );

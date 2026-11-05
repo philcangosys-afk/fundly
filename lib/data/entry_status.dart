@@ -239,5 +239,13 @@ String? entryOutcomeStatus({
       )) {
     return 'منتهية';
   }
+  // العهدة المالية: مرّ تاريخ تسليمها (تاريخها الاختياري) = «منتهية».
+  if (type == 'عهدة مالية' &&
+      due != null &&
+      DateUtils.dateOnly(due).isBefore(
+        DateUtils.dateOnly(now ?? DateTime.now()),
+      )) {
+    return 'منتهية';
+  }
   return null;
 }

@@ -6940,9 +6940,68 @@ class _ProjectAssetDetailsScreenState extends State<ProjectAssetDetailsScreen> {
               ? _archiveUnitDetails
               : _archiveAssetDetails,
           assetType: _archiveAssetType(),
+          // العقار: الوحدة الملغاة تُفتح بصفحة الوحدة نفسها على عقدها.
+          openArchiveUnit: category == 'real_estate' ? _openArchivedUnit : null,
         ),
       ),
     );
+    return true;
+  }
+
+  /// وحدة ملغاة من «السجل التاريخي»: صفحة الوحدة بشكلها الأساسي (الأقسام
+  /// كلها) على عقدها الملغى، و«الحركات المالية» بالأحمر إن بقيت مستحقات.
+  /// يعيد false إن لم تُعرف الوحدة فتُفتح صفحة السجل المعتادة.
+  Future<bool> _openArchivedUnit(AssetArchiveItem archived) async {
+    final contractId = archived.contractId;
+    if (contractId == null) return false;
+    PropertyUnitContractRecord? contract;
+    for (final c in _unitContracts) {
+      if (c.id == contractId) contract = c;
+    }
+    if (contract == null) return false;
+    final all = [..._item.units, ..._item.shelvedUnits];
+    _PropertyUnit? unit;
+    for (final u in all) {
+      if (u.unitKey == contract.unitKey) unit = u;
+    }
+    if (unit == null) {
+      final name = (contract.unitName ?? '').trim();
+      for (final u in all) {
+        if (u.name.trim() == name) unit = u;
+      }
+    }
+    if (unit == null || !mounted) return false;
+    final index = _item.units.indexWhere((u) => u.unitKey == unit!.unitKey);
+    await Navigator.of(context).push(
+      MaterialPageRoute<void>(
+        builder: (_) => _UnitDetailsScreen(
+          assetId: _item.id,
+          assetTitle: _item.title,
+          assetType: _assetPropertyType(_item),
+          unit: unit!,
+          repository: widget.repository,
+          archivedContractId: contractId,
+          // حالة الوحدة الآن لا يغيّرها عقد ملغى.
+          onUnitStatusChanged: (_) {},
+          onUnitUpdated: (updated) {
+            if (index < 0) return;
+            final units = [..._item.units];
+            if (index < units.length) {
+              units[index] = updated;
+              _updateItem(_item.copyWith(units: units));
+            }
+          },
+          assetLocation: _item.locationOrType,
+          assetLatitude: _item.latitude,
+          assetLongitude: _item.longitude,
+          propertyMeta: _item.propertyMeta,
+        ),
+      ),
+    );
+    if (mounted) {
+      await _loadUnitContractsFromRemote();
+      await _loadPropertyPayments();
+    }
     return true;
   }
 
@@ -16786,7 +16845,11 @@ class _DetailSideNav extends StatelessWidget {
     required this.onSelect,
     this.alertLabels = const <String>{},
     this.notes = const <String, (String, Color)>{},
+    this.tintAlertLabels = false,
   });
+
+  /// اسم القسم نفسه وأيقونته بالأحمر حين يحتاج متابعة.
+  final bool tintAlertLabels;
 
   /// سطر ملاصق تحت اسم القسم بلونه («مفوَّض أنا بإدارته» تحت «ملخص عام»).
   final Map<String, (String, Color)> notes;
@@ -16835,7 +16898,11 @@ class _DetailSideNav extends StatelessWidget {
                   Icon(
                     tabs[i].icon,
                     size: 15,
-                    color: selectedIndex == i ? color : AppTheme.muted,
+                    color: tintAlertLabels && alertLabels.contains(tabs[i].label)
+                        ? AppTheme.danger
+                        : selectedIndex == i
+                        ? color
+                        : AppTheme.muted,
                   ),
                   const SizedBox(width: 6),
                   Expanded(
@@ -16852,7 +16919,10 @@ class _DetailSideNav extends StatelessWidget {
                             fontWeight: selectedIndex == i
                                 ? FontWeight.w900
                                 : FontWeight.w700,
-                            color: selectedIndex == i
+                            color: tintAlertLabels &&
+                                    alertLabels.contains(tabs[i].label)
+                                ? AppTheme.danger
+                                : selectedIndex == i
                                 ? color
                                 : AppTheme.title,
                           ),
@@ -25289,7 +25359,12 @@ class _UnitDetailsScreen extends StatefulWidget {
     this.onCreateMultiUnitContract,
     this.onEditInProperty,
     this.assetType = '',
+    this.archivedContractId,
   });
+
+  /// من «السجل التاريخي»: صفحة الوحدة نفسها على عقدها الملغى هذا (لا العقد
+  /// الحالي) — للاطلاع والتسوية، بلا أوامر الوحدة.
+  final String? archivedContractId;
 
   /// نوع العقار (عمارة، فيلا...) — لرأس عقد الإيجار «نوع العقار / اسمه».
   final String assetType;
@@ -25340,6 +25415,18 @@ class _UnitDetailsScreenState extends State<_UnitDetailsScreen> {
 
   /// طيّ عمود الأقسام بعد اختيار قسم لتتوسّع منطقة المحتوى.
   bool _navCollapsed = false;
+
+  bool get _isArchiveView => widget.archivedContractId != null;
+
+  /// العقد الملغى من السجل التاريخي وعليه مستحقات لم تُسوَّ.
+  bool get _archiveNeedsAttention {
+    if (!_isArchiveView) return false;
+    final contract = _contract;
+    if (contract == null || LeaseContractData.isSettled(contract.notes)) {
+      return false;
+    }
+    return _payments.any((p) => payRemaining(p) > 0.009);
+  }
 
   static const List<DetailSectionTab> _unitTabs = [
     DetailSectionTab(label: 'ملخص عام', icon: Icons.dashboard_customize_outlined),
@@ -25417,17 +25504,23 @@ class _UnitDetailsScreenState extends State<_UnitDetailsScreen> {
     });
     try {
       final contracts = await repo.fetchUnitContracts(assetId);
+      final archivedId = widget.archivedContractId;
       // العقد الملغى بالتسوية لا يعود عقدًا للوحدة: الوحدة شاغرة للتأجير.
+      // ومن السجل التاريخي: العقد الملغى المختار وحده.
       final mine = contracts
           .where(
-            (c) =>
-                c.unitKey == _unit.unitKey && c.status != _kContractCancelled,
+            (c) => archivedId != null
+                ? c.id == archivedId
+                : c.unitKey == _unit.unitKey && c.status != _kContractCancelled,
           )
           .toList();
       var active = mine.isNotEmpty ? mine.first : null;
       List<PropertyUnitPaymentRecord> payments = const [];
       String? syncIssue;
-      if (active != null && active.id != null) {
+      if (archivedId != null && active != null && active.id != null) {
+        // عرض فقط: لا ربط ولا نقل يكتب على عقد ملغى.
+        payments = await repo.fetchUnitPayments(active.id!);
+      } else if (active != null && active.id != null) {
         payments = await repo.fetchUnitPayments(active.id!);
         // عقود كُتبت قبل الربط لها دفعات في نصّها بلا سجلات: تُولَّد هنا
         // مرة واحدة، ثم لا يُكتب شيء ما لم يتغيّر العقد.
@@ -26581,7 +26674,16 @@ class _UnitDetailsScreenState extends State<_UnitDetailsScreen> {
         : leased
         ? 'مؤجرة'
         : 'شاغرة';
-    final statusLabel = inMaint ? '$baseLabel / صيانة' : baseLabel;
+    // من السجل التاريخي: حالة العقد الملغى نفسه.
+    final archiveLabel = !_isArchiveView
+        ? null
+        : _archiveNeedsAttention
+        ? 'ملغي (يحتاج تسوية)'
+        : 'ملغي';
+    final statusLabel = archiveLabel ??
+        (inMaint ? '$baseLabel / صيانة' : baseLabel);
+    final shownStatusColor =
+        archiveLabel != null ? const Color(0xFFC4392E) : statusColor;
     final place = _extra('مكان الوحدة');
     // اسم المستأجر من العقد الساري — مقابل الموقع في الجهة اليسرى، فيُعرف
     // من يشغل الوحدة من نظرة دون فتح «إدارة الإيجار».
@@ -26656,7 +26758,7 @@ class _UnitDetailsScreenState extends State<_UnitDetailsScreen> {
                       vertical: 5,
                     ),
                     decoration: BoxDecoration(
-                      color: statusColor.withValues(alpha: 0.1),
+                      color: shownStatusColor.withValues(alpha: 0.1),
                       borderRadius: BorderRadius.circular(8),
                     ),
                     child: Text(
@@ -26664,7 +26766,7 @@ class _UnitDetailsScreenState extends State<_UnitDetailsScreen> {
                       style: TextStyle(
                         fontSize: 10,
                         fontWeight: FontWeight.w800,
-                        color: statusColor,
+                        color: shownStatusColor,
                       ),
                     ),
                   ),
@@ -26673,6 +26775,8 @@ class _UnitDetailsScreenState extends State<_UnitDetailsScreen> {
               ),
               // أوامر الوحدة وحدها — لا العقار. انظر [_onUnitMenuAction].
               // «إلغاء» = إلغاء العقد بالتسوية، والحذف من أرشيف الوحدات.
+              // من السجل التاريخي: للاطلاع والتسوية فقط، بلا أوامر الوحدة.
+              if (!_isArchiveView)
               ThreeDotMenu(
                 tooltip: AppTr.tr('خيارات الوحدة'),
                 // العقد المنتهي لا يُعدَّل: يُلغى أو يُجدَّد.
@@ -28868,6 +28972,12 @@ class _UnitDetailsScreenState extends State<_UnitDetailsScreen> {
                               width: _kNavWidth,
                               child: _DetailSideNav(
                                 tabs: _unitTabs,
+                                // من السجل التاريخي: «الحركات المالية» بالأحمر
+                                // و«يحتاج متابعة» تحتها إن بقيت مستحقات.
+                                alertLabels: _archiveNeedsAttention
+                                    ? const {'الحركات المالية'}
+                                    : const <String>{},
+                                tintAlertLabels: true,
                                 notes: {
                                   if (_delegationBadgeOf(widget.assetId)
                                       case final badge?)
