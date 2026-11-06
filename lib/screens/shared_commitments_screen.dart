@@ -10540,6 +10540,10 @@ class _SharedCommitmentDetailsScreenState extends State<SharedCommitmentDetailsS
     final turnDate = turnCycle?.dueText ?? '—';
     final role = _memberRole(name);
     final status = _roscaTurnStatus(plan, turn);
+    // الدور الذي حان أو تأخر: الضغط على صندوقه يفتح الدورة.
+    final due = run != null &&
+        turnCycle != null &&
+        (status == 'حان وقتها' || status == 'متأخرة');
     final manager = _isManagerHere;
     final cycle = turnCycle;
     // لون الصندوق من حالته: متأخرة أحمر خفيف، حان وقتها بلون الالتزام
