@@ -697,8 +697,14 @@ class _AssetRecordsScreenState extends State<AssetRecordsScreen> {
   /// مستطيل صغير: النوع / الاسم، وتاريخ الإلغاء أو الأرشفة، وفئته.
   Widget _archiveRow(AssetArchiveItem item, double left) {
     final needs = left > 0;
-    final category = archiveCategoryOf(item, needs);
-    final color = needs ? AppTheme.danger : const Color(0xFF34A894);
+    // بلا مبالغ متبقية: «ملغي» بالأحمر وحدها (أو «مؤرشف»)، بلا «(تمت
+    // التسوية)». المتبقي وحده يُكتب «(يحتاج تسوية)».
+    final category = needs
+        ? archiveCategoryOf(item, true)
+        : (item.cancelled ? 'ملغي' : 'مؤرشف');
+    final color = needs || item.cancelled
+        ? AppTheme.danger
+        : const Color(0xFF8C9A97);
     return Padding(
       padding: const EdgeInsets.only(bottom: 8),
       child: Material(

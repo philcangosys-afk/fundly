@@ -287,7 +287,7 @@ String _medicineState(PersonalEntryRecord record) {
   final to = _daysFromToday(
     record.details['إلى تاريخ'] ?? record.dueDate,
   );
-  if (to != null && to < 0) return 'أدوية منتهية';
+  if (to != null && to < 0) return 'أدوية مكتملة';
   if (from != null && from > 0) return 'أدوية قادمة';
   return 'أدوية اليوم';
 }
@@ -1367,7 +1367,7 @@ class _PeopleManagementScreenState extends State<PeopleManagementScreen> {
                 .where(
                   (r) =>
                       r.entryType == 'أدوية' &&
-                      _medicineState(r) == 'أدوية منتهية',
+                      _medicineState(r) == 'أدوية مكتملة',
                 )
                 .length,
           ),
@@ -3355,7 +3355,7 @@ class _PersonDetailsScreenState extends State<PersonDetailsScreen> {
       'حان وقتها' || 'مستحقة' || 'أدوية اليوم' => days == 0,
       'قريبًا' || 'قريبة الاستحقاق' => days > 0 && days <= 7,
       'تنتهي قريبًا' => days >= 0 && days <= 30,
-      'منتهية' || 'أدوية منتهية' => days < 0,
+      'منتهية' || 'أدوية مكتملة' => days < 0,
       'أدوية قادمة' => days > 0,
       _ => false,
     };
@@ -7914,7 +7914,7 @@ class _PersonDetailsScreenState extends State<PersonDetailsScreen> {
       'الأحدث أولاً',
       'أدوية اليوم',
       'أدوية قادمة',
-      'أدوية منتهية',
+      'أدوية مكتملة',
     ];
     final planRows = [
       ..._linkedRows('متابعة وتخطيط'),

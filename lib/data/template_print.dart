@@ -235,6 +235,12 @@ pw.TextStyle _st({
   lineSpacing: 1.5,
 );
 
+/// التشكيل (فوق الهمزة خاصة) يُسقط تشكيل سطور PDF العربية ويرمي
+/// «RangeError (length)» فلا يُطبع المستند كله (عقد ملغى من السجل
+/// التاريخي مثلًا). يُحذف من كل نص يُطبع — المعنى لا يتغير.
+String _noHarakat(String value) =>
+    value.replaceAll(RegExp('[\u064B-\u0652\u0670]'), '');
+
 pw.Widget _text(
   String text, {
   double size = 9,
@@ -243,7 +249,7 @@ pw.Widget _text(
   pw.TextAlign? align,
   int? maxLines,
 }) => pw.Text(
-  text,
+  _noHarakat(text),
   style: _st(size: size, bold: bold, color: color),
   textAlign: align,
   maxLines: maxLines,
@@ -455,7 +461,7 @@ class _Doc {
       : [
           pw.SizedBox(height: 4),
           pw.Text(
-            text.trim(),
+            _noHarakat(text.trim()),
             textAlign: pw.TextAlign.justify,
             style: _st(size: lead ? 9.5 : 9, color: _ink),
           ),
@@ -482,12 +488,12 @@ class _Doc {
             text: pw.TextSpan(
               children: [
                 pw.TextSpan(
-                  text: i < ordinals.length
+                  text: _noHarakat(i < ordinals.length
                       ? '${_tr('البند')} ${_tr(ordinals[i])}: '
-                      : '${_tr('البند')} ${i + 1}: ',
+                      : '${_tr('البند')} ${i + 1}: '),
                   style: _st(size: 9, bold: true, color: _deep),
                 ),
-                pw.TextSpan(text: items[i], style: _st(size: 9)),
+                pw.TextSpan(text: _noHarakat(items[i]), style: _st(size: 9)),
               ],
             ),
           ),
@@ -647,11 +653,11 @@ List<pw.Widget> _signatures(
                     text: pw.TextSpan(
                       children: [
                         pw.TextSpan(
-                          text: '${_tr(filled[i].$1)}: ',
+                          text: _noHarakat('${_tr(filled[i].$1)}: '),
                           style: _st(size: 8.5, color: _muted),
                         ),
                         pw.TextSpan(
-                          text: filled[i].$2,
+                          text: _noHarakat(filled[i].$2),
                           style: _st(size: 8.5, bold: true),
                         ),
                       ],
@@ -1003,11 +1009,11 @@ Future<Uint8List> buildTemplatePdf(
               text: pw.TextSpan(
                 children: [
                   pw.TextSpan(
-                    text: '${_tr('إلى السيد/')} ',
+                    text: _noHarakat('${_tr('إلى السيد/')} '),
                     style: _st(size: 11, color: _muted),
                   ),
                   pw.TextSpan(
-                    text: v('المرسل إليه'),
+                    text: _noHarakat(v('المرسل إليه')),
                     style: _st(size: 11.5, bold: true),
                   ),
                 ],

@@ -10540,9 +10540,6 @@ class _SharedCommitmentDetailsScreenState extends State<SharedCommitmentDetailsS
     final turnDate = turnCycle?.dueText ?? '—';
     final role = _memberRole(name);
     final status = _roscaTurnStatus(plan, turn);
-    final due = run != null &&
-        turnCycle != null &&
-        (status == 'حان وقتها' || status == 'متأخرة');
     final manager = _isManagerHere;
     final cycle = turnCycle;
     // لون الصندوق من حالته: متأخرة أحمر خفيف، حان وقتها بلون الالتزام
@@ -10631,27 +10628,12 @@ class _SharedCommitmentDetailsScreenState extends State<SharedCommitmentDetailsS
               ),
             ],
           ),
-          if (due) ...[
-            const SizedBox(height: 3),
-            Text(
-              '${AppTr.tr('المبلغ الإجمالي')}: ${_money(plan.cycleTotal)}',
-              textAlign: AppTr.alignEnd,
-              style: TextStyle(
-                fontSize: 12.5,
-                fontWeight: FontWeight.w900,
-                color: item.color,
-              ),
-            ),
-          ],
           const SizedBox(height: 4),
+          // ما يستلمه صاحب الدور في دوره (مجموع مساهمات الأعضاء) — مساهمة
+          // كل عضو مكتوبة في «الأعضاء».
           Text(
-            '${AppTr.tr('المساهمة')}: ${() {
-              final base = plan.shareOf(name);
-              final extra = SharedLedger.extraOf(item.details, name);
-              return extra > 0.01
-                  ? '${_plainNum(base)} + ${_plainNum(extra)} = ${_money(base + extra)}'
-                  : _money(base);
-            }()}   ·   '
+            '${AppTr.tr('المبلغ المستحق له')}: '
+            '${_money(turnCycle?.target ?? plan.cycleTotal)}   ·   '
             '${AppTr.tr('تاريخ الاستلام')}: $turnDate',
             textAlign: AppTr.alignEnd,
             maxLines: 2,

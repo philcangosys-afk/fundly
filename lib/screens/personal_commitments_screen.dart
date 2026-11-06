@@ -334,6 +334,8 @@ bool _personalNoDeadline(_CommitmentItem i) {
 String _shownStatus(_CommitmentItem item) {
   // العهدة: نفس حالة شارتها (ملغاة - تحتاج تسوية / منتهية...).
   if (item.entryType == 'عهدة مالية') return _custodyItemLook(item).$1;
+  final debtLook = _cancelledDebtLook(item);
+  if (debtLook != null) return debtLook.$1;
   if (_organizationFollowTypes.contains(item.entryType) &&
       _personalNoDeadline(item)) {
     return item.status;
@@ -348,6 +350,8 @@ String _shownStatus(_CommitmentItem item) {
 
 Color _shownStatusColor(_CommitmentItem item) {
   if (item.entryType == 'عهدة مالية') return _custodyItemLook(item).$2;
+  final debtLook = _cancelledDebtLook(item);
+  if (debtLook != null) return debtLook.$2;
   final shown = _shownStatus(item);
   return shown == item.status ? item.statusColor : _personalStatusColor(shown);
 }
@@ -573,10 +577,40 @@ bool _hasPendingFollowups(Map<String, String> details) {
 
 /// حالة العهدة كما تظهر: الملغاة وفيها متبقٍّ «ملغاة - تحتاج تسوية»، أو
 /// متابعة لم يحن وقتها «ملغاة - تحتاج متابعة»؛ ومرّ تاريخها «منتهية».
+/// أنواع بلا حالة («نشطة» لا معنى لها): المكان المحفوظ وكلمة السر.
+const Set<String?> _noStatusTypes = {'مواقع وأماكن', 'كلمات سر'};
+
+/// سُوّي بعد الإلغاء/عند الحذف: كُتب ما تم في التسوية («ملاحظة التسوية»).
+bool _isSettledRecord(Map<String, String> details) =>
+    (details['ملاحظة التسوية'] ?? '').trim().isNotEmpty;
+
+/// الدين الملغى: «ملغاة - تحتاج تسوية» ما دام عليه متبقٍّ لم يُسوَّ،
+/// و«ملغاة» بعد التسوية. null لغير الدين الملغى.
+(String, Color)? _cancelledDebtLook(_CommitmentItem item) {
+  if (item.entryType != 'دين / قرض / سلفة' || item.status != 'ملغاة') {
+    return null;
+  }
+  if (item.amount > 0 && !_isSettledRecord(item.details)) {
+    return ('ملغاة - تحتاج تسوية', const Color(0xFFC4392E));
+  }
+  return ('ملغاة', const Color(0xFFC4392E));
+}
+
+/// لا يُحذف قبل التسوية: عهدة تحتاج تسوية، أو دين عليه متبقٍّ لم يُسوَّ.
+bool _needsSettlementBeforeDelete(_CommitmentItem item) {
+  if (item.entryType == 'عهدة مالية') {
+    return _custodyItemLook(item).$1.contains('تحتاج تسوية');
+  }
+  if (item.entryType == 'دين / قرض / سلفة') {
+    return item.amount > 0 && !_isSettledRecord(item.details);
+  }
+  return false;
+}
+
 (String, Color) _custodyItemLook(_CommitmentItem item) {
   if (item.status == 'ملغاة') {
     final remaining = item.totalAmount - _custodyTotalSpent(item.details);
-    if (remaining > 0) {
+    if (remaining > 0 && !_isSettledRecord(item.details)) {
       return ('ملغاة - تحتاج تسوية', const Color(0xFFC4392E));
     }
     if (_hasPendingFollowups(item.details)) {
@@ -1063,6 +1097,9 @@ class _PersonalCommitmentsScreenState extends State<PersonalCommitmentsScreen> {
 
   /// الأفراد والجهات المسجّلون — لاختيار الطرف في الدين والقسط وملء بياناته.
   Map<String, PeopleDirectoryEntry> _partyDirectory = const {};
+
+  /// خانات كلمة السر المكشوفة الآن (علامة العين) في نموذج الإضافة.
+  final Set<String> _revealedSecrets = {};
 
   /// أرقام تعريفية معروفة ← أسماء أصحابها (من العهد والديون السابقة ومن
   /// «الأفراد والجهات») — الاسم وحده، بلا هاتف ولا عنوان.
@@ -1709,7 +1746,9 @@ class _PersonalCommitmentsScreenState extends State<PersonalCommitmentsScreen> {
         .toList();
     final paidAmount = _subscriptionTotalPaid(record.details);
     // المنتهي تاريخه يظهر «منتهية» في القائمة والتفاصيل ومركز المتابعة.
-    final status = _derivedStatus(record.status, record.details);
+    var status = _derivedStatus(record.status, record.details);
+    // الدواء الذي انتهت مدته اكتمل كورسه: «مكتملة» لا «منتهية».
+    if (record.entryType == 'أدوية' && status == 'منتهية') status = 'مكتملة';
     return _CommitmentItem(
       id: record.id,
       category: record.category,
@@ -2038,7 +2077,7 @@ class _PersonalCommitmentsScreenState extends State<PersonalCommitmentsScreen> {
             if (!started || !notEnded) return false;
           case 'أدوية قادمة':
             if (from == null || !from.isAfter(today)) return false;
-          case 'أدوية منتهية':
+          case 'أدوية مكتملة':
             if (to == null || !to.isBefore(today)) return false;
         }
       }
@@ -2531,7 +2570,7 @@ class _PersonalCommitmentsScreenState extends State<PersonalCommitmentsScreen> {
           final start = _parseDayValue(item.details['من تاريخ'] ?? '');
           return start != null && start.isAfter(today) ? 0 : 1;
         }
-      case 'أدوية منتهية':
+      case 'أدوية مكتملة':
         {
           if (item.entryType != 'أدوية') return 1;
           final end = _parseDayValue(item.details['إلى تاريخ'] ?? '');
@@ -4204,6 +4243,91 @@ class _PersonalCommitmentsScreenState extends State<PersonalCommitmentsScreen> {
     );
   }
 
+  /// «جلب من الأفراد» في الدين: من له رقم تعريفي في الأفراد والجهات —
+  /// يُكتب رقمه، واسمه وهاتفه وبريده إن كانت فارغة.
+  Future<void> _pickPartyFnd(
+    BuildContext context,
+    Map<String, TextEditingController> controllers,
+    StateSetter setModalState,
+  ) async {
+    const idKeys = ['الرقم التعريفي', 'رقم التعريف'];
+    var people = _partyDirectory.values.toList();
+    if (people.isEmpty) {
+      try {
+        people = await PeopleDirectoryStore.load();
+      } catch (_) {}
+    }
+    final withId = [
+      for (final person in people)
+        if (person.firstOf(idKeys).trim().isNotEmpty) person,
+    ];
+    if (!context.mounted) return;
+    if (withId.isEmpty) {
+      ScaffoldMessenger.of(context).showSnackBar(
+        const SnackBar(
+          content: Text('لا يوجد في الأفراد والجهات من له رقم تعريفي'),
+          behavior: SnackBarBehavior.floating,
+        ),
+      );
+      return;
+    }
+    final picked = await showModalBottomSheet<PeopleDirectoryEntry>(
+      context: context,
+      useSafeArea: true,
+      isScrollControlled: true,
+      backgroundColor: Colors.white,
+      shape: const RoundedRectangleBorder(
+        borderRadius: BorderRadius.vertical(top: Radius.circular(AppTheme.rCard)),
+      ),
+      builder: (sheetContext) => Directionality(
+        textDirection: AppTr.uiDir,
+        child: ConstrainedBox(
+          constraints: BoxConstraints(
+            maxHeight: MediaQuery.of(sheetContext).size.height * 0.7,
+          ),
+          child: ListView(
+            shrinkWrap: true,
+            padding: const EdgeInsets.fromLTRB(12, 14, 12, 16),
+            children: [
+              const Padding(
+                padding: EdgeInsets.fromLTRB(4, 0, 4, 8),
+                child: Text(
+                  'جلب من الأفراد',
+                  style: TextStyle(fontSize: 15, fontWeight: FontWeight.w900),
+                ),
+              ),
+              for (final person in withId)
+                ListTile(
+                  leading: const Icon(Icons.person_outline_rounded),
+                  title: Text(
+                    person.fullName,
+                    style: const TextStyle(fontWeight: FontWeight.w800),
+                  ),
+                  subtitle: Text(person.firstOf(idKeys)),
+                  onTap: () => Navigator.pop(sheetContext, person),
+                ),
+            ],
+          ),
+        ),
+      ),
+    );
+    if (picked == null) return;
+    setModalState(() {
+      controllers[_debtHolderIdLabel]?.text = picked.firstOf(idKeys).trim();
+      void fill(String key, List<String> from) {
+        final target = controllers[key];
+        final saved = key == 'اسم الجهة' ? picked.fullName : picked.firstOf(from);
+        if (target != null && target.text.trim().isEmpty && saved.isNotEmpty) {
+          target.text = saved;
+        }
+      }
+
+      fill('اسم الجهة', const []);
+      fill('رقم الهاتف', const ['رقم الهاتف', 'رقم الجوال', 'الجوال', 'الهاتف']);
+      fill('البريد الإلكتروني', const ['البريد الإلكتروني', 'الإيميل']);
+    });
+  }
+
   Widget _buildDynamicField(
     _FinancialField field,
     TextEditingController controller, {
@@ -4673,7 +4797,8 @@ class _PersonalCommitmentsScreenState extends State<PersonalCommitmentsScreen> {
       readOnly:
           field.kind == _FinancialFieldKind.date ||
           field.kind == _FinancialFieldKind.time,
-      obscureText: field.kind == _FinancialFieldKind.secret,
+      obscureText: field.kind == _FinancialFieldKind.secret &&
+          !_revealedSecrets.contains(field.label),
       keyboardType: field.kind == _FinancialFieldKind.number
           ? const TextInputType.numberWithOptions(decimal: true)
           : null,
@@ -4697,8 +4822,38 @@ class _PersonalCommitmentsScreenState extends State<PersonalCommitmentsScreen> {
             ? AppSettings.currencyOf(controllers['العملة']?.text)
             : null,
       ).copyWith(
+        // الدين: «جلب من الأفراد» بجانب الرقم التعريفي للطرف الثاني.
         // التاريخ / الوقت الاختياري: زر × يمسحه بعد اختياره.
-        suffixIcon: !field.required &&
+        // كلمة السر: علامة عين تُظهر ما كُتب وتخفيه.
+        suffixIcon: field.kind == _FinancialFieldKind.secret
+            ? IconButton(
+                tooltip: AppTr.tr(
+                  _revealedSecrets.contains(field.label) ? 'إخفاء' : 'إظهار',
+                ),
+                icon: Icon(
+                  _revealedSecrets.contains(field.label)
+                      ? Icons.visibility_off_outlined
+                      : Icons.visibility_outlined,
+                  size: 20,
+                ),
+                onPressed: () => setModalState(() {
+                  if (!_revealedSecrets.remove(field.label)) {
+                    _revealedSecrets.add(field.label);
+                  }
+                }),
+              )
+            : field.label == _debtHolderIdLabel &&
+                entryLabel == 'دين / قرض / سلفة'
+            ? TextButton.icon(
+                onPressed: () =>
+                    _pickPartyFnd(context, controllers, setModalState),
+                icon: const Icon(Icons.groups_2_outlined, size: 16),
+                label: const Text(
+                  'جلب من الأفراد',
+                  style: TextStyle(fontSize: 11.5, fontWeight: FontWeight.w800),
+                ),
+              )
+            : !field.required &&
                 (field.kind == _FinancialFieldKind.date ||
                     field.kind == _FinancialFieldKind.time)
             ? ValueListenableBuilder<TextEditingValue>(
@@ -6399,7 +6554,7 @@ class _PersonalCommitmentsScreenState extends State<PersonalCommitmentsScreen> {
     const docsExpired = ('مستندات منتهية', Icons.assignment_late_outlined);
     const medsToday = ('أدوية اليوم', Icons.today_outlined);
     const medsNext = ('أدوية قادمة', Icons.upcoming_outlined);
-    const medsEnded = ('أدوية منتهية', Icons.event_busy_outlined);
+    const medsEnded = ('أدوية مكتملة', Icons.event_busy_outlined);
     const highest = ('أعلى مبلغًا', Icons.arrow_upward_rounded);
     const lowest = ('أقل مبلغًا', Icons.arrow_downward_rounded);
     const today = ('اليوم', Icons.today_outlined);
@@ -7196,8 +7351,19 @@ class _PersonalCommitmentDetailsScreenState
   Future<void> _handleMenuAction(_CommitmentMenuAction action) async {
     // إلغاء العهدة يمر بنافذة التسوية نفسها، فلا تأكيد عام قبلها.
     if (action == _CommitmentMenuAction.cancel) {
-      await _cancelCustody();
+      if (widget.item.entryType == 'دين / قرض / سلفة') {
+        await _cancelDebt();
+      } else {
+        await _cancelCustody();
+      }
       return;
+    }
+    // الحذف قبل التسوية ممنوع: نافذة التسوية أولًا (ماذا تم + ملاحظات)،
+    // ثم يكمل تأكيد الحذف.
+    if (action == _CommitmentMenuAction.delete &&
+        _needsSettlementBeforeDelete(widget.item)) {
+      final settled = await _settleBeforeDelete();
+      if (!settled || !mounted) return;
     }
     // «إلغاء الإسناد» صار في القائمة ⋮ فقط، وله تأكيده الخاص.
     // المستلم لا يعدّل بيانات العهدة أو الدين (حتى لو وصل الأمر بطريق آخر).
@@ -7491,6 +7657,148 @@ class _PersonalCommitmentDetailsScreenState
         context,
       ).showSnackBar(SnackBar(content: Text(_saveErrorMessage(error))));
     }
+  }
+
+  /// إلغاء الدين (⋮): يبقى للاطلاع، وما دام عليه متبقٍّ يظهر «ملغاة -
+  /// تحتاج تسوية» حتى يُسوّى.
+  Future<void> _cancelDebt() async {
+    final item = widget.item;
+    final reason = TextEditingController();
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => Directionality(
+        textDirection: AppTr.uiDir,
+        child: AlertDialog(
+          title: const Text('إلغاء الدين'),
+          content: Column(
+            mainAxisSize: MainAxisSize.min,
+            crossAxisAlignment: CrossAxisAlignment.stretch,
+            children: [
+              Text(
+                item.amount > 0
+                    ? '${AppTr.tr('عليه متبقٍّ')}: ${item.amount} ${item.currency} — '
+                          '${AppTr.tr('بعد الإلغاء يظهر «ملغاة - تحتاج تسوية» حتى تُسوّيه.')}'
+                    : AppTr.tr('سيُلغى الدين ويبقى للاطلاع.'),
+                style: const TextStyle(fontSize: 13, height: 1.5),
+              ),
+              const SizedBox(height: 12),
+              TextField(
+                controller: reason,
+                minLines: 1,
+                maxLines: 3,
+                decoration: InputDecoration(
+                  labelText: AppTr.tr('سبب الإلغاء'),
+                  border: const OutlineInputBorder(),
+                  isDense: true,
+                ),
+              ),
+            ],
+          ),
+          actions: [
+            TextButton(
+              onPressed: () => Navigator.pop(dialogContext, false),
+              child: const Text('رجوع'),
+            ),
+            FilledButton(
+              style: FilledButton.styleFrom(backgroundColor: AppTheme.danger),
+              onPressed: () => Navigator.pop(dialogContext, true),
+              child: const Text('إلغاء الدين'),
+            ),
+          ],
+        ),
+      ),
+    );
+    if (ok != true || !mounted) return;
+    final details = Map<String, String>.of(item.details)
+      ..['تاريخ الإلغاء'] = _stampNow();
+    if (reason.text.trim().isNotEmpty) {
+      details['سبب الإلغاء'] = reason.text.trim();
+    }
+    final saved = await _persistCustody(details, newStatus: 'ملغاة');
+    if (!saved || !mounted) return;
+    ScaffoldMessenger.of(context).showSnackBar(
+      SnackBar(
+        content: Text(
+          item.amount > 0
+              ? AppTr.tr('أُلغي الدين — يحتاج تسوية قبل حذفه')
+              : AppTr.tr('أُلغي الدين'),
+        ),
+        behavior: SnackBarBehavior.floating,
+      ),
+    );
+  }
+
+  /// قبل حذف ما يحتاج تسوية (عهدة أو دين عليه متبقٍّ): يُبيَّن المتبقي،
+  /// ويكتب ما تم في التسوية وملاحظاته، ثم يُسجَّل مُسوًّى. true: سُوّي.
+  Future<bool> _settleBeforeDelete() async {
+    final item = widget.item;
+    final custody = item.entryType == 'عهدة مالية';
+    final remaining = custody
+        ? item.totalAmount - _custodyTotalSpent(item.details)
+        : item.amount;
+    final note = TextEditingController();
+    final ok = await showDialog<bool>(
+      context: context,
+      builder: (dialogContext) => StatefulBuilder(
+        builder: (dialogContext, setDialog) => Directionality(
+          textDirection: AppTr.uiDir,
+          child: AlertDialog(
+            title: const Text('يحتاج تسوية قبل الحذف'),
+            content: Column(
+              mainAxisSize: MainAxisSize.min,
+              crossAxisAlignment: CrossAxisAlignment.stretch,
+              children: [
+                Text(
+                  '${AppTr.tr('لا يُحذف')} «${item.title}» '
+                  '${AppTr.tr('قبل التسوية — المتبقي')}: '
+                  '$remaining ${item.currency}',
+                  style: const TextStyle(
+                    fontSize: 13,
+                    height: 1.5,
+                    fontWeight: FontWeight.w700,
+                    color: AppTheme.danger,
+                  ),
+                ),
+                const SizedBox(height: 12),
+                TextField(
+                  controller: note,
+                  minLines: 2,
+                  maxLines: 4,
+                  onChanged: (_) => setDialog(() {}),
+                  decoration: InputDecoration(
+                    labelText: AppTr.tr('ماذا تم في التسوية؟ (وملاحظاتك) *'),
+                    hintText: AppTr.tr('مثال: استلمت المتبقي نقدًا'),
+                    border: const OutlineInputBorder(),
+                    isDense: true,
+                  ),
+                ),
+              ],
+            ),
+            actions: [
+              TextButton(
+                onPressed: () => Navigator.pop(dialogContext, false),
+                child: const Text('رجوع'),
+              ),
+              FilledButton(
+                onPressed: note.text.trim().isEmpty
+                    ? null
+                    : () => Navigator.pop(dialogContext, true),
+                child: const Text('تمت التسوية'),
+              ),
+            ],
+          ),
+        ),
+      ),
+    );
+    if (ok != true || !mounted) return false;
+    final details = Map<String, String>.of(item.details)
+      ..['ملاحظة التسوية'] = note.text.trim()
+      ..['تاريخ التسوية'] = _stampNow();
+    if (remaining > 0) {
+      details[custody ? 'المبلغ المعاد عند التسوية' : 'المتبقي عند التسوية'] =
+          '$remaining';
+    }
+    return _persistCustody(details);
   }
 
   Future<void> _deleteCommitment() async {
@@ -10199,6 +10507,10 @@ class _PersonalCommitmentDetailsScreenState
     final payerController = TextEditingController();
     final amountController = TextEditingController();
     final dateController = TextEditingController();
+    final notesController = TextEditingController();
+    // الدين: الدافع معروف مسبقًا (لا يُسأل عنه)، وملاحظات مكانه، وصورة
+    // الفاتورة اختيارية.
+    final isDebt = widget.item.entryType == 'دين / قرض / سلفة';
     XFile? invoiceImage;
     var isSaving = false;
 
@@ -10291,6 +10603,7 @@ class _PersonalCommitmentDetailsScreenState
                             ],
                           ),
                           const SizedBox(height: 18),
+                          if (!isDebt) ...[
                           TextFormField(
                             controller: payerController,
                             textInputAction: TextInputAction.next,
@@ -10304,6 +10617,7 @@ class _PersonalCommitmentDetailsScreenState
                                 : null),
                           ),
                           const SizedBox(height: 12),
+                          ],
                           TextFormField(
                             controller: amountController,
                             keyboardType: const TextInputType.numberWithOptions(
@@ -10353,6 +10667,18 @@ class _PersonalCommitmentDetailsScreenState
                                 : null),
                           ),
                           const SizedBox(height: 12),
+                          if (isDebt) ...[
+                            TextFormField(
+                              controller: notesController,
+                              minLines: 1,
+                              maxLines: 3,
+                              decoration: _paymentInputDecoration(
+                                'ملاحظات',
+                                Icons.notes_rounded,
+                              ),
+                            ),
+                            const SizedBox(height: 12),
+                          ],
                           AppRemovableAttachment(
                             attached: invoiceImage != null,
                             onRemove: () => setModalState(() => invoiceImage = null),
@@ -10387,7 +10713,9 @@ class _PersonalCommitmentDetailsScreenState
                                   Expanded(
                                     child: Text(
                                       invoiceImage?.name ??
-                                          'إضافة صورة من الفاتورة',
+                                          (isDebt
+                                              ? 'إضافة صورة من الفاتورة (اختياري)'
+                                              : 'إضافة صورة من الفاتورة'),
                                       maxLines: 3,
                                       style: const TextStyle(
                                         fontWeight: FontWeight.w700,
@@ -10415,7 +10743,7 @@ class _PersonalCommitmentDetailsScreenState
                                           false)) {
                                         return;
                                       }
-                                      if (invoiceImage == null) {
+                                      if (invoiceImage == null && !isDebt) {
                                         ScaffoldMessenger.of(
                                           context,
                                         ).showSnackBar(
@@ -10443,7 +10771,15 @@ class _PersonalCommitmentDetailsScreenState
                                       // هوية من سجّل السداد تُحفظ مع الدفعة
                                       // ليعرف الطرف الآخر من دفع فعلًا.
                                       final newPayment = {
-                                        'الدافع': payerController.text.trim(),
+                                        'الدافع': isDebt
+                                            ? AppSettings.instance.publicName
+                                            : payerController.text.trim(),
+                                        if (isDebt &&
+                                            notesController.text
+                                                .trim()
+                                                .isNotEmpty)
+                                          'ملاحظات':
+                                              notesController.text.trim(),
                                         'المبلغ': '$paymentAmount',
                                         'التاريخ': dateController.text.trim(),
                                         _recordTimeKey: _clockNow(),
@@ -10544,8 +10880,7 @@ class _PersonalCommitmentDetailsScreenState
                                           item.payments.insert(
                                             0,
                                             _SubscriptionPayment(
-                                              payerName: payerController.text
-                                                  .trim(),
+                                              payerName: newPayment['الدافع'] ?? '',
                                               amount: paymentAmount,
                                               date: dateController.text,
                                               invoiceImagePath:
@@ -11184,7 +11519,7 @@ class _PersonalCommitmentDetailsScreenState
               ),
             ),
             // المكان المحفوظ بلا حالة («نشطة» لا معنى لها هنا).
-            if (item.entryType != 'مواقع وأماكن')
+            if (!_noStatusTypes.contains(item.entryType))
             Container(
               padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 4),
               decoration: BoxDecoration(
@@ -11715,36 +12050,64 @@ class _PersonalCommitmentDetailsScreenState
                     invoicePath: payment[_paymentInvoiceKey],
                   ),
               const SizedBox(height: 6),
-              // الدائن لا يسدّد دينه بنفسه: له الزيادة والمطالبة فقط،
-              // والسداد وإرفاق فاتورته عند المدين.
-              if (isCreditor)
-                FilledButton.icon(
-                  style: FilledButton.styleFrom(
-                    backgroundColor: AppTheme.brand,
-                    foregroundColor: Colors.white,
-                    minimumSize: const Size.fromHeight(44),
+              // زرّان جنب بعض: «سداد / سداد جزئي» و«تسجيل دين إضافي» — كلٌّ
+              // لمن يحق له (الدين غير المربوط يسجّل صاحبه الاثنين).
+              () {
+                final role = assignment.roleFor(AppIdentity.id);
+                final canRepay = _canRepayDebt(item);
+                final canIncrease = role != CustodyRole.observer &&
+                    (isCreditor ||
+                        (!assignment.isAccepted &&
+                            role != CustodyRole.holder));
+                Widget button({
+                  required String label,
+                  required IconData icon,
+                  required Color color,
+                  required VoidCallback onPressed,
+                }) => Expanded(
+                  child: FilledButton.icon(
+                    style: FilledButton.styleFrom(
+                      backgroundColor: color,
+                      foregroundColor: Colors.white,
+                      minimumSize: const Size.fromHeight(44),
+                      padding: const EdgeInsets.symmetric(horizontal: 8),
+                    ),
+                    onPressed: onPressed,
+                    icon: Icon(icon, size: 18),
+                    label: FittedBox(
+                      fit: BoxFit.scaleDown,
+                      child: Text(
+                        label,
+                        maxLines: 1,
+                        style: const TextStyle(
+                          fontSize: 12.5,
+                          fontWeight: FontWeight.w900,
+                        ),
+                      ),
+                    ),
                   ),
-                  onPressed: _openDebtIncreaseForm,
-                  icon: const Icon(Icons.add_card_outlined, size: 18),
-                  label: const Text(
-                    'زيادة على الدين',
-                    style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.w900),
-                  ),
-                )
-              else
-                FilledButton.icon(
-                  style: FilledButton.styleFrom(
-                    backgroundColor: AppTheme.brandMid,
-                    foregroundColor: Colors.white,
-                    minimumSize: const Size.fromHeight(44),
-                  ),
-                  onPressed: _openSubscriptionPaymentForm,
-                  icon: const Icon(Icons.payments_outlined, size: 18),
-                  label: const Text(
-                    'تسجيل سداد / سداد جزئي',
-                    style: TextStyle(fontSize: 12.5, fontWeight: FontWeight.w900),
-                  ),
-                ),
+                );
+                return Row(
+                  textDirection: AppTr.uiDir,
+                  children: [
+                    if (canRepay)
+                      button(
+                        label: 'سداد / سداد جزئي',
+                        icon: Icons.payments_outlined,
+                        color: AppTheme.brandMid,
+                        onPressed: _openSubscriptionPaymentForm,
+                      ),
+                    if (canRepay && canIncrease) const SizedBox(width: 8),
+                    if (canIncrease)
+                      button(
+                        label: 'تسجيل دين إضافي',
+                        icon: Icons.add_card_outlined,
+                        color: AppTheme.brand,
+                        onPressed: _openDebtIncreaseForm,
+                      ),
+                  ],
+                );
+              }(),
             ],
           ),
         ),
@@ -13341,7 +13704,7 @@ class _CompactCommitmentHeader extends StatelessWidget {
               ),
               if (item.entryType == 'عهدة مالية')
                 _custodyStateColumn()
-              else if (item.entryType != 'مواقع وأماكن')
+              else if (!_noStatusTypes.contains(item.entryType))
               Container(
                 padding: const EdgeInsets.symmetric(horizontal: 8, vertical: 5),
                 decoration: BoxDecoration(
@@ -13448,6 +13811,18 @@ class _CompactCommitmentHeader extends StatelessWidget {
                       icon: Icons.share_outlined,
                     ),
                   ),
+                  // الدين: «إلغاء» مثل العهدة (والحذف بعد التسوية).
+                  if (item.entryType == 'دين / قرض / سلفة' &&
+                      item.status != 'ملغاة' &&
+                      !_isSharedGuest(item))
+                    const PopupMenuItem(
+                      value: _CommitmentMenuAction.cancel,
+                      child: _CommitmentMenuItem(
+                        label: 'إلغاء',
+                        icon: Icons.cancel_outlined,
+                        color: Color(0xFFA82F26),
+                      ),
+                    ),
                   // العهدة المالية: «إلغاء» أولًا، وبعد إلغائها يظهر «حذف».
                   if (item.entryType == 'عهدة مالية' &&
                       item.status != 'ملغاة' &&
@@ -13843,7 +14218,7 @@ class _SummaryDetailsCard extends StatelessWidget {
           value: item.entryType ?? 'التزام شخصي',
           icon: Icons.category_outlined,
         ),
-        if (item.entryType != 'مواقع وأماكن')
+        if (!_noStatusTypes.contains(item.entryType))
           _UnifiedInfoRow(
             label: 'الحالة',
             value: _shownStatus(item),
@@ -13871,13 +14246,23 @@ class _SummaryDetailsCard extends StatelessWidget {
                 .first,
             icon: Icons.how_to_reg_outlined,
           ),
-        ...visibleEntries.map(
-          (entry) => _UnifiedInfoRow(
+        ...visibleEntries.map((entry) {
+          // العهدة التي ما زالت تحتاج تسوية: «تاريخ التسوية» يقول ذلك
+          // بدل تاريخ لا يعني أنها سُوّيت.
+          final unsettled = item.entryType == 'عهدة مالية' &&
+              entry.key == 'تاريخ التسوية' &&
+              _custodyItemLook(item).$1.contains('تحتاج تسوية');
+          return _UnifiedInfoRow(
             label: entry.key,
-            value: isSensitive(entry.key) ? '••••••••' : entry.value,
+            value: unsettled
+                ? 'تحتاج تسوية'
+                : isSensitive(entry.key)
+                ? '••••••••'
+                : entry.value,
             icon: Icons.notes_rounded,
-          ),
-        ),
+            valueColor: unsettled ? const Color(0xFFC4392E) : null,
+          );
+        }),
         _UnifiedInfoRow(
           label: 'المرفق',
           value: item.attachmentPath == null ? 'لا يوجد' : 'مستند مرفق',
@@ -14575,7 +14960,7 @@ class _CommitmentCard extends StatelessWidget {
                 (item.details['تاريخ الانتهاء'] ?? '').trim())
           // الدواء بتاريخ انتهائه، والمناسبة بتاريخها — ليُعرف معنى التاريخ.
           '${switch (item.entryType) {
-            'أدوية' => 'تاريخ الانتهاء',
+            'أدوية' => 'تاريخ آخر استخدام',
             'مناسبة' => 'تاريخ المناسبة',
             _ => 'التاريخ',
           }} : ${item.dueDate}',
@@ -15283,24 +15668,7 @@ const Map<String, _FinancialEntryForm> _financialEntryForms = {
         half: true,
         options: _kReminderOptions,
       ),
-      _FinancialField(
-        'عدد الأقساط',
-        Icons.format_list_numbered_rounded,
-        kind: _FinancialFieldKind.number,
-        half: true,
-      ),
-      _FinancialField(
-        'تكرار الأقساط',
-        Icons.repeat_rounded,
-        kind: _FinancialFieldKind.select,
-        options: ['شهري', 'ربع سنوي', 'سنوي'],
-        half: true,
-      ),
-      _FinancialField(
-        'إجمالي الأقساط',
-        Icons.summarize_outlined,
-        kind: _FinancialFieldKind.number,
-      ),
+      // حُذفت خانات الأقساط من إضافة الدين (عدد/تكرار/إجمالي الأقساط).
       _notesField,
     ],
   ),

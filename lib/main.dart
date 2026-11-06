@@ -303,7 +303,16 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
       parent: _entranceController,
       curve: Curves.easeOutCubic,
     );
-    _searchController.addListener(() => setState(() {}));
+    _searchController.addListener(() {
+      // البحث يشمل كل العناصر (التزامات، أفراد، عقارات...): تُقرأ مرة عند
+      // أول حرف، وتُعاد قراءتها عند مسح البحث والبدء من جديد.
+      if (_searchController.text.trim().isEmpty) {
+        _searchIndex = null;
+      } else {
+        _ensureSearchIndex();
+      }
+      setState(() {});
+    });
     _bootstrapHomeState();
     _entranceController.forward();
   }
@@ -1488,6 +1497,150 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
     );
   }
 
+  /// كل عناصر الوحدات الأربع للبحث في الرئيسية (null: لم تُقرأ بعد).
+  List<HomePinnedShortcut>? _searchIndex;
+  bool _searchLoading = false;
+
+  Future<void> _ensureSearchIndex() async {
+    if (_searchIndex != null || _searchLoading) return;
+    _searchLoading = true;
+    try {
+      final byModule = await HomePinItemsService().load();
+      final all = [for (final list in byModule.values) ...list];
+      if (mounted) setState(() => _searchIndex = all);
+    } catch (_) {
+      if (mounted) setState(() => _searchIndex = const []);
+    } finally {
+      _searchLoading = false;
+    }
+  }
+
+  /// نتائج البحث من كل الوحدات — كل نتيجة تفتح عنصرها مباشرة. null: لا
+  /// بحث.
+  Widget? _homeSearchResults(String query, {required bool noSections}) {
+    if (query.isEmpty) return null;
+    final index = _searchIndex;
+    final matches = index == null
+        ? const <HomePinnedShortcut>[]
+        : [
+            for (final item in index)
+              if (!item.id.contains(':group:') &&
+                  matchesSearchQuery(
+                    query: query,
+                    fields: [item.title, item.subtitle, item.group],
+                  ))
+                item,
+          ];
+    if (index != null && matches.isEmpty && !noSections) return null;
+    return Padding(
+      padding: const EdgeInsets.fromLTRB(
+        AppTheme.pageInset,
+        0,
+        AppTheme.pageInset,
+        12,
+      ),
+      child: AppInnerCard(
+        background: AppTheme.surface,
+        padding: const EdgeInsets.all(AppTheme.sMd),
+        child: Column(
+          crossAxisAlignment: CrossAxisAlignment.stretch,
+          children: [
+            Text(
+              index == null
+                  ? AppTr.tr('جارٍ البحث...')
+                  : '${AppTr.tr('نتائج البحث')} (${matches.length})',
+              style: const TextStyle(
+                fontSize: 13.5,
+                fontWeight: FontWeight.w900,
+                color: AppTheme.title,
+              ),
+            ),
+            if (index != null && matches.isEmpty)
+              const Padding(
+                padding: EdgeInsets.symmetric(vertical: 12),
+                child: Text(
+                  'لا توجد نتيجة مطابقة — جرّب كلمة أخرى',
+                  textAlign: TextAlign.center,
+                  style: AppTheme.emptyText,
+                ),
+              ),
+            for (final item in matches.take(30)) ...[
+              const SizedBox(height: 6),
+              Material(
+                color: Colors.white,
+                borderRadius: BorderRadius.circular(AppTheme.rInner),
+                child: InkWell(
+                  borderRadius: BorderRadius.circular(AppTheme.rInner),
+                  onTap: () => _openShortcut(item),
+                  child: Padding(
+                    padding: const EdgeInsets.symmetric(
+                      horizontal: 10,
+                      vertical: 9,
+                    ),
+                    child: Row(
+                      textDirection: AppTr.uiDir,
+                      children: [
+                        () {
+                          final style = _pinModuleStyle(
+                            item.moduleId.isEmpty
+                                ? item.id.split(':').first
+                                : item.moduleId,
+                          );
+                          return AppIconTile(
+                            icon: style.icon,
+                            color: style.color,
+                            size: 34,
+                            iconSize: 18,
+                          );
+                        }(),
+                        const SizedBox(width: 10),
+                        Expanded(
+                          child: Column(
+                            crossAxisAlignment: CrossAxisAlignment.stretch,
+                            children: [
+                              Text(
+                                item.title,
+                                maxLines: 1,
+                                overflow: TextOverflow.ellipsis,
+                                style: const TextStyle(
+                                  fontSize: 13.5,
+                                  fontWeight: FontWeight.w800,
+                                  color: AppTheme.title,
+                                ),
+                              ),
+                              if ([item.group, item.subtitle]
+                                  .any((s) => s.trim().isNotEmpty))
+                                Text(
+                                  [
+                                    if (item.group.trim().isNotEmpty)
+                                      AppTr.tr(item.group.trim()),
+                                    if (item.subtitle.trim().isNotEmpty)
+                                      item.subtitle.trim(),
+                                  ].join(' · '),
+                                  maxLines: 1,
+                                  overflow: TextOverflow.ellipsis,
+                                  style: const TextStyle(
+                                    fontSize: 11.5,
+                                    fontWeight: FontWeight.w600,
+                                    color: AppTheme.muted,
+                                  ),
+                                ),
+                            ],
+                          ),
+                        ),
+                        const AppChevron(),
+                      ],
+                    ),
+                  ),
+                ),
+              ),
+            ],
+          ],
+        ),
+      ),
+    );
+  }
+
   void _openShortcut(HomePinnedShortcut shortcut) {
     final moduleId = shortcut.moduleId.isEmpty
         ? shortcut.id.split(':').first
@@ -1927,9 +2080,11 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
                             child: TextField(
                               controller: _searchController,
                               textDirection: AppTr.uiDir,
+                              // خط الكتابة بحجم واضح (كان يظهر صغيرًا جدًا).
                               style: const TextStyle(
-                                fontSize: 13.5,
-                                fontWeight: FontWeight.w600,
+                                fontSize: 16,
+                                height: 1.3,
+                                fontWeight: FontWeight.w700,
                                 color: AppTheme.title,
                               ),
                               decoration: InputDecoration(
@@ -1944,9 +2099,15 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
                                 enabledBorder: InputBorder.none,
                                 focusedBorder: InputBorder.none,
                                 contentPadding: EdgeInsets.zero,
+                                suffixIconConstraints: const BoxConstraints(
+                                  minWidth: 36,
+                                  minHeight: 36,
+                                ),
                                 suffixIcon: _searchController.text.isEmpty
                                     ? null
                                     : IconButton(
+                                        padding: EdgeInsets.zero,
+                                        visualDensity: VisualDensity.compact,
                                         icon: const Icon(
                                           Icons.close_rounded,
                                           size: 18,
@@ -2287,6 +2448,13 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
         })
         .toList(growable: false);
 
+    final searchResults = _homeSearchResults(
+      query,
+      noSections: filteredCategories.isEmpty,
+    );
+    if (filteredCategories.isEmpty && searchResults != null) {
+      return searchResults;
+    }
     if (filteredCategories.isEmpty) {
       // بلا هذه الحالة كانت الشاشة تظهر فارغة تمامًا بلا تفسير حين يستبعد
       // الفلتر أو البحث كل الأقسام.
@@ -2307,7 +2475,7 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
       );
     }
 
-    return Padding(
+    final grid = Padding(
       padding: const EdgeInsets.symmetric(horizontal: AppTheme.pageInset),
       child: GridView.builder(
         key: const ValueKey('home-categories-grid'),
@@ -2337,6 +2505,11 @@ class _HomePageState extends State<HomePage> with TickerProviderStateMixin {
           );
         },
       ),
+    );
+    if (searchResults == null) return grid;
+    return Column(
+      crossAxisAlignment: CrossAxisAlignment.stretch,
+      children: [searchResults, grid],
     );
   }
 

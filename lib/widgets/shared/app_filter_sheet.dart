@@ -156,7 +156,7 @@ const kAppFilterMaintenanceOptions = <String>[
 const kAppFilterMedicineStates = <String>[
   'أدوية اليوم',
   'أدوية قادمة',
-  'أدوية منتهية',
+  'أدوية مكتملة',
 ];
 
 /// مدى الفترة المختارة (من، إلى).

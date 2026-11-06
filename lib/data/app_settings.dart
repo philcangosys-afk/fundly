@@ -1,5 +1,6 @@
 import 'dart:convert';
 import 'dart:typed_data';
+import 'dart:ui' show PlatformDispatcher;
 
 import 'package:flutter/foundation.dart';
 import 'package:shared_preferences/shared_preferences.dart';
@@ -451,6 +452,44 @@ class AppSettings extends ChangeNotifier {
   static String maskAmount(String formatted) =>
       instance._hideAmounts ? '••••' : formatted;
 
+  /// لغة الجوال من لغات التطبيق، وإلا English.
+  static String _deviceLanguage() {
+    final code = PlatformDispatcher.instance.locale.languageCode.toLowerCase();
+    return switch (code) {
+      'ar' => 'العربية',
+      'fr' => 'Français',
+      'ur' => 'اردو',
+      'zh' => '中文',
+      _ => 'English',
+    };
+  }
+
+  /// عملة بلد الجوال (من إعداد المنطقة) — '' لبلد لا عملة له في القائمة.
+  static String _deviceCurrency() {
+    final country =
+        (PlatformDispatcher.instance.locale.countryCode ?? '').toUpperCase();
+    const euro = {
+      'DE', 'FR', 'IT', 'ES', 'NL', 'BE', 'AT', 'IE', 'PT', 'FI', 'GR',
+      'LU', 'SK', 'SI', 'EE', 'LV', 'LT', 'MT', 'CY', 'HR',
+    };
+    if (euro.contains(country)) return 'يورو (EUR)';
+    return switch (country) {
+      'SA' => 'ريال سعودي (SAR)',
+      'AE' => 'درهم إماراتي (AED)',
+      'KW' => 'دينار كويتي (KWD)',
+      'QA' => 'ريال قطري (QAR)',
+      'BH' => 'دينار بحريني (BHD)',
+      'OM' => 'ريال عماني (OMR)',
+      'EG' => 'جنيه مصري (EGP)',
+      'SD' => 'جنيه سوداني (SDG)',
+      'US' => 'دولار أمريكي (USD)',
+      'IN' => 'روبية هندية (INR)',
+      'PK' => 'روبية باكستانية (PKR)',
+      'CN' => 'يوان صيني (CNY)',
+      _ => '',
+    };
+  }
+
   Future<void> load() async {
     final prefs = await SharedPreferences.getInstance();
     _name = prefs.getString(_kName) ?? defaultName;
@@ -483,7 +522,12 @@ class AppSettings extends ChangeNotifier {
         _photo = null;
       }
     }
-    _language = _oneOf(prefs.getString(_kLanguage), languages, 'العربية');
+    // أول فتح (لا لغة محفوظة): لغة الجوال إن كانت من لغات التطبيق،
+    // ويغيّرها من شاشة اختيار اللغة أو الإعدادات.
+    final storedLanguage = prefs.getString(_kLanguage);
+    _language = storedLanguage == null
+        ? _deviceLanguage()
+        : _oneOf(storedLanguage, languages, 'العربية');
     _plan = _oneOf(prefs.getString(_kPlan), plans, 'silver');
     _planStart = prefs.getString(_kPlanStart) ?? '';
     _planEnd = prefs.getString(_kPlanEnd) ?? '';
@@ -501,8 +545,11 @@ class AppSettings extends ChangeNotifier {
       _currency = 'درهم إماراتي (AED)';
       await prefs.setString(_kCurrency, _currency);
     } else {
-      // تثبيت جديد: لا عملة حتى يختارها في أول فتح.
-      _currency = '';
+      // تثبيت جديد: عملة بلد الجوال (السعودية ريال، الإمارات درهم...)
+      // مختارة مسبقًا ويغيّرها من شاشة الدخول أو الإعدادات. بلد غير معروف:
+      // يختارها في أول فتح.
+      _currency = _deviceCurrency();
+      if (_currency.isNotEmpty) await prefs.setString(_kCurrency, _currency);
     }
     _calendar = _oneOf(prefs.getString(_kCalendar), calendars, 'ميلادي');
     _textScale = (prefs.getDouble(_kTextScale) ?? 1.0).clamp(

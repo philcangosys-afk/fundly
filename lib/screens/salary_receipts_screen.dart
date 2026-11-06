@@ -1675,7 +1675,24 @@ class _SalaryReceiptFormScreenState extends State<SalaryReceiptFormScreen> {
     controller: c,
     keyboardType: const TextInputType.numberWithOptions(decimal: true),
     onChanged: (_) => (onChanged ?? _recalc)(),
-    decoration: _decor(label).copyWith(suffixText: _currency),
+    // العملة ظاهرة دائمًا داخل الخانة (suffixText كان لا يظهر إلا بعد
+    // الكتابة فيها).
+    decoration: _decor(label).copyWith(
+      suffixIcon: _currency.isEmpty
+          ? null
+          : Padding(
+              padding: const EdgeInsetsDirectional.only(end: 12),
+              child: Text(
+                _currency,
+                style: const TextStyle(
+                  fontSize: 12,
+                  fontWeight: FontWeight.w800,
+                  color: AppTheme.muted,
+                ),
+              ),
+            ),
+      suffixIconConstraints: const BoxConstraints(minWidth: 0, minHeight: 0),
+    ),
   );
 
   Widget _section(String title) => Padding(
