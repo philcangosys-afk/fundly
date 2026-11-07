@@ -238,7 +238,7 @@ class FundlyAccount {
   }
 
   /// إنشاء حساب جديد. يعيد true إن دخل مباشرة، وfalse إن كان البريد
-  /// يحتاج تفعيلًا من الرابط المرسل أولًا.
+  /// يحتاج تفعيلًا بالرمز المرسل إليه أولًا (verifySignupCode).
   static Future<bool> signUp({
     required String name,
     required String email,
@@ -277,7 +277,25 @@ class FundlyAccount {
     } catch (_) {
       throw const FundlyAccountException('تعذّر الاتصال بالخادم — تحقق من الإنترنت');
     }
-    if (response.session == null) return false;
+    if (response.session == null) {
+      // بريد مفعّل مسبقًا: لا يُرسل رمز ويعود مستخدم بلا هويات.
+      if (response.user?.identities?.isEmpty ?? false) {
+        throw const FundlyAccountException(
+          'هذا البريد مسجّل مسبقًا — سجّل الدخول به',
+        );
+      }
+      return false;
+    }
+    await _finishSignUp(name: name, phone: phone, mail: mail);
+    return true;
+  }
+
+  /// بعد إنشاء الحساب ودخوله: حفظ الملف الشخصي محليًا وفي السحابة.
+  static Future<void> _finishSignUp({
+    required String name,
+    required String phone,
+    required String mail,
+  }) async {
     await _afterSignIn();
     final settings = AppSettings.instance;
     await settings.saveProfile(
@@ -289,7 +307,46 @@ class FundlyAccount {
       photo: settings.photo,
     );
     await pushProfile(name: name, phone: phone);
-    return true;
+  }
+
+  /// تفعيل الحساب الجديد بالرمز المرسل إلى البريد، ثم الدخول مباشرة.
+  static Future<void> verifySignupCode({
+    required String email,
+    required String code,
+    required String name,
+    required String phone,
+  }) async {
+    final mail = email.trim().toLowerCase();
+    final token = code.replaceAll(RegExp(r'\s'), '');
+    if (token.length < 6) {
+      throw const FundlyAccountException('أدخل الرمز المرسل إلى بريدك');
+    }
+    try {
+      await _client.auth
+          .verifyOTP(email: mail, token: token, type: OtpType.signup)
+          .timeout(_timeout);
+    } on AuthException {
+      throw const FundlyAccountException('الرمز غير صحيح أو انتهت صلاحيته');
+    } catch (_) {
+      throw const FundlyAccountException('تعذّر الاتصال بالخادم — تحقق من الإنترنت');
+    }
+    if (currentUser == null) {
+      throw const FundlyAccountException('الرمز غير صحيح أو انتهت صلاحيته');
+    }
+    await _finishSignUp(name: name, phone: phone, mail: mail);
+  }
+
+  /// إعادة إرسال رمز تفعيل الحساب إلى البريد.
+  static Future<void> resendSignupCode(String email) async {
+    try {
+      await _client.auth
+          .resend(type: OtpType.signup, email: email.trim().toLowerCase())
+          .timeout(_timeout);
+    } on AuthException catch (error) {
+      throw FundlyAccountException(_authMessage(error));
+    } catch (_) {
+      throw const FundlyAccountException('تعذّر الاتصال بالخادم — تحقق من الإنترنت');
+    }
   }
 
   /// نسيت كلمة المرور (1): يُرسل رمز من أرقام إلى البريد المرتبط بالحساب.
@@ -364,6 +421,9 @@ class FundlyAccount {
     }
     if (text.contains('already registered') || text.contains('already exists')) {
       return 'هذا البريد مسجّل مسبقًا — سجّل الدخول به';
+    }
+    if (text.contains('security purposes')) {
+      return 'انتظر دقيقة ثم أعد إرسال الرمز';
     }
     if (text.contains('rate limit') || text.contains('too many')) {
       return 'محاولات كثيرة — انتظر قليلًا ثم أعد المحاولة';

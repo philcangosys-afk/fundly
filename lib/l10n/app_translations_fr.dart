@@ -6206,4 +6206,9 @@ const Map<String, String> kArToFr = {
   'إظهار': 'Afficher',
   'إخفاء': 'Masquer',
   'إضافة صورة من الفاتورة (اختياري)': 'Ajouter une photo de la facture (facultatif)',
+  'أرسلنا رمز تحقق من 6 أرقام إلى بريدك، اكتبه هنا لتفعيل الحساب.': 'Nous avons envoyé un code de vérification à 6 chiffres à votre e-mail. Saisissez-le ici pour activer votre compte.',
+  'لم يصلك؟ ابحث في البريد غير المرغوب (Spam).': 'Vous ne l\'avez pas reçu ? Vérifiez vos spams.',
+  'أرسلنا رمزًا جديدًا إلى بريدك': 'Nous avons envoyé un nouveau code à votre e-mail',
+  'لم يُفعَّل الحساب بعد — اضغط «إنشاء الحساب» مرة أخرى بنفس البريد لإرسال رمز جديد': 'Compte pas encore activé — appuyez à nouveau sur « Créer le compte » avec le même e-mail pour recevoir un nouveau code',
+  'انتظر دقيقة ثم أعد إرسال الرمز': 'Patientez une minute, puis renvoyez le code',
 };

@@ -219,9 +219,6 @@ class _SignUpScreenState extends State<SignUpScreen> {
       );
       return;
     }
-    setState(() => _error = null);
-    // رمز التحقق OTP قبل إنشاء الحساب.
-    if (!await _verifyOtp() || !mounted) return;
     setState(() {
       _busy = true;
       _error = null;
@@ -242,51 +239,32 @@ class _SignUpScreenState extends State<SignUpScreen> {
       });
       return;
     }
-    if (signedIn) {
-      await AppSettings.instance.setNameParts(_name.text, _family.text);
+    if (!signedIn) {
+      // البريد يحتاج تفعيلًا: رمز من 6 أرقام وصل إلى البريد.
+      if (!mounted) return;
+      setState(() => _busy = false);
+      signedIn = await _verifyOtp(mail, fullName);
+      if (!mounted) return;
+      if (!signedIn) {
+        setState(
+          () => _error = 'لم يُفعَّل الحساب بعد — اضغط «إنشاء الحساب» مرة '
+              'أخرى بنفس البريد لإرسال رمز جديد',
+        );
+        return;
+      }
     }
+    await AppSettings.instance.setNameParts(_name.text, _family.text);
     if (!mounted) return;
-    if (signedIn) {
-      Navigator.of(context).pop(true);
-      return;
-    }
-    // البريد يحتاج تفعيلًا: رسالة ثم الرجوع لشاشة الدخول.
-    await showDialog<void>(
-      context: context,
-      builder: (dialogContext) => Directionality(
-        textDirection: AppTr.uiDir,
-        child: AlertDialog(
-          icon: const Icon(
-            Icons.mark_email_read_outlined,
-            size: 34,
-            color: _kGreen,
-          ),
-          title: const Text('فعّل حسابك من بريدك'),
-          content: const Text(
-            'أرسلنا رابط التفعيل إلى بريدك الإلكتروني. افتحه ثم ارجع وسجّل '
-            'الدخول بالبريد وكلمة المرور.',
-            textAlign: TextAlign.center,
-            style: TextStyle(height: 1.6),
-          ),
-          actions: [
-            FilledButton(
-              style: FilledButton.styleFrom(backgroundColor: _kDeep),
-              onPressed: () => Navigator.pop(dialogContext),
-              child: const Text('حسنًا'),
-            ),
-          ],
-        ),
-      ),
-    );
-    if (mounted) Navigator.of(context).pop(false);
+    Navigator.of(context).pop(true);
   }
 
-  /// مرحلة الاختبار: رمز تحقق ثابت يظهر للمستخدم بخط واضح تحت الحقل.
-  static const String _testOtp = '123456';
-
-  Future<bool> _verifyOtp() async {
+  /// رمز التحقق: 6 أرقام تصل إلى البريد بعد إنشاء الحساب، وبعد صحته
+  /// يُفعَّل الحساب ويدخل المستخدم مباشرة. يعيد true إن دخل.
+  Future<bool> _verifyOtp(String mail, String fullName) async {
     final code = TextEditingController();
     String? error;
+    String? notice;
+    var busy = false;
     final ok = await showDialog<bool>(
       context: context,
       barrierDismissible: false,
@@ -294,16 +272,60 @@ class _SignUpScreenState extends State<SignUpScreen> {
         textDirection: AppTr.uiDir,
         child: StatefulBuilder(
           builder: (context, setDialogState) {
-            void confirm() {
-              if (code.text.trim() == _testOtp) {
-                Navigator.pop(dialogContext, true);
-              } else {
-                setDialogState(() => error = 'رمز التحقق غير صحيح');
+            Future<void> confirm() async {
+              if (busy) return;
+              setDialogState(() {
+                busy = true;
+                error = null;
+                notice = null;
+              });
+              try {
+                await FundlyAccount.verifySignupCode(
+                  email: mail,
+                  code: code.text,
+                  name: fullName,
+                  phone: _phone.text,
+                );
+              } on FundlyAccountException catch (failure) {
+                if (!context.mounted) return;
+                setDialogState(() {
+                  busy = false;
+                  error = failure.message;
+                });
+                return;
+              }
+              if (dialogContext.mounted) Navigator.pop(dialogContext, true);
+            }
+
+            Future<void> resend() async {
+              if (busy) return;
+              setDialogState(() {
+                busy = true;
+                error = null;
+                notice = null;
+              });
+              try {
+                await FundlyAccount.resendSignupCode(mail);
+                if (!context.mounted) return;
+                setDialogState(() {
+                  busy = false;
+                  notice = 'أرسلنا رمزًا جديدًا إلى بريدك';
+                });
+              } on FundlyAccountException catch (failure) {
+                if (!context.mounted) return;
+                setDialogState(() {
+                  busy = false;
+                  error = failure.message;
+                });
               }
             }
 
             return AlertDialog(
-              icon: const Icon(Icons.sms_outlined, size: 34, color: _kGreen),
+              icon: const Icon(
+                Icons.mark_email_read_outlined,
+                size: 34,
+                color: _kGreen,
+              ),
               title: const Text('رمز التحقق'),
               content: SingleChildScrollView(
                 child: Column(
@@ -311,14 +333,26 @@ class _SignUpScreenState extends State<SignUpScreen> {
                   crossAxisAlignment: CrossAxisAlignment.stretch,
                   children: [
                     const Text(
-                      'أدخل رمز التحقق المكوّن من 6 أرقام لإكمال إنشاء الحساب.',
+                      'أرسلنا رمز تحقق من 6 أرقام إلى بريدك، اكتبه هنا لتفعيل الحساب.',
                       textAlign: TextAlign.center,
                       style: TextStyle(fontSize: 13, height: 1.6),
+                    ),
+                    const SizedBox(height: 4),
+                    Text(
+                      mail,
+                      textAlign: TextAlign.center,
+                      textDirection: TextDirection.ltr,
+                      style: const TextStyle(
+                        fontSize: 13,
+                        fontWeight: FontWeight.w800,
+                        color: _kInk,
+                      ),
                     ),
                     const SizedBox(height: 12),
                     TextField(
                       controller: code,
                       autofocus: true,
+                      enabled: !busy,
                       keyboardType: TextInputType.number,
                       textAlign: TextAlign.center,
                       textDirection: TextDirection.ltr,
@@ -352,42 +386,25 @@ class _SignUpScreenState extends State<SignUpScreen> {
                         ),
                       ),
                     ),
-                    const SizedBox(height: 10),
-                    // الرمز ظاهر تحت الحقل بخط واضح (مرحلة الاختبار).
-                    Container(
-                      padding: const EdgeInsets.symmetric(
-                        horizontal: 12,
-                        vertical: 10,
-                      ),
-                      decoration: BoxDecoration(
-                        color: const Color(0xFFFFF6E8),
-                        borderRadius: BorderRadius.circular(12),
-                        border: Border.all(color: const Color(0xFFCE8422)),
-                      ),
-                      child: Column(
-                        children: [
-                          Text(
-                            '${AppTr.tr('الرمز الخاص بك')}: $_testOtp',
-                            textAlign: TextAlign.center,
-                            style: const TextStyle(
-                              fontSize: 19,
-                              fontWeight: FontWeight.w900,
-                              color: Color(0xFF6B4A12),
-                            ),
-                          ),
-                          const SizedBox(height: 2),
-                          const Text(
-                            'مرحلة الاختبار',
-                            textAlign: TextAlign.center,
-                            style: TextStyle(
-                              fontSize: 11,
-                              fontWeight: FontWeight.w700,
-                              color: Color(0xFFA6691A),
-                            ),
-                          ),
-                        ],
-                      ),
+                    const SizedBox(height: 8),
+                    const Text(
+                      'لم يصلك؟ ابحث في البريد غير المرغوب (Spam).',
+                      textAlign: TextAlign.center,
+                      style: TextStyle(fontSize: 11.5, color: _kMuted),
                     ),
+                    if (notice != null)
+                      Padding(
+                        padding: const EdgeInsets.only(top: 8),
+                        child: Text(
+                          notice!,
+                          textAlign: TextAlign.center,
+                          style: const TextStyle(
+                            fontSize: 12,
+                            fontWeight: FontWeight.w800,
+                            color: _kGreen,
+                          ),
+                        ),
+                      ),
                     if (error != null)
                       Padding(
                         padding: const EdgeInsets.only(top: 8),
@@ -401,18 +418,34 @@ class _SignUpScreenState extends State<SignUpScreen> {
                           ),
                         ),
                       ),
+                    const SizedBox(height: 4),
+                    TextButton(
+                      onPressed: busy ? null : resend,
+                      style: TextButton.styleFrom(foregroundColor: _kGreen),
+                      child: const Text('إعادة إرسال الرمز'),
+                    ),
                   ],
                 ),
               ),
               actions: [
                 TextButton(
-                  onPressed: () => Navigator.pop(dialogContext, false),
+                  onPressed:
+                      busy ? null : () => Navigator.pop(dialogContext, false),
                   child: const Text('إلغاء'),
                 ),
                 FilledButton(
                   style: FilledButton.styleFrom(backgroundColor: _kDeep),
-                  onPressed: confirm,
-                  child: const Text('تأكيد'),
+                  onPressed: busy ? null : confirm,
+                  child: busy
+                      ? const SizedBox(
+                          width: 18,
+                          height: 18,
+                          child: CircularProgressIndicator(
+                            strokeWidth: 2,
+                            color: Colors.white,
+                          ),
+                        )
+                      : const Text('تأكيد'),
                 ),
               ],
             );
